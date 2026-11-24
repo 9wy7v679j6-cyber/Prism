@@ -4,36 +4,61 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 /**
- * Tracks scroll direction on a [LazyListState] to collapse the floating bottom tab capsule
- * smoothly when scrolling downward and expand it when scrolling up or resting near the top.
+ * Tracks scroll direction on a [LazyListState] with density-aware hysteresis so small finger
+ * jitters never flicker the floating bottom tab capsule.
  */
 @Composable
 fun ObserveScrollCollapse(
   listState: LazyListState,
   onCollapsedChanged: (Boolean) -> Unit,
 ) {
-  LaunchedEffect(listState) {
+  val density = LocalDensity.current
+  val topZonePx = with(density) { 32.dp.toPx() }
+  val thresholdPx = with(density) { 48.dp.toPx() }
+
+  LaunchedEffect(listState, topZonePx, thresholdPx) {
     var previousIndex = listState.firstVisibleItemIndex
     var previousOffset = listState.firstVisibleItemScrollOffset
+    var accumulatedDelta = 0f
+    var collapsed = false
+
     snapshotFlow {
         listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
       }
       .distinctUntilChanged()
       .collect { (index, offset) ->
-        val isAtTop = index == 0 && offset < 24
+        val isAtTop = index == 0 && offset < topZonePx
         if (isAtTop) {
-          onCollapsedChanged(false)
+          accumulatedDelta = 0f
+          if (collapsed) {
+            collapsed = false
+            onCollapsedChanged(false)
+          }
         } else {
-          val scrollingDown =
-            index > previousIndex || (index == previousIndex && offset > previousOffset + 18)
-          val scrollingUp =
-            index < previousIndex || (index == previousIndex && offset < previousOffset - 18)
-          if (scrollingDown) {
+          val delta =
+            when {
+              index > previousIndex -> thresholdPx
+              index < previousIndex -> -thresholdPx
+              else -> (offset - previousOffset).toFloat()
+            }
+          // Reset accumulator on direction reversal so hysteresis feels crisp and immediate
+          if ((delta > 0f && accumulatedDelta < 0f) || (delta < 0f && accumulatedDelta > 0f)) {
+            accumulatedDelta = 0f
+          }
+          accumulatedDelta += delta
+
+          if (!collapsed && accumulatedDelta >= thresholdPx) {
+            collapsed = true
+            accumulatedDelta = 0f
             onCollapsedChanged(true)
-          } else if (scrollingUp) {
+          } else if (collapsed && accumulatedDelta <= -thresholdPx) {
+            collapsed = false
+            accumulatedDelta = 0f
             onCollapsedChanged(false)
           }
         }

@@ -66,7 +66,7 @@ fun ViewerShellScreen(
     Box(
       modifier =
         Modifier.fillMaxSize()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState) else Modifier)
+          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
           .padding(horizontal = 20.dp, vertical = 104.dp),
       contentAlignment = Alignment.Center,
     ) {

@@ -1,9 +1,14 @@
 package com.prism.docs.core.ui.glass
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -27,7 +32,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -43,10 +47,10 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,15 +58,18 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -70,10 +77,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
+import com.prism.docs.core.ui.theme.PrismColors
 import com.prism.docs.core.ui.theme.PrismMotion
+import kotlinx.coroutines.launch
 
 /**
- * Slim Liquid Glass segmented control with a clear raised white pill thumb, blue text,
+ * Slim Liquid Glass segmented control with a clear raised white sliding pill thumb, blue text,
  * and soft shadow in light mode (and elevated translucent pill in dark mode).
  */
 @Composable
@@ -90,16 +99,16 @@ fun GlassSegmentedControl(
   val clampedIndex = selectedIndex.coerceIn(0, options.lastIndex)
 
   val trackRecessColor =
-    if (env.isDark) Color.Black.copy(alpha = 0.28f) else Color(0xFF1A2C56).copy(alpha = 0.13f)
+    if (env.isDark) Color.Black.copy(alpha = 0.28f) else Color(0xFF1A2C56).copy(alpha = 0.11f)
   val thumbBgColor = if (env.isDark) Color(0xFF283654) else Color.White
-  val activeTextColor =
-    if (env.isDark) colorScheme.primary else com.prism.docs.core.ui.theme.PrismColors.IndigoBlue
-  val inactiveTextColor =
-    if (env.isDark) colorScheme.onSurfaceVariant else Color(0xFF3E4C66)
+  val thumbBrush = remember(thumbBgColor) { SolidColor(thumbBgColor) }
+  val activeTextColor = if (env.isDark) colorScheme.primary else PrismColors.IndigoBlue
+  val inactiveTextColor = if (env.isDark) colorScheme.onSurfaceVariant else Color(0xFF3E4C66)
 
   GlassSurface(
     cornerRadius = 22.dp,
     elevation = GlassElevation.SUBTLE,
+    useBackdropBlur = false,
     enableRefraction = false,
     enableTopSheen = false,
     modifier = modifier.fillMaxWidth().height(44.dp).testTag("glass_segmented_control"),
@@ -113,7 +122,7 @@ fun GlassSegmentedControl(
             count = options.size,
             inset = 4.dp,
             cornerRadius = 999.dp,
-            brush = SolidColor(thumbBgColor),
+            brush = thumbBrush,
           )
           .padding(4.dp),
     ) {
@@ -143,9 +152,7 @@ fun GlassSegmentedControl(
             text = label,
             style =
               MaterialTheme.typography.labelLarge.copy(
-                fontWeight =
-                  if (isSelected) androidx.compose.ui.text.font.FontWeight.Bold
-                  else androidx.compose.ui.text.font.FontWeight.SemiBold,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
               ),
             color = textColor,
             maxLines = 1,
@@ -158,7 +165,7 @@ fun GlassSegmentedControl(
 }
 
 /**
- * Liquid Glass capsule toggle switch with spring-driven crystal thumb and 48dp accessible touch area.
+ * Liquid Glass capsule toggle switch with GPU-accelerated spring thumb and 48dp accessible touch area.
  */
 @Composable
 fun GlassToggle(
@@ -181,9 +188,9 @@ fun GlassToggle(
         },
       label = "glass_toggle_track",
     )
-  val thumbOffset by
-    animateDpAsState(
-      targetValue = if (checked) 22.dp else 2.dp,
+  val thumbProgress =
+    animateFloatAsState(
+      targetValue = if (checked) 1f else 0f,
       animationSpec = PrismMotion.tactileSpring(env.reduceMotion),
       label = "glass_toggle_thumb",
     )
@@ -215,7 +222,9 @@ fun GlassToggle(
     ) {
       Box(
         modifier =
-          Modifier.offset(x = thumbOffset)
+          Modifier.graphicsLayer {
+              translationX = (2.dp.toPx() + 20.dp.toPx() * thumbProgress.value)
+            }
             .size(28.dp)
             .shadow(4.dp, CircleShape)
             .clip(CircleShape)
@@ -308,6 +317,7 @@ fun GlassContextMenu(
     GlassSurface(
       cornerRadius = 22.dp,
       elevation = GlassElevation.OVERLAY,
+      useBackdropBlur = false,
       modifier = modifier.widthIn(min = 200.dp, max = 264.dp).testTag("glass_context_menu"),
     ) {
       Column(modifier = Modifier.padding(vertical = 6.dp)) {
@@ -362,14 +372,14 @@ fun GlassContextMenu(
 }
 
 enum class GlassSheetDetent(val heightFraction: Float) {
-  PEEK(0.36f),
-  HALF(0.60f),
-  FULL(0.88f),
+  PEEK(0.42f),
+  HALF(0.64f),
+  FULL(0.90f),
 }
 
 /**
- * Liquid Glass bottom sheet overlay supporting PEEK / HALF / FULL detents with drag-to-snap
- * spring gestures and scrim dismissal.
+ * Liquid Glass bottom sheet overlay supporting PEEK / HALF / FULL detents with live 120fps
+ * GPU-translated finger tracking, coordinated scrim/sheet enter-exit, and spring detent snaps.
  */
 @Composable
 fun GlassBottomSheet(
@@ -381,29 +391,45 @@ fun GlassBottomSheet(
   content: @Composable ColumnScope.() -> Unit,
 ) {
   val env = LocalGlassEnvironment.current
+  val motion = LocalGlassMotion.current
   val colorScheme = MaterialTheme.colorScheme
   val haptics = LocalHapticFeedback.current
+  val scope = rememberCoroutineScope()
+  val density = LocalDensity.current
 
   AnimatedVisibility(
     visible = visible,
-    enter = fadeIn(),
-    exit = fadeOut(),
+    enter = EnterTransition.None,
+    exit = ExitTransition.None,
     modifier = modifier.fillMaxSize(),
   ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
       val containerHeight = maxHeight
+      val snapThresholdPx = with(density) { 64.dp.toPx() }
+      val dragOffsetPx = remember { Animatable(0f) }
+
+      LaunchedEffect(detent) {
+        dragOffsetPx.animateTo(
+          targetValue = 0f,
+          animationSpec = if (motion) spring(dampingRatio = 0.82f, stiffness = 420f) else snap(),
+        )
+      }
+
       val targetFraction by
         animateFloatAsState(
           targetValue = detent.heightFraction,
           animationSpec = PrismMotion.fluidSpring(env.reduceMotion),
           label = "sheet_detent_fraction",
         )
-      var accumulatedDrag by remember(detent) { mutableFloatStateOf(0f) }
 
-      // Scrim
+      // Scrim fades smoothly in lockstep with sheet slide
       Box(
         modifier =
           Modifier.fillMaxSize()
+            .animateEnterExit(
+              enter = fadeIn(animationSpec = tween(durationMillis = if (motion) 200 else 0)),
+              exit = fadeOut(animationSpec = tween(durationMillis = if (motion) 180 else 0)),
+            )
             .background(Color.Black.copy(alpha = if (env.isDark) 0.56f else 0.34f))
             .clickable(
               interactionSource = remember { MutableInteractionSource() },
@@ -412,66 +438,95 @@ fun GlassBottomSheet(
             )
       )
 
-      AnimatedVisibility(
-        visible = visible,
-        enter = slideInVertically(initialOffsetY = { it }),
-        exit = slideOutVertically(targetOffsetY = { it }),
-        modifier = Alignment.BottomCenter.let { Modifier.align(it) },
-      ) {
-        GlassSurface(
-          cornerRadius = 30.dp,
-          shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp),
-          elevation = GlassElevation.OVERLAY,
-          modifier =
-            Modifier.fillMaxWidth()
-              .widthIn(max = 640.dp)
-              .height(containerHeight * targetFraction)
-              .pointerInput(detent) {
-                detectVerticalDragGestures(
-                  onDragEnd = {
-                    when {
-                      accumulatedDrag > 120f -> {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        when (detent) {
-                          GlassSheetDetent.FULL -> onDetentChange(GlassSheetDetent.HALF)
-                          GlassSheetDetent.HALF -> onDetentChange(GlassSheetDetent.PEEK)
-                          GlassSheetDetent.PEEK -> onDismiss()
-                        }
-                      }
-                      accumulatedDrag < -120f -> {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        when (detent) {
-                          GlassSheetDetent.PEEK -> onDetentChange(GlassSheetDetent.HALF)
-                          GlassSheetDetent.HALF -> onDetentChange(GlassSheetDetent.FULL)
-                          GlassSheetDetent.FULL -> Unit
-                        }
+      GlassSurface(
+        cornerRadius = 30.dp,
+        shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp),
+        elevation = GlassElevation.OVERLAY,
+        useBackdropBlur = true,
+        modifier =
+          Modifier.align(Alignment.BottomCenter)
+            .animateEnterExit(
+              enter =
+                slideInVertically(
+                  animationSpec = if (motion) spring(dampingRatio = 0.84f, stiffness = 380f) else snap(),
+                  initialOffsetY = { it },
+                ),
+              exit =
+                slideOutVertically(
+                  animationSpec = tween(durationMillis = if (motion) 200 else 0),
+                  targetOffsetY = { it },
+                ),
+            )
+            .fillMaxWidth()
+            .widthIn(max = 640.dp)
+            .height(containerHeight * targetFraction)
+            .graphicsLayer {
+              translationY = dragOffsetPx.value.coerceAtLeast(-48f)
+            }
+            .pointerInput(detent, snapThresholdPx) {
+              detectVerticalDragGestures(
+                onDragCancel = {
+                  scope.launch {
+                    dragOffsetPx.animateTo(
+                      0f,
+                      if (motion) spring(dampingRatio = 0.82f, stiffness = 420f) else snap(),
+                    )
+                  }
+                },
+                onDragEnd = {
+                  val drag = dragOffsetPx.value
+                  when {
+                    drag > snapThresholdPx -> {
+                      haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                      when (detent) {
+                        GlassSheetDetent.FULL -> onDetentChange(GlassSheetDetent.HALF)
+                        GlassSheetDetent.HALF -> onDetentChange(GlassSheetDetent.PEEK)
+                        GlassSheetDetent.PEEK -> onDismiss()
                       }
                     }
-                    accumulatedDrag = 0f
-                  },
-                  onVerticalDrag = { _, dragAmount -> accumulatedDrag += dragAmount },
-                )
-              }
-              .testTag("glass_bottom_sheet"),
+                    drag < -snapThresholdPx -> {
+                      haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                      when (detent) {
+                        GlassSheetDetent.PEEK -> onDetentChange(GlassSheetDetent.HALF)
+                        GlassSheetDetent.HALF -> onDetentChange(GlassSheetDetent.FULL)
+                        GlassSheetDetent.FULL -> Unit
+                      }
+                    }
+                  }
+                  scope.launch {
+                    dragOffsetPx.animateTo(
+                      0f,
+                      if (motion) spring(dampingRatio = 0.82f, stiffness = 420f) else snap(),
+                    )
+                  }
+                },
+                onVerticalDrag = { _, dragAmount ->
+                  scope.launch {
+                    val next = (dragOffsetPx.value + dragAmount).coerceAtLeast(-96f)
+                    dragOffsetPx.snapTo(next)
+                  }
+                },
+              )
+            }
+            .testTag("glass_bottom_sheet"),
+      ) {
+        Column(
+          modifier =
+            Modifier.fillMaxSize()
+              .navigationBarsPadding()
+              .padding(horizontal = 20.dp, vertical = 12.dp),
         ) {
-          Column(
+          // Drag handle pill
+          Box(
             modifier =
-              Modifier.fillMaxSize()
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 12.dp),
-          ) {
-            // Drag handle pill
-            Box(
-              modifier =
-                Modifier.align(Alignment.CenterHorizontally)
-                  .width(42.dp)
-                  .height(5.dp)
-                  .clip(CircleShape)
-                  .background(colorScheme.onSurface.copy(alpha = 0.28f))
-            )
-            Spacer(Modifier.height(14.dp))
-            content()
-          }
+              Modifier.align(Alignment.CenterHorizontally)
+                .width(42.dp)
+                .height(5.dp)
+                .clip(CircleShape)
+                .background(colorScheme.onSurface.copy(alpha = 0.28f))
+          )
+          Spacer(Modifier.height(14.dp))
+          content()
         }
       }
     }
@@ -498,6 +553,7 @@ fun GlassPageThumbnailStrip(
   GlassSurface(
     cornerRadius = 24.dp,
     elevation = GlassElevation.FLOATING,
+    useBackdropBlur = true,
     modifier = modifier.fillMaxWidth().testTag("glass_page_thumbnail_strip"),
   ) {
     LazyRow(
@@ -525,13 +581,10 @@ fun GlassPageThumbnailStrip(
                 color = borderColor,
                 shape = RoundedCornerShape(10.dp),
               )
-              .clickable(
-                role = Role.Button,
-                onClick = {
-                  haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                  onSelectPage(index)
-                },
-              )
+              .glassClickable(role = Role.Button) {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onSelectPage(index)
+              }
               .semantics {
                 selected = isActive
                 contentDescription = "Page $pageNumber of $pageCount"

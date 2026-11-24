@@ -322,6 +322,7 @@ fun FilesHomeScreen(
           title = sectionTitle,
           isIndexing = uiState.indexWorkStatus.isRunning,
           hasActiveFilters = hasActiveSecondaryFilters,
+          useBackdropBlur = true,
           onSettingsClick = {
             optionsDetent = GlassSheetDetent.HALF
             showOptionsSheet = true
@@ -447,6 +448,7 @@ private fun LibraryTitleRow(
   hasActiveFilters: Boolean,
   onSettingsClick: () -> Unit,
   modifier: Modifier = Modifier,
+  useBackdropBlur: Boolean = false,
 ) {
   val colorScheme = MaterialTheme.colorScheme
 
@@ -490,6 +492,7 @@ private fun LibraryTitleRow(
         cornerRadius = 24.dp,
         shape = CircleShape,
         elevation = GlassElevation.FLOATING,
+        useBackdropBlur = useBackdropBlur,
         onClick = onSettingsClick,
         clickRole = Role.Button,
         modifier =
@@ -539,6 +542,7 @@ private fun LibrarySearchPill(
   GlassSurface(
     cornerRadius = 29.dp,
     elevation = GlassElevation.FLOATING,
+    useBackdropBlur = false,
     onClick = onClick,
     clickRole = Role.Button,
     modifier = modifier.fillMaxWidth().height(58.dp).testTag("library_search_pill"),
@@ -756,7 +760,7 @@ private fun LibraryPagingSection(
           onToggleSelection = onToggleSelection,
           modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
         )
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(8.dp))
       }
 
       // One big rounded glass card holding the virtualized Paging 3 file list
@@ -771,6 +775,7 @@ private fun LibraryPagingSection(
           isFirst = idx == 0,
           isLast = idx == totalCount - 1,
           isSelected = doc.id in uiState.selectedIds,
+          entranceIndex = if (idx < 8) idx else null,
           onClick = {
             if (uiState.isSelectionMode) onToggleSelection(doc.id) else onOpenDocument(doc)
           },
@@ -781,10 +786,7 @@ private fun LibraryPagingSection(
           onMove = { onMoveDocument(doc) },
           onShare = { onShareDocument(doc) },
           onTrash = { onTrashDocument(doc) },
-          modifier =
-            Modifier.fillMaxWidth()
-              .widthIn(max = 760.dp)
-              .then(if (idx < 8) Modifier.glassEntrance(index = idx) else Modifier),
+          modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
         )
       }
 
@@ -959,7 +961,7 @@ private fun CategoryGlassChipRow(
   LazyRow(
     state = rowState,
     horizontalArrangement = Arrangement.spacedBy(10.dp),
-    contentPadding = PaddingValues(end = 30.dp),
+    contentPadding = PaddingValues(top = 6.dp, bottom = 10.dp, end = 30.dp),
     modifier = modifier.fillMaxWidth().horizontalRightEdgeFade(fadeFraction = fadeAlpha),
   ) {
     items(categories, key = { it.first?.name ?: "ALL" }) { (category, label) ->
@@ -1112,7 +1114,7 @@ private fun RecentDocumentsCarousel(
 
   Column(
     modifier = modifier.fillMaxWidth().testTag("library_recent_section"),
-    verticalArrangement = Arrangement.spacedBy(12.dp),
+    verticalArrangement = Arrangement.spacedBy(6.dp),
   ) {
     Row(
       modifier = Modifier.fillMaxWidth(),
@@ -1141,7 +1143,7 @@ private fun RecentDocumentsCarousel(
     LazyRow(
       state = rowState,
       horizontalArrangement = Arrangement.spacedBy(14.dp),
-      contentPadding = PaddingValues(end = 28.dp),
+      contentPadding = PaddingValues(top = 6.dp, bottom = 12.dp, end = 28.dp),
       modifier = Modifier.fillMaxWidth().horizontalRightEdgeFade(fadeFraction = fadeAlpha),
     ) {
       itemsIndexed(recentDocuments, key = { _, doc -> "recent_${doc.id}" }) { idx, doc ->

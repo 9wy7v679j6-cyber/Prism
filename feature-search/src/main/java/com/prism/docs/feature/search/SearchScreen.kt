@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.MaterialTheme
@@ -32,6 +33,8 @@ import com.prism.docs.core.ui.glass.GlassSearchField
 import com.prism.docs.core.ui.glass.GlassSurface
 import com.prism.docs.core.ui.glass.GlassToolbarAction
 import com.prism.docs.core.ui.glass.GlassToolbarGroup
+import com.prism.docs.core.ui.glass.ScrollEdgeFade
+import com.prism.docs.core.ui.glass.rememberHeaderScrollProgress
 import com.prism.docs.core.ui.theme.LocalHazeState
 import dev.chrisbanes.haze.hazeSource
 
@@ -42,18 +45,22 @@ fun SearchScreen(
 ) {
   val hazeState = LocalHazeState.current
   val colorScheme = MaterialTheme.colorScheme
+  val listState = rememberLazyListState()
+  val headerScrollProgress = rememberHeaderScrollProgress(listState)
   var query by remember { mutableStateOf("") }
   var selectedFilter by remember { mutableStateOf("All") }
   val filters = remember { listOf("All", "PDF", "Documents", "Spreadsheets", "OCR Text", "This Week") }
 
   Box(modifier = modifier.fillMaxSize()) {
     LazyColumn(
-      contentPadding = PaddingValues(top = 152.dp, bottom = 120.dp, start = 16.dp, end = 16.dp),
+      state = listState,
+      contentPadding = PaddingValues(top = 136.dp, bottom = 120.dp, start = 16.dp, end = 16.dp),
       verticalArrangement = Arrangement.spacedBy(14.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
       modifier =
         Modifier.fillMaxSize()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState) else Modifier)
+          .statusBarsPadding()
+          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
           .testTag("search_results_list"),
     ) {
       item {
@@ -83,6 +90,14 @@ fun SearchScreen(
         }
       }
     }
+
+    ScrollEdgeFade(
+      isTop = true,
+      height = 172.dp,
+      strongTint = true,
+      scrollProgress = headerScrollProgress,
+      modifier = Modifier.align(Alignment.TopCenter),
+    )
 
     // Floating top search bar + filter rail
     Column(
@@ -117,12 +132,16 @@ fun SearchScreen(
         )
       }
 
-      LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(vertical = 4.dp),
+      ) {
         items(filters, key = { it }) { filter ->
           val active = filter == selectedFilter
           GlassSurface(
             cornerRadius = 18.dp,
             elevation = GlassElevation.SUBTLE,
+            useBackdropBlur = false,
             accentTint = if (active) colorScheme.primary else null,
             onClick = { selectedFilter = filter },
             clickRole = Role.Tab,

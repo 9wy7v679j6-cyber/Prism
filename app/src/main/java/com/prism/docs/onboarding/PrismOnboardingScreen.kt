@@ -71,7 +71,7 @@ fun PrismOnboardingScreen(
       modifier =
         Modifier.fillMaxSize()
           .statusBarsPadding()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState) else Modifier)
+          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
           .testTag("onboarding_scroll_list"),
     ) {
       item {

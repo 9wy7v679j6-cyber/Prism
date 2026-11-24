@@ -15,6 +15,8 @@ import androidx.compose.ui.unit.dp
 /**
  * AGSL shader implementing subtle convex edge lens refraction, saturation boost, and luminous
  * Fresnel rim caustics around rounded-rectangle Liquid Glass capsules (Android 13 / API 33+).
+ *
+ * Properly preserves premultiplied alpha so rounded corners never produce white fringe halos.
  */
 private const val LIQUID_GLASS_AGSL = """
 uniform shader composable;
@@ -49,52 +51,90 @@ half4 main(float2 fragCoord) {
     // Refract inward along the edge bevel with subtle chromatic dispersion
     float2 refractOffset = normal * rimFactor * rimFactor * refractionStrength;
     float2 uvBase = clamp(fragCoord - refractOffset, float2(0.5), resolution - float2(0.5));
-    float2 uvR = clamp(fragCoord - refractOffset * 1.12, float2(0.5), resolution - float2(0.5));
-    float2 uvB = clamp(fragCoord - refractOffset * 0.88, float2(0.5), resolution - float2(0.5));
+    float2 uvR = clamp(fragCoord - refractOffset * 1.10, float2(0.5), resolution - float2(0.5));
+    float2 uvB = clamp(fragCoord - refractOffset * 0.90, float2(0.5), resolution - float2(0.5));
 
     half4 baseSample = composable.eval(uvBase);
+    half alpha = baseSample.a;
+    if (alpha <= 0.001) {
+        return half4(0.0);
+    }
+
     half rChan = composable.eval(uvR).r;
     half bChan = composable.eval(uvB).b;
-    half3 refracted = half3(rChan, baseSample.g, bChan);
+    // Un-premultiply before saturation & specular sheen, then re-premultiply cleanly
+    half3 unpremul = clamp(half3(rChan, baseSample.g, bChan) / alpha, 0.0, 1.0);
 
-    // Vibrancy / optical saturation lift typical of Liquid Glass
-    half luma = dot(refracted, half3(0.299, 0.587, 0.114));
-    half3 saturated = mix(half3(luma), refracted, half(saturationBoost));
+    half luma = dot(unpremul, half3(0.299, 0.587, 0.114));
+    half3 saturated = mix(half3(luma), unpremul, half(saturationBoost));
 
-    // Subtle directional top-left specular sheen along the refracting edge
     float lightDir = clamp(-normal.y * 0.7 - normal.x * 0.35, 0.0, 1.0);
-    float specular = rimFactor * rimFactor * (0.06 + 0.14 * lightDir);
+    float specular = rimFactor * rimFactor * (0.05 + 0.12 * lightDir);
     half3 sheenColor = isDark > 0.5 ? half3(0.82, 0.91, 1.0) : half3(1.0, 1.0, 1.0);
 
-    half3 finalRgb = clamp(saturated + sheenColor * half(specular), 0.0, 1.0);
-    return half4(finalRgb, baseSample.a);
+    half3 finalRgb = clamp(saturated + sheenColor * half(specular), 0.0, 1.0) * alpha;
+    return half4(finalRgb, alpha);
 }
 """
 
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-internal fun buildLiquidGlassRenderEffect(
-  shader: RuntimeShader,
-  widthPx: Float,
-  heightPx: Float,
-  cornerRadiusPx: Float,
-  bezelWidthPx: Float,
-  refractionStrengthPx: Float,
-  saturationBoost: Float,
-  isDark: Boolean,
-): androidx.compose.ui.graphics.RenderEffect? {
-  if (widthPx < 4f || heightPx < 4f) return null
-  shader.setFloatUniform("resolution", widthPx, heightPx)
-  shader.setFloatUniform("cornerRadius", cornerRadiusPx)
-  shader.setFloatUniform("bezelWidth", bezelWidthPx)
-  shader.setFloatUniform("refractionStrength", refractionStrengthPx)
-  shader.setFloatUniform("saturationBoost", saturationBoost)
-  shader.setFloatUniform("isDark", if (isDark) 1f else 0f)
-  return RenderEffect.createRuntimeShaderEffect(shader, "composable").asComposeRenderEffect()
+private class CachedLiquidGlassEffect {
+  private val shader = RuntimeShader(LIQUID_GLASS_AGSL)
+  private var lastW = -1f
+  private var lastH = -1f
+  private var lastCorner = -1f
+  private var lastBezel = -1f
+  private var lastRefraction = -1f
+  private var lastSat = -1f
+  private var lastDark = false
+  private var cached: androidx.compose.ui.graphics.RenderEffect? = null
+
+  fun obtain(
+    widthPx: Float,
+    heightPx: Float,
+    cornerRadiusPx: Float,
+    bezelWidthPx: Float,
+    refractionStrengthPx: Float,
+    saturationBoost: Float,
+    isDark: Boolean,
+  ): androidx.compose.ui.graphics.RenderEffect? {
+    if (widthPx < 4f || heightPx < 4f) return null
+    val existing = cached
+    if (
+      existing != null &&
+        lastW == widthPx &&
+        lastH == heightPx &&
+        lastCorner == cornerRadiusPx &&
+        lastBezel == bezelWidthPx &&
+        lastRefraction == refractionStrengthPx &&
+        lastSat == saturationBoost &&
+        lastDark == isDark
+    ) {
+      return existing
+    }
+    lastW = widthPx
+    lastH = heightPx
+    lastCorner = cornerRadiusPx
+    lastBezel = bezelWidthPx
+    lastRefraction = refractionStrengthPx
+    lastSat = saturationBoost
+    lastDark = isDark
+
+    shader.setFloatUniform("resolution", widthPx, heightPx)
+    shader.setFloatUniform("cornerRadius", cornerRadiusPx)
+    shader.setFloatUniform("bezelWidth", bezelWidthPx)
+    shader.setFloatUniform("refractionStrength", refractionStrengthPx)
+    shader.setFloatUniform("saturationBoost", saturationBoost)
+    shader.setFloatUniform("isDark", if (isDark) 1f else 0f)
+    return RenderEffect.createRuntimeShaderEffect(shader, "composable")
+      .asComposeRenderEffect()
+      .also { cached = it }
+  }
 }
 
 /**
- * Applies AGSL rounded-box lens refraction on Android 13+ when Liquid Glass full tier is active.
- * Automatically becomes a no-op on API 26-32 or when Reduce Transparency is enabled.
+ * Applies cached AGSL rounded-box lens refraction on Android 13+ when explicitly enabled.
+ * Zero per-frame RenderEffect allocations once sized; automatically a no-op on API 26-32.
  */
 fun Modifier.liquidGlassEdgeRefraction(
   enabled: Boolean,
@@ -102,16 +142,15 @@ fun Modifier.liquidGlassEdgeRefraction(
   isDark: Boolean,
   bezelWidth: Dp = 7.dp,
   refractionStrength: Dp = 1.4.dp,
-  saturationBoost: Float = 1.08f,
+  saturationBoost: Float = 1.06f,
 ): Modifier = composed {
   if (!enabled || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
     return@composed this
   }
-  val shader = remember { RuntimeShader(LIQUID_GLASS_AGSL) }
+  val cache = remember { CachedLiquidGlassEffect() }
   this.graphicsLayer {
     renderEffect =
-      buildLiquidGlassRenderEffect(
-        shader = shader,
+      cache.obtain(
         widthPx = size.width,
         heightPx = size.height,
         cornerRadiusPx = cornerRadius.toPx(),

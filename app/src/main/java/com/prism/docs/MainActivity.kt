@@ -2,6 +2,7 @@ package com.prism.docs
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -12,6 +13,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -91,6 +95,7 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
+    requestHighestRefreshRate()
     viewModel.handleIncomingIntent(intent)
 
     setContent {
@@ -147,6 +152,28 @@ class MainActivity : ComponentActivity() {
     super.onNewIntent(intent)
     setIntent(intent)
     viewModel.handleIncomingIntent(intent)
+  }
+
+  private fun requestHighestRefreshRate() {
+    runCatching {
+      val activeDisplay =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display
+        else @Suppress("DEPRECATION") windowManager.defaultDisplay
+      val currentMode = activeDisplay?.mode ?: return
+      val bestMode =
+        activeDisplay.supportedModes
+          .filter {
+            it.physicalWidth == currentMode.physicalWidth &&
+              it.physicalHeight == currentMode.physicalHeight
+          }
+          .maxByOrNull { it.refreshRate }
+          ?: return
+      if (bestMode.modeId != currentMode.modeId) {
+        val params = window.attributes
+        params.preferredDisplayModeId = bestMode.modeId
+        window.attributes = params
+      }
+    }
   }
 }
 
@@ -304,6 +331,10 @@ private fun PrismRootShell(
             NavHost(
               navController = navController,
               startDestination = startDestination,
+              enterTransition = { fadeIn(animationSpec = tween(durationMillis = 160)) },
+              exitTransition = { fadeOut(animationSpec = tween(durationMillis = 120)) },
+              popEnterTransition = { fadeIn(animationSpec = tween(durationMillis = 160)) },
+              popExitTransition = { fadeOut(animationSpec = tween(durationMillis = 120)) },
               modifier = Modifier.fillMaxSize(),
             ) {
               composable<OnboardingRoute> {

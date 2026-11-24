@@ -83,6 +83,7 @@ import com.prism.docs.core.ui.glass.GlassContextMenu
 import com.prism.docs.core.ui.glass.GlassContextMenuItem
 import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSurface
+import com.prism.docs.core.ui.glass.glassEntrance
 import com.prism.docs.core.ui.glass.glassPress
 import com.prism.docs.core.ui.theme.LocalHazeState
 import com.prism.docs.core.ui.theme.PrismColors
@@ -1054,6 +1055,7 @@ fun LibraryCardDocumentRow(
   onShare: () -> Unit,
   onTrash: () -> Unit,
   modifier: Modifier = Modifier,
+  entranceIndex: Int? = null,
 ) {
   val colorScheme = MaterialTheme.colorScheme
   val (badgeLabel, badgeColor) =
@@ -1077,7 +1079,6 @@ fun LibraryCardDocumentRow(
     accentTint = if (isSelected) colorScheme.primary else null,
     modifier =
       modifier
-        .glassPress(interactionSource, pressedScale = 0.985f)
         .combinedClickable(
           interactionSource = interactionSource,
           indication = null,
@@ -1090,6 +1091,8 @@ fun LibraryCardDocumentRow(
       Row(
         modifier =
           Modifier.fillMaxWidth()
+            .then(if (entranceIndex != null) Modifier.glassEntrance(index = entranceIndex) else Modifier)
+            .glassPress(interactionSource, pressedScale = 0.985f)
             .padding(start = 16.dp, top = 14.dp, bottom = 14.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),

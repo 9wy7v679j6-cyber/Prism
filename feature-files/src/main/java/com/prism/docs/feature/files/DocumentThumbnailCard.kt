@@ -42,11 +42,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
@@ -245,10 +245,10 @@ fun DocumentThumbnailView(
   }
 
   val shape = RoundedCornerShape(cornerRadius)
-  val imageAlpha by
+  val imageAlpha =
     animateFloatAsState(
       targetValue = if (bitmap != null) 1f else 0f,
-      animationSpec = tween(durationMillis = if (glassEnv.reduceMotion) 0 else 180),
+      animationSpec = tween(durationMillis = if (glassEnv.reduceMotion) 0 else 160),
       label = "thumbnail_fade",
     )
 
@@ -288,7 +288,7 @@ fun DocumentThumbnailView(
         bitmap = imageBitmap,
         contentDescription = "${request.displayName} thumbnail",
         contentScale = ContentScale.Crop,
-        modifier = Modifier.fillMaxSize().alpha(imageAlpha),
+        modifier = Modifier.fillMaxSize().graphicsLayer { alpha = imageAlpha.value },
       )
     }
 

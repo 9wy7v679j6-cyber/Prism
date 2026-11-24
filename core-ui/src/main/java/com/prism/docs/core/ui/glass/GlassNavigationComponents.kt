@@ -1,17 +1,11 @@
 package com.prism.docs.core.ui.glass
 
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,16 +33,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -57,11 +50,12 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
-import com.prism.docs.core.ui.theme.PrismMotion
+import com.prism.docs.core.ui.theme.PrismColors
 
 data class GlassTabItem(
   val id: String,
@@ -72,9 +66,10 @@ data class GlassTabItem(
 )
 
 /**
- * Floating Liquid Glass bottom capsule navigation bar inspired by iOS Preview.
- * Collapses into a compact active-destination pill when scrolling downward, paired with a
- * detached circular Search glass orb that morphs into the search experience.
+ * Floating Liquid Glass bottom capsule navigation bar paired with a detached circular Search orb.
+ *
+ * Uses constant layout bounds (68.dp) and pure GPU [graphicsLayer] scroll-tuck motion so
+ * scrolling never triggers layout re-measurement or Haze blur buffer reallocations (locked 120fps).
  */
 @Composable
 fun GlassFloatingTabBar(
@@ -86,142 +81,114 @@ fun GlassFloatingTabBar(
   modifier: Modifier = Modifier,
 ) {
   val env = LocalGlassEnvironment.current
+  val motion = LocalGlassMotion.current
   val haptics = LocalHapticFeedback.current
   val colorScheme = MaterialTheme.colorScheme
-  val springSpec = PrismMotion.fluidSpring<androidx.compose.ui.unit.Dp>(env.reduceMotion)
 
-  val capsuleHeight by
-    animateDpAsState(
-      targetValue = if (isCollapsed) 56.dp else 68.dp,
-      animationSpec = springSpec,
-      label = "tab_capsule_height",
+  val compactProgress =
+    animateFloatAsState(
+      targetValue = if (isCollapsed) 1f else 0f,
+      animationSpec = if (motion) spring(dampingRatio = 0.82f, stiffness = 420f) else snap(),
+      label = "tab_bar_scroll_tuck",
     )
 
-  val selectedBlue =
-    if (env.isDark) colorScheme.primary else com.prism.docs.core.ui.theme.PrismColors.IndigoBlue
+  val selectedBlue = if (env.isDark) colorScheme.primary else PrismColors.IndigoBlue
   val selectedPillBg = if (env.isDark) Color(0xFF253452) else Color.White
   val selectedIndex = tabs.indexOfFirst { it.id == selectedId }.coerceAtLeast(0)
+  val pillBrush = remember(selectedPillBg) { SolidColor(selectedPillBg) }
 
   Row(
     modifier =
       modifier
         .fillMaxWidth()
         .navigationBarsPadding()
-        .padding(horizontal = 18.dp, vertical = 12.dp),
+        .padding(horizontal = 18.dp, vertical = 12.dp)
+        .graphicsLayer {
+          val p = compactProgress.value
+          val s = 1f - 0.045f * p
+          scaleX = s
+          scaleY = s
+          translationY = 4.dp.toPx() * p
+        },
     horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     GlassSurface(
       cornerRadius = 34.dp,
       elevation = GlassElevation.FLOATING,
+      useBackdropBlur = true,
+      enableAnimatedSheen = true,
       modifier =
-        Modifier.height(capsuleHeight)
-          .then(if (isCollapsed) Modifier else Modifier.weight(1f))
-          .glassSheen(cornerRadius = 999.dp)
+        Modifier.weight(1f)
+          .height(68.dp)
           .testTag("glass_floating_tab_bar"),
     ) {
-      AnimatedContent(
-        targetState = isCollapsed,
-        transitionSpec = { fadeIn() + scaleIn(initialScale = 0.94f) togetherWith fadeOut() + scaleOut(targetScale = 0.94f) },
-        label = "tab_bar_collapse_content",
-      ) { collapsed ->
-        if (collapsed) {
-          val activeTab = tabs.firstOrNull { it.id == selectedId } ?: tabs.first()
-          Row(
-            modifier =
-              Modifier.fillMaxHeight()
-                .glassClickable(role = Role.Button) {
-                  haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                  onSelectTab(activeTab.id)
-                }
-                .padding(horizontal = 20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-          ) {
-            Icon(
-              imageVector = activeTab.selectedIcon,
-              contentDescription = activeTab.label,
-              tint = selectedBlue,
-              modifier = Modifier.size(22.dp),
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .fillMaxHeight()
+            .glassSlidingPill(
+              selectedIndex = selectedIndex,
+              count = tabs.size,
+              inset = 5.dp,
+              cornerRadius = 999.dp,
+              brush = pillBrush,
             )
-            Text(
-              text = activeTab.label,
-              style = MaterialTheme.typography.labelLarge,
-              color = selectedBlue,
-              maxLines = 1,
+            .padding(5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(0.dp),
+      ) {
+        tabs.forEach { tab ->
+          val isSelected = tab.id == selectedId
+          val contentColor by
+            animateColorAsState(
+              targetValue =
+                if (isSelected) selectedBlue
+                else if (env.isDark) colorScheme.onSurfaceVariant
+                else Color(0xFF172236),
+              label = "tab_content_color_${tab.id}",
             )
-          }
-        } else {
-          Row(
-            modifier =
-              Modifier.fillMaxWidth()
-                .fillMaxHeight()
-                .glassSlidingPill(
-                  selectedIndex = selectedIndex,
-                  count = tabs.size,
-                  inset = 5.dp,
-                  cornerRadius = 999.dp,
-                  brush = SolidColor(selectedPillBg),
-                )
-                .padding(5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(0.dp),
-          ) {
-            tabs.forEach { tab ->
-              val isSelected = tab.id == selectedId
-              val contentColor by
-                animateColorAsState(
-                  targetValue =
-                    if (isSelected) selectedBlue
-                    else if (env.isDark) colorScheme.onSurfaceVariant
-                    else Color(0xFF172236),
-                  label = "tab_content_color_${tab.id}",
-                )
 
-              Box(
-                modifier =
-                  Modifier.weight(1f)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(29.dp))
-                    .glassClickable(role = Role.Tab) {
-                      if (!isSelected) {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                      }
-                      onSelectTab(tab.id)
-                    }
-                    .semantics {
-                      selected = isSelected
-                      contentDescription = tab.label
-                    }
-                    .testTag(tab.testTag)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                contentAlignment = Alignment.Center,
-              ) {
-                Column(
-                  horizontalAlignment = Alignment.CenterHorizontally,
-                  verticalArrangement = Arrangement.Center,
-                ) {
-                  Icon(
-                    imageVector = if (isSelected) tab.selectedIcon else tab.icon,
-                    contentDescription = null,
-                    tint = contentColor,
-                    modifier = Modifier.size(22.dp),
-                  )
-                  Spacer(Modifier.height(2.dp))
-                  Text(
-                    text = tab.label,
-                    style =
-                      MaterialTheme.typography.labelMedium.copy(
-                        fontWeight =
-                          if (isSelected) androidx.compose.ui.text.font.FontWeight.SemiBold
-                          else androidx.compose.ui.text.font.FontWeight.Medium
-                      ),
-                    color = contentColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                  )
+          Box(
+            modifier =
+              Modifier.weight(1f)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(29.dp))
+                .glassClickable(role = Role.Tab) {
+                  if (!isSelected) {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                  }
+                  onSelectTab(tab.id)
                 }
-              }
+                .semantics {
+                  selected = isSelected
+                  contentDescription = tab.label
+                }
+                .testTag(tab.testTag)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            contentAlignment = Alignment.Center,
+          ) {
+            Column(
+              horizontalAlignment = Alignment.CenterHorizontally,
+              verticalArrangement = Arrangement.Center,
+            ) {
+              Icon(
+                imageVector = if (isSelected) tab.selectedIcon else tab.icon,
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.size(22.dp),
+              )
+              Spacer(Modifier.height(2.dp))
+              Text(
+                text = tab.label,
+                style =
+                  MaterialTheme.typography.labelMedium.copy(
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                  ),
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
             }
           }
         }
@@ -233,13 +200,14 @@ fun GlassFloatingTabBar(
       cornerRadius = 34.dp,
       shape = CircleShape,
       elevation = GlassElevation.FLOATING,
+      useBackdropBlur = true,
       onClick = {
         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         onSearchClick()
       },
       clickRole = Role.Button,
       modifier =
-        Modifier.size(capsuleHeight)
+        Modifier.size(68.dp)
           .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
           .semantics { contentDescription = "Open Search" }
           .testTag("glass_search_orb_button"),
@@ -282,6 +250,7 @@ fun GlassNavigationRail(
       cornerRadius = 28.dp,
       shape = CircleShape,
       elevation = GlassElevation.FLOATING,
+      useBackdropBlur = true,
       onClick = {
         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         onSearchClick()
@@ -300,6 +269,7 @@ fun GlassNavigationRail(
     GlassSurface(
       cornerRadius = 30.dp,
       elevation = GlassElevation.FLOATING,
+      useBackdropBlur = true,
       modifier = Modifier.testTag("glass_navigation_rail"),
     ) {
       Column(
@@ -321,13 +291,10 @@ fun GlassNavigationRail(
               Modifier.defaultMinSize(minWidth = 64.dp, minHeight = 52.dp)
                 .clip(RoundedCornerShape(20.dp))
                 .background(bg)
-                .clickable(
-                  role = Role.Tab,
-                  onClick = {
-                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onSelectTab(tab.id)
-                  },
-                )
+                .glassClickable(role = Role.Tab) {
+                  haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                  onSelectTab(tab.id)
+                }
                 .semantics { selected = isSelected }
                 .testTag("rail_${tab.testTag}")
                 .padding(horizontal = 8.dp, vertical = 8.dp),
@@ -377,6 +344,7 @@ fun GlassToolbarGroup(
   GlassSurface(
     cornerRadius = 24.dp,
     elevation = GlassElevation.FLOATING,
+    useBackdropBlur = true,
     modifier = modifier.height(48.dp),
   ) {
     Row(
@@ -428,6 +396,7 @@ fun GlassSearchField(
   GlassSurface(
     cornerRadius = 28.dp,
     elevation = GlassElevation.FLOATING,
+    useBackdropBlur = true,
     modifier = modifier.fillMaxWidth().height(54.dp).testTag("glass_search_field"),
   ) {
     Row(
