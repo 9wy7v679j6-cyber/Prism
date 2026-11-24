@@ -1,21 +1,33 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Prism Docs R8 / ProGuard keep rules
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Preserve readable crash stack traces (lines + obfuscated source file name)
+-keepattributes SourceFile,LineNumberTable,*Annotation*
+-renamesourcefileattribute SourceFile
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Type-safe Navigation Compose @Serializable route classes & companions
+-keep,includedescriptorclasses class com.prism.docs.navigation.** { *; }
+-keepclassmembers class com.prism.docs.navigation.** {
+    *** Companion;
+    kotlinx.serialization.KSerializer serializer(...);
+}
+-keepclassmembers class **$$serializer {
+    kotlinx.serialization.KSerializer[] childSerializers();
+}
+-keep,includedescriptorclasses @kotlinx.serialization.Serializable class ** { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# WorkManager + @HiltWorker background workers (reflection-instantiated by HiltWorkerFactory)
+-keep class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+-keep class com.prism.docs.core.data.indexer.DocumentIndexWorker { *; }
+-keep class com.prism.docs.core.data.storage.FileTransferWorker { *; }
+
+# Room generated database implementation & DAOs
+-keep class * extends androidx.room.RoomDatabase { *; }
+-keep class com.prism.docs.core.data.db.PrismDatabase_Impl { *; }
+
+# Keep Parcelables / runtime enum values accessed by serialization or SavedStateHandle
+-keepclassmembers enum * {
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+}
