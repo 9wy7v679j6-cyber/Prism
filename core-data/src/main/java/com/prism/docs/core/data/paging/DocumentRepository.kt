@@ -7,15 +7,18 @@ import androidx.room.withTransaction
 import com.prism.docs.core.data.db.CategoryCountRow
 import com.prism.docs.core.data.db.CollectionDao
 import com.prism.docs.core.data.db.CollectionEntity
+import com.prism.docs.core.data.db.CollectionWithCountRow
 import com.prism.docs.core.data.db.DocumentCollectionCrossRef
 import com.prism.docs.core.data.db.DocumentIndexDao
 import com.prism.docs.core.data.db.DocumentTagCrossRef
+import com.prism.docs.core.data.db.FolderStorageStatRow
 import com.prism.docs.core.data.db.IndexedDocumentEntity
 import com.prism.docs.core.data.db.PrismDatabase
 import com.prism.docs.core.data.db.RecycleBinDao
 import com.prism.docs.core.data.db.RecycleBinEntryEntity
 import com.prism.docs.core.data.db.TagDao
 import com.prism.docs.core.data.db.TagEntity
+import com.prism.docs.core.data.db.TagWithCountRow
 import com.prism.docs.core.data.model.DirectoryChangeEvent
 import com.prism.docs.core.data.model.FileListQuery
 import com.prism.docs.core.data.storage.DocumentStorageGateway
@@ -70,6 +73,12 @@ constructor(
   fun observeCategoryCounts(): Flow<List<CategoryCountRow>> =
     documentIndexDao.observeCategoryCounts()
 
+  fun observeLargestDocuments(limit: Int = 40): Flow<List<IndexedDocumentEntity>> =
+    documentIndexDao.observeLargestDocuments(limit)
+
+  fun observeFolderStorageStats(limit: Int = 25): Flow<List<FolderStorageStatRow>> =
+    documentIndexDao.observeFolderStorageStats(limit)
+
   fun observeRecents(limit: Int = 30): Flow<List<IndexedDocumentEntity>> =
     documentIndexDao.observeRecentDocuments(limit)
 
@@ -81,7 +90,26 @@ constructor(
 
   fun observeCollections(): Flow<List<CollectionEntity>> = collectionDao.observeCollections()
 
+  fun observeCollectionsWithStats(): Flow<List<CollectionWithCountRow>> =
+    collectionDao.observeCollectionsWithStats()
+
+  fun observeCollection(collectionId: Long): Flow<CollectionEntity?> =
+    collectionDao.observeById(collectionId)
+
+  fun observeDocumentsInCollection(collectionId: Long): Flow<List<IndexedDocumentEntity>> =
+    collectionDao.observeDocumentsInCollection(collectionId)
+
   fun observeTags(): Flow<List<TagEntity>> = tagDao.observeTags()
+
+  fun observeTagsWithStats(): Flow<List<TagWithCountRow>> = tagDao.observeTagsWithStats()
+
+  fun observeCollectionCrossRefsForDocuments(documentIds: List<Long>): Flow<List<DocumentCollectionCrossRef>> =
+    if (documentIds.isEmpty()) kotlinx.coroutines.flow.flowOf(emptyList())
+    else collectionDao.observeCrossRefsForDocuments(documentIds)
+
+  fun observeTagCrossRefsForDocuments(documentIds: List<Long>): Flow<List<DocumentTagCrossRef>> =
+    if (documentIds.isEmpty()) kotlinx.coroutines.flow.flowOf(emptyList())
+    else tagDao.observeCrossRefsForDocuments(documentIds)
 
   fun observeRecycleBin(): Flow<List<RecycleBinEntryEntity>> = recycleBinDao.observeAll()
 
@@ -119,45 +147,121 @@ constructor(
     accentHex: String,
     iconName: String = "folder",
     createdAtEpochMs: Long = System.currentTimeMillis(),
-  ): Long =
-    collectionDao.upsert(
+  ): Long {
+    val clean = name.trim()
+    require(clean.isNotEmpty()) { "Collection name cannot be blank" }
+    return collectionDao.upsert(
       CollectionEntity(
-        name = name.trim(),
+        name = clean,
         accentHex = accentHex,
         iconName = iconName,
         createdAtEpochMs = createdAtEpochMs,
+        updatedAtEpochMs = createdAtEpochMs,
       )
     )
+  }
+
+  suspend fun renameCollection(
+    collectionId: Long,
+    newName: String,
+    updatedAtEpochMs: Long = System.currentTimeMillis(),
+  ): Boolean {
+    val clean = newName.trim()
+    if (clean.isEmpty()) return false
+    collectionDao.rename(collectionId, clean, updatedAtEpochMs)
+    return true
+  }
+
+  suspend fun deleteCollection(collectionId: Long) {
+    collectionDao.deleteById(collectionId)
+  }
 
   suspend fun addDocumentToCollection(documentId: Long, collectionId: Long) {
+    val now = System.currentTimeMillis()
     collectionDao.addDocumentToCollection(
-      DocumentCollectionCrossRef(documentId = documentId, collectionId = collectionId)
+      DocumentCollectionCrossRef(
+        documentId = documentId,
+        collectionId = collectionId,
+        addedAtEpochMs = now,
+      )
     )
+    collectionDao.touchUpdated(collectionId, now)
+  }
+
+  suspend fun addDocumentsToCollection(documentIds: List<Long>, collectionId: Long) {
+    if (documentIds.isEmpty()) return
+    val now = System.currentTimeMillis()
+    collectionDao.addDocumentsToCollection(
+      documentIds.distinct().map {
+        DocumentCollectionCrossRef(documentId = it, collectionId = collectionId, addedAtEpochMs = now)
+      }
+    )
+    collectionDao.touchUpdated(collectionId, now)
   }
 
   suspend fun removeDocumentFromCollection(documentId: Long, collectionId: Long) {
     collectionDao.removeDocumentFromCollection(documentId, collectionId)
+    collectionDao.touchUpdated(collectionId, System.currentTimeMillis())
+  }
+
+  suspend fun removeDocumentsFromCollection(documentIds: List<Long>, collectionId: Long) {
+    if (documentIds.isEmpty()) return
+    collectionDao.removeDocumentsFromCollection(documentIds, collectionId)
+    collectionDao.touchUpdated(collectionId, System.currentTimeMillis())
   }
 
   suspend fun createTag(
     name: String,
     colorHex: String,
     createdAtEpochMs: Long = System.currentTimeMillis(),
-  ): Long =
-    tagDao.insert(
+  ): Long {
+    val clean = name.trim()
+    require(clean.isNotEmpty()) { "Tag name cannot be blank" }
+    val existing = tagDao.findByNameIgnoreCase(clean)
+    if (existing != null) return existing.id
+    return tagDao.insert(
       TagEntity(
-        name = name.trim(),
+        name = clean,
         colorHex = colorHex,
         createdAtEpochMs = createdAtEpochMs,
       )
     )
+  }
+
+  suspend fun renameTag(tagId: Long, newName: String): Boolean {
+    val clean = newName.trim()
+    if (clean.isEmpty()) return false
+    val collision = tagDao.findByNameIgnoreCase(clean)
+    if (collision != null && collision.id != tagId) return false
+    tagDao.rename(tagId, clean)
+    return true
+  }
+
+  suspend fun deleteTag(tagId: Long) {
+    tagDao.deleteById(tagId)
+  }
 
   suspend fun attachTag(documentId: Long, tagId: Long) {
     tagDao.attachTag(DocumentTagCrossRef(documentId = documentId, tagId = tagId))
   }
 
+  suspend fun attachTagToDocuments(documentIds: List<Long>, tagId: Long) {
+    if (documentIds.isEmpty()) return
+    val now = System.currentTimeMillis()
+    tagDao.attachTags(
+      documentIds.distinct().map {
+        DocumentTagCrossRef(documentId = it, tagId = tagId, taggedAtEpochMs = now)
+      }
+    )
+  }
+
   suspend fun detachTag(documentId: Long, tagId: Long) {
     tagDao.detachTag(documentId, tagId)
+  }
+
+  suspend fun detachTagFromDocuments(documentIds: List<Long>, tagId: Long) {
+    if (documentIds.isEmpty()) return
+    tagDao.detachTagFromDocuments(documentIds, tagId)
   }
 
   /**

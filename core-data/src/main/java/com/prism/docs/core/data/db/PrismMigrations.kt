@@ -188,5 +188,31 @@ object PrismMigrations {
       }
     }
 
-  val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+  /**
+   * Upgrades v3 schema to v4 for Duplicate Finder hash caching, Storage Analyzer size indexing,
+   * and collection update timestamps:
+   * - Adds `partialHash` column and indexes on `contentHash` and `(isTrashed, sizeBytes)` to
+   *   `indexed_documents`.
+   * - Adds `updatedAtEpochMs` to `collections` initialized from `createdAtEpochMs`.
+   */
+  val MIGRATION_3_4: Migration =
+    object : Migration(3, 4) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `indexed_documents` ADD COLUMN `partialHash` TEXT")
+        db.execSQL(
+          "CREATE INDEX IF NOT EXISTS `index_indexed_documents_contentHash` ON `indexed_documents` (`contentHash`)"
+        )
+        db.execSQL(
+          "CREATE INDEX IF NOT EXISTS `index_indexed_documents_isTrashed_sizeBytes` ON `indexed_documents` (`isTrashed`, `sizeBytes`)"
+        )
+        db.execSQL(
+          "ALTER TABLE `collections` ADD COLUMN `updatedAtEpochMs` INTEGER NOT NULL DEFAULT 0"
+        )
+        db.execSQL(
+          "UPDATE `collections` SET `updatedAtEpochMs` = `createdAtEpochMs` WHERE `updatedAtEpochMs` = 0"
+        )
+      }
+    }
+
+  val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
 }

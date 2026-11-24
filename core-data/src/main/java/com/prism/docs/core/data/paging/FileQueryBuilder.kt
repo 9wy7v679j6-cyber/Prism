@@ -32,6 +32,8 @@ object FileQueryBuilder {
     if (query.category != null) {
       whereClauses += "d.category = ?"
       args += query.category.name
+    } else if (query.otherCategoriesOnly) {
+      whereClauses += "d.category NOT IN ('PDF', 'DOCUMENTS', 'SPREADSHEETS', 'SLIDES', 'IMAGES')"
     }
 
     if (!query.parentPath.isNullOrBlank()) {

@@ -3,6 +3,7 @@ package com.prism.docs.feature.files
 import android.graphics.Bitmap
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -44,22 +45,30 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.prism.docs.core.data.db.IndexedDocumentEntity
 import com.prism.docs.core.data.model.DocumentCategory
 import com.prism.docs.core.data.thumbnail.DocumentThumbnailPipeline
 import com.prism.docs.core.data.thumbnail.ThumbnailRequest
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
+import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
+import com.prism.docs.core.ui.theme.PrismDimens
+import com.prism.docs.core.ui.theme.PrismVisualTokens
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -129,16 +138,20 @@ fun FileTypeBadgePill(
       modifier
         .clip(CircleShape)
         .background(accent)
-        .padding(horizontal = 9.dp, vertical = 3.dp),
+        .padding(
+          horizontal = PrismDimens.BadgePillHorizontalPadding,
+          vertical = PrismDimens.BadgePillVerticalPadding,
+        )
+        .clearAndSetSemantics {},
     contentAlignment = Alignment.Center,
   ) {
     Text(
       text = label,
       fontFamily = FontFamily.SansSerif,
-      fontSize = 10.sp,
+      fontSize = PrismDimens.FontSizeBadgePill,
       fontWeight = FontWeight.ExtraBold,
-      letterSpacing = 0.2.sp,
-      color = Color.White,
+      letterSpacing = PrismDimens.LetterSpacingWideBadge,
+      color = PrismColors.OnAccent,
       maxLines = 1,
     )
   }
@@ -156,15 +169,17 @@ fun FileTypeSquareBadge(
   modifier: Modifier = Modifier,
 ) {
   val colorScheme = MaterialTheme.colorScheme
-  val badgeShape = RoundedCornerShape(14.dp)
-  val fontSize = if (label.length >= 4) 11.5.sp else 12.5.sp
+  val badgeShape = RoundedCornerShape(PrismDimens.BadgeSquareCornerRadius)
+  val fontSize =
+    if (label.length >= 4) PrismDimens.FontSizeBadgeSquareCompact
+    else PrismDimens.FontSizeBadgeSquareRegular
 
-  Box(modifier = modifier.size(46.dp)) {
+  Box(modifier = modifier.size(PrismDimens.BadgeSquareSize).clearAndSetSemantics {}) {
     Box(
       modifier =
         Modifier.fillMaxSize()
           .shadow(
-            elevation = 6.dp,
+            elevation = PrismDimens.ShadowSmall,
             shape = badgeShape,
             ambientColor = accent.copy(alpha = 0.36f),
             spotColor = accent.copy(alpha = 0.44f),
@@ -178,8 +193,8 @@ fun FileTypeSquareBadge(
         fontFamily = FontFamily.SansSerif,
         fontSize = fontSize,
         fontWeight = FontWeight.ExtraBold,
-        letterSpacing = (-0.2).sp,
-        color = Color.White,
+        letterSpacing = PrismDimens.LetterSpacingTightBadge,
+        color = PrismColors.OnAccent,
         maxLines = 1,
       )
     }
@@ -187,11 +202,11 @@ fun FileTypeSquareBadge(
     if (isSelected) {
       Icon(
         imageVector = Icons.Rounded.CheckCircle,
-        contentDescription = "Selected",
+        contentDescription = null,
         tint = colorScheme.primary,
         modifier =
           Modifier.align(Alignment.TopEnd)
-            .size(19.dp)
+            .size(PrismDimens.SelectedOverlayBadgeSize)
             .clip(CircleShape)
             .background(colorScheme.surface),
       )
@@ -223,12 +238,13 @@ fun IndexedDocumentEntity.toThumbnailRequest(targetSizePx: Int = 320): Thumbnail
 fun DocumentThumbnailView(
   request: ThumbnailRequest,
   pipeline: DocumentThumbnailPipeline,
-  cornerRadius: Dp = 18.dp,
+  cornerRadius: Dp = PrismDimens.RecentThumbnailCornerRadius,
   compact: Boolean = false,
   showCornerBadge: Boolean = !compact,
   modifier: Modifier = Modifier,
 ) {
   val glassEnv = LocalGlassEnvironment.current
+  val tokens = LocalPrismVisualTokens.current
   val visual = remember(request.category) { categoryVisualSpec(request.category) }
   val (badgeLabel, badgeColor) =
     remember(request.displayName, request.category) {
@@ -252,17 +268,12 @@ fun DocumentThumbnailView(
       label = "thumbnail_fade",
     )
 
-  val sheetBackground =
-    if (glassEnv.isDark) Color(0xFF192235) else Color.White.copy(alpha = 0.96f)
-  val sheetBorder =
-    if (glassEnv.isDark) Color.White.copy(alpha = 0.12f) else Color(0xFFD7E2F0).copy(alpha = 0.85f)
-
   Box(
     modifier =
       modifier
         .clip(shape)
-        .background(sheetBackground)
-        .border(width = 0.75.dp, color = sheetBorder, shape = shape),
+        .background(tokens.thumbnailSheetBg)
+        .border(width = PrismDimens.HairlineWidth, color = tokens.thumbnailSheetBorder, shape = shape),
     contentAlignment = Alignment.Center,
   ) {
     if (compact) {
@@ -270,14 +281,13 @@ fun DocumentThumbnailView(
         imageVector = visual.icon,
         contentDescription = null,
         tint = badgeColor,
-        modifier = Modifier.size(24.dp),
+        modifier = Modifier.size(PrismDimens.ThumbnailCompactIconSize),
       )
     } else {
-      // Crisp miniature paper/sheet fallback layout
       MiniatureSheetFallback(
         category = request.category,
         accent = badgeColor,
-        isDark = glassEnv.isDark,
+        tokens = tokens,
       )
     }
 
@@ -286,7 +296,7 @@ fun DocumentThumbnailView(
       val imageBitmap = remember(loaded) { loaded.asImageBitmap() }
       Image(
         bitmap = imageBitmap,
-        contentDescription = "${request.displayName} thumbnail",
+        contentDescription = stringResource(R.string.doc_thumbnail_cd, request.displayName),
         contentScale = ContentScale.Crop,
         modifier = Modifier.fillMaxSize().graphicsLayer { alpha = imageAlpha.value },
       )
@@ -296,7 +306,7 @@ fun DocumentThumbnailView(
       FileTypeBadgePill(
         label = badgeLabel,
         accent = badgeColor,
-        modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+        modifier = Modifier.align(Alignment.TopEnd).padding(PrismDimens.BadgeCornerInset),
       )
     }
   }
@@ -306,19 +316,25 @@ fun DocumentThumbnailView(
 private fun MiniatureSheetFallback(
   category: DocumentCategory,
   accent: Color,
-  isDark: Boolean,
+  tokens: PrismVisualTokens,
 ) {
-  val lineColor = if (isDark) Color.White.copy(alpha = 0.16f) else Color(0xFFD0DAE8)
-  val headerColor = if (isDark) Color.White.copy(alpha = 0.72f) else Color(0xFF1D2940)
+  val lineColor = tokens.fallbackLine
+  val headerColor = tokens.fallbackHeader
+  val isDark = tokens.isDark
 
   when (category) {
     DocumentCategory.SPREADSHEETS -> {
-      val gridColor = if (isDark) Color.White.copy(alpha = 0.14f) else Color(0xFFD6E0EC)
-      val headerBg = if (isDark) PrismColors.EmeraldSheet.copy(alpha = 0.34f) else Color(0xFFC2F0D3)
+      val gridColor = tokens.sheetGridLine
+      val headerBg = tokens.sheetHeaderBg
       Column(modifier = Modifier.fillMaxSize()) {
-        Box(modifier = Modifier.fillMaxWidth().height(26.dp).background(headerBg))
+        Box(
+          modifier =
+            Modifier.fillMaxWidth()
+              .height(PrismDimens.ThumbnailSheetHeaderHeight)
+              .background(headerBg)
+        )
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-          androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+          Canvas(modifier = Modifier.fillMaxSize()) {
             val cols = 4
             val rows = 5
             val colW = size.width / cols
@@ -326,54 +342,58 @@ private fun MiniatureSheetFallback(
             for (c in 1 until cols) {
               drawLine(
                 color = gridColor,
-                start = androidx.compose.ui.geometry.Offset(c * colW, 0f),
-                end = androidx.compose.ui.geometry.Offset(c * colW, size.height),
+                start = Offset(c * colW, 0f),
+                end = Offset(c * colW, size.height),
                 strokeWidth = 1.dp.toPx(),
               )
             }
             for (r in 1 until rows) {
               drawLine(
                 color = gridColor,
-                start = androidx.compose.ui.geometry.Offset(0f, r * rowH),
-                end = androidx.compose.ui.geometry.Offset(size.width, r * rowH),
+                start = Offset(0f, r * rowH),
+                end = Offset(size.width, r * rowH),
                 strokeWidth = 1.dp.toPx(),
               )
             }
             drawRect(
-              color = PrismColors.EmeraldSheet,
-              topLeft = androidx.compose.ui.geometry.Offset(colW, rowH),
-              size = androidx.compose.ui.geometry.Size(colW, rowH),
-              style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()),
+              color = tokens.successAccent,
+              topLeft = Offset(colW, rowH),
+              size = Size(colW, rowH),
+              style = Stroke(width = 2.dp.toPx()),
             )
           }
         }
       }
     }
     DocumentCategory.SLIDES -> {
-      val slideBg = if (isDark) Color(0xFF332116) else Color(0xFFFFDFC4)
       Column(
-        modifier = Modifier.fillMaxSize().background(slideBg).padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier =
+          Modifier.fillMaxSize()
+            .background(tokens.slideBg)
+            .padding(PrismDimens.SpaceStandard),
+        verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
       ) {
         Box(
           modifier =
             Modifier.fillMaxWidth(0.72f)
-              .height(8.dp)
+              .height(PrismDimens.SpaceMedium)
               .clip(CircleShape)
               .background(PrismColors.OrangeSlide.copy(alpha = 0.85f))
         )
         Row(
           verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmallMedium),
         ) {
           Box(
             modifier =
-              Modifier.size(7.dp).clip(CircleShape).background(PrismColors.OrangeSlide)
+              Modifier.size(PrismDimens.SpaceSmallMedium)
+                .clip(CircleShape)
+                .background(PrismColors.OrangeSlide)
           )
           Box(
             modifier =
               Modifier.fillMaxWidth(0.75f)
-                .height(5.dp)
+                .height(PrismDimens.SpaceSmall)
                 .clip(CircleShape)
                 .background(PrismColors.OrangeSlide.copy(alpha = 0.55f))
           )
@@ -382,39 +402,51 @@ private fun MiniatureSheetFallback(
           modifier =
             Modifier.fillMaxWidth()
               .weight(1f)
-              .clip(RoundedCornerShape(10.dp))
-              .background(if (isDark) Color.White.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.88f))
+              .clip(RoundedCornerShape(PrismDimens.SpaceMediumLarge))
+              .background(tokens.slideInnerCard)
         )
       }
     }
     else -> {
       Column(
-        modifier = Modifier.fillMaxSize().padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(7.dp),
+        modifier = Modifier.fillMaxSize().padding(PrismDimens.SpaceStandard),
+        verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmallMedium),
       ) {
         Box(
           modifier =
             Modifier.fillMaxWidth(0.54f)
-              .height(7.dp)
+              .height(PrismDimens.SpaceMedium)
               .clip(CircleShape)
               .background(headerColor)
         )
-        Spacer(Modifier.height(2.dp))
+        Spacer(Modifier.height(PrismDimens.SpaceXSmall))
         Box(
-          modifier = Modifier.fillMaxWidth(0.92f).height(5.dp).clip(CircleShape).background(lineColor)
+          modifier =
+            Modifier.fillMaxWidth(0.92f)
+              .height(PrismDimens.SpaceSmall)
+              .clip(CircleShape)
+              .background(lineColor)
         )
         Box(
-          modifier = Modifier.fillMaxWidth(0.76f).height(5.dp).clip(CircleShape).background(lineColor)
+          modifier =
+            Modifier.fillMaxWidth(0.76f)
+              .height(PrismDimens.SpaceSmall)
+              .clip(CircleShape)
+              .background(lineColor)
         )
         Box(
-          modifier = Modifier.fillMaxWidth(0.84f).height(5.dp).clip(CircleShape).background(lineColor)
+          modifier =
+            Modifier.fillMaxWidth(0.84f)
+              .height(PrismDimens.SpaceSmall)
+              .clip(CircleShape)
+              .background(lineColor)
         )
-        Spacer(Modifier.height(2.dp))
+        Spacer(Modifier.height(PrismDimens.SpaceXSmall))
         Box(
           modifier =
             Modifier.fillMaxWidth()
               .weight(1f)
-              .clip(RoundedCornerShape(10.dp))
+              .clip(RoundedCornerShape(PrismDimens.SpaceMediumLarge))
               .background(accent.copy(alpha = if (isDark) 0.24f else 0.18f)),
           contentAlignment = Alignment.Center,
         ) {
@@ -423,12 +455,16 @@ private fun MiniatureSheetFallback(
             imageVector = visual.icon,
             contentDescription = null,
             tint = accent.copy(alpha = 0.78f),
-            modifier = Modifier.size(22.dp),
+            modifier = Modifier.size(PrismDimens.ThumbnailFallbackIconSize),
           )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmallMedium)) {
           Box(
-            modifier = Modifier.fillMaxWidth(0.68f).height(4.dp).clip(CircleShape).background(lineColor)
+            modifier =
+              Modifier.fillMaxWidth(0.68f)
+                .height(PrismDimens.SpaceSmall)
+                .clip(CircleShape)
+                .background(lineColor)
           )
         }
       }
@@ -449,19 +485,70 @@ fun formatByteSize(bytes: Long): String {
   return String.format(Locale.US, "%.2f GB", gb)
 }
 
-fun formatRelativeDay(epochMs: Long): String {
-  if (epochMs <= 0L) return "unknown date"
+@Composable
+fun rememberFormattedByteSize(bytes: Long): String {
+  if (bytes < 0L) return stringResource(R.string.format_unknown_dash)
+  if (bytes < 1024L) return stringResource(R.string.format_bytes_b, bytes)
+  val kb = bytes / 1024.0
+  if (kb < 1024.0) return stringResource(R.string.format_bytes_kb, kb)
+  val mb = kb / 1024.0
+  if (mb < 1024.0) return stringResource(R.string.format_bytes_mb, mb)
+  val gb = mb / 1024.0
+  return stringResource(R.string.format_bytes_gb, gb)
+}
+
+@Composable
+fun rememberFormattedRelativeDay(epochMs: Long): String {
+  if (epochMs <= 0L) return stringResource(R.string.format_unknown_date)
+  val dayDiff = remember(epochMs) { computeDayDifference(epochMs) }
+  return when {
+    dayDiff <= 0 -> stringResource(R.string.format_day_today)
+    dayDiff == 1 -> stringResource(R.string.format_day_yesterday)
+    dayDiff in 2..6 ->
+      remember(epochMs) { SimpleDateFormat("EEEE", Locale.getDefault()).format(Date(epochMs)) }
+    else ->
+      remember(epochMs) { SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(epochMs)) }
+  }
+}
+
+@Composable
+fun rememberFormattedModifiedTimestamp(epochMs: Long): String {
+  if (epochMs <= 0L) return stringResource(R.string.format_unknown_date_title)
+  val now = System.currentTimeMillis()
+  val diff = (now - epochMs).coerceAtLeast(0L)
+  val oneDay = 24L * 60L * 60L * 1000L
+  return when {
+    diff < 60_000L -> stringResource(R.string.format_just_now)
+    diff < 3_600_000L -> {
+      val mins = (diff / 60_000L).toInt().coerceAtLeast(1)
+      pluralStringResource(R.plurals.format_minutes_ago, mins, mins)
+    }
+    diff < oneDay -> {
+      val hours = (diff / 3_600_000L).toInt().coerceAtLeast(1)
+      pluralStringResource(R.plurals.format_hours_ago, hours, hours)
+    }
+    diff < 7L * oneDay -> {
+      val days = (diff / oneDay).toInt().coerceAtLeast(1)
+      pluralStringResource(R.plurals.format_days_ago, days, days)
+    }
+    else ->
+      remember(epochMs) { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(epochMs)) }
+  }
+}
+
+private fun computeDayDifference(epochMs: Long): Int {
   val nowCal = Calendar.getInstance()
   val targetCal = Calendar.getInstance().apply { timeInMillis = epochMs }
+  return if (nowCal.get(Calendar.YEAR) == targetCal.get(Calendar.YEAR)) {
+    nowCal.get(Calendar.DAY_OF_YEAR) - targetCal.get(Calendar.DAY_OF_YEAR)
+  } else {
+    ((nowCal.timeInMillis - epochMs) / (24L * 60L * 60L * 1000L)).toInt()
+  }
+}
 
-  val sameYear = nowCal.get(Calendar.YEAR) == targetCal.get(Calendar.YEAR)
-  val dayDiff =
-    if (sameYear) {
-      nowCal.get(Calendar.DAY_OF_YEAR) - targetCal.get(Calendar.DAY_OF_YEAR)
-    } else {
-      ((nowCal.timeInMillis - epochMs) / (24L * 60L * 60L * 1000L)).toInt()
-    }
-
+fun formatRelativeDay(epochMs: Long): String {
+  if (epochMs <= 0L) return "unknown date"
+  val dayDiff = computeDayDifference(epochMs)
   return when {
     dayDiff <= 0 -> "today"
     dayDiff == 1 -> "yesterday"

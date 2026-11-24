@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -18,6 +19,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.DriveFileMove
+import androidx.compose.material.icons.automirrored.rounded.Label
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
@@ -45,6 +47,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.prism.docs.core.data.db.IndexedDocumentEntity
@@ -56,7 +63,8 @@ import com.prism.docs.core.data.model.TransferOperationType
 import com.prism.docs.core.data.model.TransferProgress
 import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSurface
-import com.prism.docs.core.ui.theme.PrismColors
+import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
+import com.prism.docs.core.ui.theme.PrismDimens
 
 @Composable
 fun CreateFolderDialog(
@@ -69,12 +77,12 @@ fun CreateFolderDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("New Folder") },
+    title = { Text(stringResource(R.string.dialog_new_folder_title)) },
     text = {
       OutlinedTextField(
         value = name,
         onValueChange = { name = it },
-        label = { Text("Folder name") },
+        label = { Text(stringResource(R.string.dialog_new_folder_label)) },
         singleLine = true,
         modifier = Modifier.fillMaxWidth().testTag("create_folder_input"),
       )
@@ -85,10 +93,12 @@ fun CreateFolderDialog(
         enabled = isValid,
         modifier = Modifier.testTag("create_folder_confirm"),
       ) {
-        Text("Create")
+        Text(stringResource(R.string.dialog_new_folder_create))
       }
     },
-    dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    dismissButton = {
+      TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+    },
   )
 }
 
@@ -109,18 +119,18 @@ fun RenameDocumentDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("Rename Document") },
+    title = { Text(stringResource(R.string.dialog_rename_title)) },
     text = {
-      Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+      Column(verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmallMedium)) {
         OutlinedTextField(
           value = name,
           onValueChange = { name = it },
-          label = { Text("New file name") },
+          label = { Text(stringResource(R.string.dialog_rename_label)) },
           singleLine = true,
           modifier = Modifier.fillMaxWidth().testTag("rename_document_input"),
         )
         Text(
-          text = "Favorites, tags, and collections remain linked after renaming.",
+          text = stringResource(R.string.dialog_rename_hint),
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -132,10 +142,12 @@ fun RenameDocumentDialog(
         enabled = isValid && trimmed != document.displayName,
         modifier = Modifier.testTag("rename_document_confirm"),
       ) {
-        Text("Rename")
+        Text(stringResource(R.string.action_rename))
       }
     },
-    dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    dismissButton = {
+      TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+    },
   )
 }
 
@@ -150,35 +162,43 @@ fun DestinationFolderPickerDialog(
   onConfirm: () -> Unit,
 ) {
   val colorScheme = MaterialTheme.colorScheme
+  val tokens = LocalPrismVisualTokens.current
   val actionLabel =
-    if (state.operationType == TransferOperationType.COPY) "Copy Here" else "Move Here"
+    stringResource(
+      if (state.operationType == TransferOperationType.COPY) R.string.picker_copy_here
+      else R.string.picker_move_here
+    )
+  val itemCount = state.targetDocumentIds.size
+  val dialogTitle =
+    pluralStringResource(
+      id =
+        if (state.operationType == TransferOperationType.COPY) R.plurals.picker_copy_title
+        else R.plurals.picker_move_title,
+      count = itemCount,
+      itemCount,
+    )
+  val selectedStateLabel = stringResource(R.string.state_selected)
+  val notSelectedStateLabel = stringResource(R.string.state_not_selected)
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = {
-      Text(
-        text =
-          if (state.operationType == TransferOperationType.COPY)
-            "Copy ${state.targetDocumentIds.size} item(s) to…"
-          else "Move ${state.targetDocumentIds.size} item(s) to…"
-      )
-    },
+    title = { Text(text = dialogTitle) },
     text = {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        // Breadcrumbs
+      Column(verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge)) {
         LazyRow(
-          horizontalArrangement = Arrangement.spacedBy(4.dp),
+          horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmall),
           verticalAlignment = Alignment.CenterVertically,
         ) {
           item {
             Text(
-              text = "Volumes",
+              text = stringResource(R.string.storage_volumes_breadcrumb),
               style = MaterialTheme.typography.labelLarge,
               color = colorScheme.primary,
               modifier =
-                Modifier.clip(RoundedCornerShape(8.dp))
-                  .clickable { onSelectBreadcrumb(-1) }
-                  .padding(horizontal = 6.dp, vertical = 4.dp),
+                Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+                  .clip(RoundedCornerShape(8.dp))
+                  .clickable(role = Role.Button) { onSelectBreadcrumb(-1) }
+                  .padding(horizontal = 6.dp, vertical = 12.dp),
             )
           }
           itemsIndexed(state.breadcrumbs) { idx, seg ->
@@ -195,44 +215,49 @@ fun DestinationFolderPickerDialog(
                   if (idx == state.breadcrumbs.lastIndex) colorScheme.onSurface
                   else colorScheme.primary,
                 modifier =
-                  Modifier.clip(RoundedCornerShape(8.dp))
-                    .clickable { onSelectBreadcrumb(idx) }
-                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                  Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(role = Role.Button) { onSelectBreadcrumb(idx) }
+                    .padding(horizontal = 6.dp, vertical = 12.dp),
               )
             }
           }
         }
 
-        // Collision policy selector
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmallMedium)) {
           val policies =
             listOf(
-              NameCollisionPolicy.AUTO_RENAME to "Auto-rename",
-              NameCollisionPolicy.SKIP to "Skip",
-              NameCollisionPolicy.OVERWRITE to "Overwrite",
+              NameCollisionPolicy.AUTO_RENAME to R.string.picker_policy_auto_rename,
+              NameCollisionPolicy.SKIP to R.string.picker_policy_skip,
+              NameCollisionPolicy.OVERWRITE to R.string.picker_policy_overwrite,
             )
-          items(policies) { (policy, label) ->
+          items(policies) { (policy, labelRes) ->
+            val selected = state.collisionPolicy == policy
             FilterChip(
-              selected = state.collisionPolicy == policy,
+              selected = selected,
               onClick = { onCollisionPolicyChange(policy) },
-              label = { Text(label) },
+              label = { Text(stringResource(labelRes)) },
+              modifier =
+                Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin).semantics {
+                  stateDescription = if (selected) selectedStateLabel else notSelectedStateLabel
+                },
             )
           }
         }
 
-        // Folder browser list
         LazyColumn(
           modifier = Modifier.fillMaxWidth().heightIn(min = 140.dp, max = 260.dp),
-          verticalArrangement = Arrangement.spacedBy(6.dp),
+          verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmallMedium),
         ) {
           if (state.breadcrumbs.isEmpty()) {
             items(state.roots, key = { it.id }) { root ->
               Row(
                 modifier =
                   Modifier.fillMaxWidth()
+                    .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
                     .clip(RoundedCornerShape(12.dp))
                     .background(colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                    .clickable { onSelectRoot(root) }
+                    .clickable(role = Role.Button) { onSelectRoot(root) }
                     .padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -257,7 +282,7 @@ fun DestinationFolderPickerDialog(
           } else if (state.subfolders.isEmpty()) {
             item {
               Text(
-                text = "No subfolders here. Tap \"$actionLabel\" to use this folder.",
+                text = stringResource(R.string.picker_no_subfolders, actionLabel),
                 style = MaterialTheme.typography.bodySmall,
                 color = colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(12.dp),
@@ -268,9 +293,10 @@ fun DestinationFolderPickerDialog(
               Row(
                 modifier =
                   Modifier.fillMaxWidth()
+                    .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
                     .clip(RoundedCornerShape(12.dp))
                     .background(colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                    .clickable { onSelectSubfolder(folder) }
+                    .clickable(role = Role.Button) { onSelectSubfolder(folder) }
                     .padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -278,7 +304,7 @@ fun DestinationFolderPickerDialog(
                 Icon(
                   imageVector = Icons.Rounded.Folder,
                   contentDescription = null,
-                  tint = PrismColors.AmberSlide,
+                  tint = tokens.warningAccent,
                 )
                 Text(
                   text = folder.displayName,
@@ -303,7 +329,9 @@ fun DestinationFolderPickerDialog(
         Text(actionLabel)
       }
     },
-    dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    dismissButton = {
+      TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+    },
   )
 }
 
@@ -323,7 +351,7 @@ fun TransferProgressBanner(
   ) {
     Column(
       modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-      verticalArrangement = Arrangement.spacedBy(8.dp),
+      verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
     ) {
       Row(
         modifier = Modifier.fillMaxWidth(),
@@ -333,11 +361,25 @@ fun TransferProgressBanner(
         Column(modifier = Modifier.weight(1f)) {
           val title =
             if (progress.isRunning) {
-              val verb = if (progress.type == TransferOperationType.COPY) "Copying" else "Moving"
-              "$verb ${progress.completedFiles}/${progress.totalFiles}" +
-                if (progress.isWorkManagerBacked) " • Background" else ""
+              val verb =
+                stringResource(
+                  if (progress.type == TransferOperationType.COPY) R.string.transfer_copying
+                  else R.string.transfer_moving
+                )
+              val base =
+                stringResource(
+                  R.string.transfer_progress_format,
+                  verb,
+                  progress.completedFiles,
+                  progress.totalFiles,
+                )
+              if (progress.isWorkManagerBacked) {
+                stringResource(R.string.transfer_progress_background_suffix, base)
+              } else {
+                base
+              }
             } else {
-              progress.summaryMessage ?: "Transfer complete"
+              progress.summaryMessage ?: stringResource(R.string.transfer_complete)
             }
           Text(
             text = title,
@@ -359,13 +401,21 @@ fun TransferProgressBanner(
         if (progress.isRunning) {
           TextButton(
             onClick = onCancel,
-            modifier = Modifier.testTag("cancel_transfer_button"),
+            modifier =
+              Modifier.defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
+                .testTag("cancel_transfer_button"),
           ) {
-            Text("Cancel")
+            Text(stringResource(R.string.action_cancel))
           }
         } else {
-          IconButton(onClick = onDismiss) {
-            Icon(imageVector = Icons.Rounded.Close, contentDescription = "Dismiss transfer summary")
+          IconButton(
+            onClick = onDismiss,
+            modifier = Modifier.defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin),
+          ) {
+            Icon(
+              imageVector = Icons.Rounded.Close,
+              contentDescription = stringResource(R.string.transfer_dismiss_cd),
+            )
           }
         }
       }
@@ -382,6 +432,7 @@ fun TransferProgressBanner(
 @Composable
 fun MultiSelectBatchBar(
   selectedCount: Int,
+  onTagsCollections: () -> Unit,
   onCopy: () -> Unit,
   onMove: () -> Unit,
   onShare: () -> Unit,
@@ -391,42 +442,78 @@ fun MultiSelectBatchBar(
 ) {
   val colorScheme = MaterialTheme.colorScheme
   GlassSurface(
-    cornerRadius = 26.dp,
+    cornerRadius = PrismDimens.RecentCardCornerRadius,
     elevation = GlassElevation.FLOATING,
     accentTint = colorScheme.primary,
     modifier = modifier.testTag("multi_select_batch_bar"),
   ) {
     Row(
-      modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+      modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(2.dp),
+      horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceXSmall),
     ) {
-      IconButton(onClick = onClear, modifier = Modifier.testTag("batch_clear_selection")) {
-        Icon(imageVector = Icons.Rounded.Close, contentDescription = "Clear selection")
+      IconButton(
+        onClick = onClear,
+        modifier =
+          Modifier.defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
+            .testTag("batch_clear_selection"),
+      ) {
+        Icon(imageVector = Icons.Rounded.Close, contentDescription = stringResource(R.string.batch_clear_cd))
       }
       Text(
         text = "$selectedCount",
         style = MaterialTheme.typography.titleSmall,
         color = colorScheme.primary,
       )
-      Spacer(modifier = Modifier.size(6.dp))
-      IconButton(onClick = onCopy, modifier = Modifier.testTag("batch_copy_button")) {
-        Icon(imageVector = Icons.Rounded.ContentCopy, contentDescription = "Copy selected")
-      }
-      IconButton(onClick = onMove, modifier = Modifier.testTag("batch_move_button")) {
+      IconButton(
+        onClick = onTagsCollections,
+        modifier =
+          Modifier.defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
+            .testTag("batch_tags_button"),
+      ) {
         Icon(
-          imageVector = Icons.AutoMirrored.Rounded.DriveFileMove,
-          contentDescription = "Move selected",
+          imageVector = Icons.AutoMirrored.Rounded.Label,
+          contentDescription = stringResource(R.string.batch_tags_cd),
+          tint = colorScheme.primary,
         )
       }
-      IconButton(onClick = onShare, modifier = Modifier.testTag("batch_share_button")) {
-        Icon(imageVector = Icons.Rounded.Share, contentDescription = "Share selected")
+      IconButton(
+        onClick = onCopy,
+        modifier =
+          Modifier.defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
+            .testTag("batch_copy_button"),
+      ) {
+        Icon(imageVector = Icons.Rounded.ContentCopy, contentDescription = stringResource(R.string.batch_copy_cd))
       }
-      IconButton(onClick = onTrash, modifier = Modifier.testTag("batch_trash_button")) {
+      IconButton(
+        onClick = onMove,
+        modifier =
+          Modifier.defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
+            .testTag("batch_move_button"),
+      ) {
+        Icon(
+          imageVector = Icons.AutoMirrored.Rounded.DriveFileMove,
+          contentDescription = stringResource(R.string.batch_move_cd),
+        )
+      }
+      IconButton(
+        onClick = onShare,
+        modifier =
+          Modifier.defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
+            .testTag("batch_share_button"),
+      ) {
+        Icon(imageVector = Icons.Rounded.Share, contentDescription = stringResource(R.string.batch_share_cd))
+      }
+      IconButton(
+        onClick = onTrash,
+        modifier =
+          Modifier.defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
+            .testTag("batch_trash_button"),
+      ) {
         Icon(
           imageVector = Icons.Rounded.DeleteOutline,
-          contentDescription = "Move selected to Recycle Bin",
-          tint = PrismColors.CoralPdf,
+          contentDescription = stringResource(R.string.batch_trash_cd),
+          tint = colorScheme.error,
         )
       }
     }

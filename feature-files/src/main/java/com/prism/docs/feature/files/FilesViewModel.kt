@@ -8,9 +8,11 @@ import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.prism.docs.core.data.db.CategoryCountRow
 import com.prism.docs.core.data.db.CollectionEntity
+import com.prism.docs.core.data.db.CollectionWithCountRow
 import com.prism.docs.core.data.db.IndexedDocumentEntity
 import com.prism.docs.core.data.db.RecycleBinEntryEntity
 import com.prism.docs.core.data.db.TagEntity
+import com.prism.docs.core.data.db.TagWithCountRow
 import com.prism.docs.core.data.indexer.DocumentIndexScheduler
 import com.prism.docs.core.data.indexer.IncrementalDocumentIndexer
 import com.prism.docs.core.data.model.DocumentCategory
@@ -93,11 +95,18 @@ data class DestinationPickerState(
     get() = breadcrumbs.lastOrNull()?.pathOrUri
 }
 
+data class AssignSheetState(
+  val targetDocumentIds: List<Long>,
+  val collectionAssignedCounts: Map<Long, Int>,
+  val tagAssignedCounts: Map<Long, Int>,
+)
+
 data class FilesUiState(
   val section: FilesSection = FilesSection.LIBRARY,
   val isGridMode: Boolean = false,
   val query: FileListQuery = FileListQuery(),
   val selectedIds: Set<Long> = emptySet(),
+  val isSelectionModeExplicit: Boolean = false,
   val totalIndexedCount: Int = 0,
   val totalIndexedBytes: Long = 0L,
   val favoritesCount: Int = 0,
@@ -109,6 +118,10 @@ data class FilesUiState(
   val recentDocuments: List<IndexedDocumentEntity> = emptyList(),
   val collections: List<CollectionEntity> = emptyList(),
   val tags: List<TagEntity> = emptyList(),
+  val collectionsWithStats: List<CollectionWithCountRow> = emptyList(),
+  val tagsWithStats: List<TagWithCountRow> = emptyList(),
+  val assignSheetState: AssignSheetState? = null,
+  val showManageTagsCollectionsSheet: Boolean = false,
   val indexWorkStatus: IndexWorkStatus = IndexWorkStatus(),
   val transferProgress: TransferProgress? = null,
   val storageBrowser: StorageBrowserState = StorageBrowserState(),
@@ -118,7 +131,7 @@ data class FilesUiState(
   val statusMessage: String? = null,
 ) {
   val isSelectionMode: Boolean
-    get() = selectedIds.isNotEmpty()
+    get() = isSelectionModeExplicit || selectedIds.isNotEmpty()
 }
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
@@ -139,11 +152,14 @@ constructor(
   private val gridModeFlow = MutableStateFlow(false)
   private val queryFlow = MutableStateFlow(FileListQuery())
   private val selectedIdsFlow = MutableStateFlow<Set<Long>>(emptySet())
+  private val selectionModeActiveFlow = MutableStateFlow(false)
   private val storageBrowserFlow = MutableStateFlow(StorageBrowserState())
   private val destinationPickerFlow = MutableStateFlow<DestinationPickerState?>(null)
   private val renameTargetFlow = MutableStateFlow<IndexedDocumentEntity?>(null)
   private val showCreateFolderFlow = MutableStateFlow(false)
   private val statusMessageFlow = MutableStateFlow<String?>(null)
+  private val assignTargetDocIdsFlow = MutableStateFlow<List<Long>?>(null)
+  private val showManageLabelsSheetFlow = MutableStateFlow(false)
 
   private var openDirectoryObserverJob: Job? = null
 
@@ -173,15 +189,47 @@ constructor(
       Triple(count, bytes, entries)
     }
 
+  private val labelsFlow =
+    combine(
+      documentRepository.observeCollections(),
+      documentRepository.observeTags(),
+      documentRepository.observeCollectionsWithStats(),
+      documentRepository.observeTagsWithStats(),
+    ) { collections, tags, colStats, tagStats ->
+      LabelsSlice(collections, tags, colStats, tagStats)
+    }
+
+  private val assignSheetStateFlow: Flow<AssignSheetState?> =
+    assignTargetDocIdsFlow.flatMapLatest { targetIds ->
+      if (targetIds.isNullOrEmpty()) {
+        flowOf(null)
+      } else {
+        combine(
+          documentRepository.observeCollectionCrossRefsForDocuments(targetIds),
+          documentRepository.observeTagCrossRefsForDocuments(targetIds),
+        ) { colRefs, tagRefs ->
+          AssignSheetState(
+            targetDocumentIds = targetIds,
+            collectionAssignedCounts = colRefs.groupingBy { it.collectionId }.eachCount(),
+            tagAssignedCounts = tagRefs.groupingBy { it.tagId }.eachCount(),
+          )
+        }
+      }
+    }
+
   private val metaFlow =
     combine(
       documentRepository.observeRecents(limit = 12),
-      documentRepository.observeCollections(),
-      documentRepository.observeTags(),
+      labelsFlow,
       indexScheduler.observeIndexStatus(),
       fileTransferScheduler.transferProgress,
-    ) { recents, collections, tags, workStatus, transfer ->
-      MetaSlice(recents, collections, tags, workStatus, transfer)
+    ) { recents, labels, workStatus, transfer ->
+      MetaSlice(recents, labels, workStatus, transfer)
+    }
+
+  private val labelDialogsFlow =
+    combine(assignSheetStateFlow, showManageLabelsSheetFlow) { assignState, manageOpen ->
+      assignState to manageOpen
     }
 
   private val dialogsFlow =
@@ -190,19 +238,23 @@ constructor(
       renameTargetFlow,
       showCreateFolderFlow,
       statusMessageFlow,
-    ) { picker, rename, createFolder, msg ->
-      DialogSlice(picker, rename, createFolder, msg)
+      labelDialogsFlow,
+    ) { picker, rename, createFolder, msg, (assignState, manageOpen) ->
+      DialogSlice(picker, rename, createFolder, msg, assignState, manageOpen)
     }
+
+  private val selectionStateFlow =
+    combine(selectedIdsFlow, selectionModeActiveFlow) { selected, explicit -> selected to explicit }
 
   val uiState: StateFlow<FilesUiState> =
     combine(
-        combine(sectionFlow, gridModeFlow, queryFlow, selectedIdsFlow, storageBrowserFlow) {
+        combine(sectionFlow, gridModeFlow, queryFlow, selectionStateFlow, storageBrowserFlow) {
           section,
           grid,
           query,
-          selected,
+          (selected, explicitSelection),
           storage ->
-          ControlSlice(section, grid, query, selected, storage)
+          ControlSlice(section, grid, query, selected, explicitSelection, storage)
         },
         countsFlow,
         trashFlow,
@@ -214,6 +266,7 @@ constructor(
           isGridMode = controls.isGridMode,
           query = controls.query,
           selectedIds = controls.selectedIds,
+          isSelectionModeExplicit = controls.isSelectionModeExplicit,
           totalIndexedCount = counts.activeCount,
           totalIndexedBytes = counts.totalBytes,
           favoritesCount = counts.favoritesCount,
@@ -223,8 +276,12 @@ constructor(
           recycleBinEntries = trashEntries,
           categoryCounts = counts.categoryCounts,
           recentDocuments = meta.recentDocuments,
-          collections = meta.collections,
-          tags = meta.tags,
+          collections = meta.labels.collections,
+          tags = meta.labels.tags,
+          collectionsWithStats = meta.labels.collectionsWithStats,
+          tagsWithStats = meta.labels.tagsWithStats,
+          assignSheetState = dialogs.assignSheetState,
+          showManageTagsCollectionsSheet = dialogs.showManageTagsCollectionsSheet,
           indexWorkStatus = meta.workStatus,
           transferProgress = meta.transferProgress,
           storageBrowser = controls.storageBrowser,
@@ -322,7 +379,21 @@ constructor(
 
   fun setCategoryFilter(category: DocumentCategory?) {
     queryFlow.update { current ->
-      current.copy(category = if (current.category == category) null else category)
+      current.copy(
+        category = if (current.category == category && !current.otherCategoriesOnly) null else category,
+        otherCategoriesOnly = false,
+      )
+    }
+  }
+
+  fun applyAnalyzerCategoryFilter(category: DocumentCategory?, otherOnly: Boolean) {
+    sectionFlow.value = FilesSection.LIBRARY
+    clearSelection()
+    queryFlow.update { current ->
+      current.copy(
+        category = if (otherOnly) null else category,
+        otherCategoriesOnly = otherOnly,
+      )
     }
   }
 
@@ -360,7 +431,115 @@ constructor(
     }
   }
 
+  // Tags & Collections management & assignment
+  fun openAssignSheet(documentIds: List<Long>) {
+    if (documentIds.isEmpty()) return
+    assignTargetDocIdsFlow.value = documentIds.distinct()
+  }
+
+  fun dismissAssignSheet() {
+    assignTargetDocIdsFlow.value = null
+  }
+
+  fun openManageTagsCollectionsSheet() {
+    showManageLabelsSheetFlow.value = true
+  }
+
+  fun dismissManageTagsCollectionsSheet() {
+    showManageLabelsSheetFlow.value = false
+  }
+
+  fun createCollection(name: String, accentHex: String, assignToTargets: Boolean = false) {
+    val clean = name.trim()
+    if (clean.isEmpty()) return
+    viewModelScope.launch {
+      val colId = documentRepository.createCollection(clean, accentHex)
+      if (assignToTargets) {
+        val targets = assignTargetDocIdsFlow.value.orEmpty()
+        if (targets.isNotEmpty()) {
+          documentRepository.addDocumentsToCollection(targets, colId)
+        }
+      }
+      statusMessageFlow.value = "Created collection \"$clean\""
+    }
+  }
+
+  fun renameCollection(collectionId: Long, newName: String) {
+    viewModelScope.launch {
+      val ok = documentRepository.renameCollection(collectionId, newName)
+      statusMessageFlow.value =
+        if (ok) "Renamed collection to \"${newName.trim()}\"" else "Enter a valid collection name"
+    }
+  }
+
+  fun deleteCollection(collectionId: Long) {
+    viewModelScope.launch {
+      documentRepository.deleteCollection(collectionId)
+      queryFlow.update { q -> if (q.collectionId == collectionId) q.copy(collectionId = null) else q }
+      statusMessageFlow.value = "Collection deleted"
+    }
+  }
+
+  fun toggleCollectionForTargets(collectionId: Long, assignAll: Boolean) {
+    val targets = assignTargetDocIdsFlow.value ?: return
+    if (targets.isEmpty()) return
+    viewModelScope.launch {
+      if (assignAll) {
+        documentRepository.addDocumentsToCollection(targets, collectionId)
+      } else {
+        documentRepository.removeDocumentsFromCollection(targets, collectionId)
+      }
+    }
+  }
+
+  fun createTag(name: String, colorHex: String, assignToTargets: Boolean = false) {
+    val clean = name.trim()
+    if (clean.isEmpty()) return
+    viewModelScope.launch {
+      val tagId = documentRepository.createTag(clean, colorHex)
+      if (assignToTargets) {
+        val targets = assignTargetDocIdsFlow.value.orEmpty()
+        if (targets.isNotEmpty()) {
+          documentRepository.attachTagToDocuments(targets, tagId)
+        }
+      }
+      statusMessageFlow.value = "Created tag #$clean"
+    }
+  }
+
+  fun renameTag(tagId: Long, newName: String) {
+    viewModelScope.launch {
+      val ok = documentRepository.renameTag(tagId, newName)
+      statusMessageFlow.value =
+        if (ok) "Renamed tag to #${newName.trim()}" else "Tag name already exists or is invalid"
+    }
+  }
+
+  fun deleteTag(tagId: Long) {
+    viewModelScope.launch {
+      documentRepository.deleteTag(tagId)
+      queryFlow.update { q -> if (q.tagId == tagId) q.copy(tagId = null) else q }
+      statusMessageFlow.value = "Tag deleted"
+    }
+  }
+
+  fun toggleTagForTargets(tagId: Long, assignAll: Boolean) {
+    val targets = assignTargetDocIdsFlow.value ?: return
+    if (targets.isEmpty()) return
+    viewModelScope.launch {
+      if (assignAll) {
+        documentRepository.attachTagToDocuments(targets, tagId)
+      } else {
+        documentRepository.detachTagFromDocuments(targets, tagId)
+      }
+    }
+  }
+
   // Multi-select
+  fun enterSelectionMode() {
+    selectionModeActiveFlow.value = true
+  }
+
   fun toggleSelection(documentId: Long) {
     selectedIdsFlow.update { current ->
       if (documentId in current) current - documentId else current + documentId
@@ -368,10 +547,12 @@ constructor(
   }
 
   fun selectAll(documentIds: Collection<Long>) {
+    selectionModeActiveFlow.value = true
     selectedIdsFlow.value = documentIds.toSet()
   }
 
   fun clearSelection() {
+    selectionModeActiveFlow.value = false
     selectedIdsFlow.value = emptySet()
   }
 
@@ -748,10 +929,16 @@ constructor(
     val categoryCounts: Map<DocumentCategory, CategoryCountRow>,
   )
 
-  private data class MetaSlice(
-    val recentDocuments: List<IndexedDocumentEntity>,
+  private data class LabelsSlice(
     val collections: List<CollectionEntity>,
     val tags: List<TagEntity>,
+    val collectionsWithStats: List<CollectionWithCountRow>,
+    val tagsWithStats: List<TagWithCountRow>,
+  )
+
+  private data class MetaSlice(
+    val recentDocuments: List<IndexedDocumentEntity>,
+    val labels: LabelsSlice,
     val workStatus: IndexWorkStatus,
     val transferProgress: TransferProgress?,
   )
@@ -761,6 +948,8 @@ constructor(
     val renameTarget: IndexedDocumentEntity?,
     val showCreateFolderDialog: Boolean,
     val statusMessage: String?,
+    val assignSheetState: AssignSheetState?,
+    val showManageTagsCollectionsSheet: Boolean,
   )
 
   private data class ControlSlice(
@@ -768,6 +957,7 @@ constructor(
     val isGridMode: Boolean,
     val query: FileListQuery,
     val selectedIds: Set<Long>,
+    val isSelectionModeExplicit: Boolean,
     val storageBrowser: StorageBrowserState,
   )
 }

@@ -1,10 +1,13 @@
 package com.prism.docs.feature.files
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,13 +15,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -33,7 +41,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.DriveFileMove
+import androidx.compose.material.icons.automirrored.rounded.Label
+import androidx.compose.material.icons.rounded.BookmarkRemove
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.CheckCircleOutline
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.CreateNewFolder
@@ -56,16 +67,33 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
@@ -83,11 +111,18 @@ import com.prism.docs.core.ui.glass.GlassContextMenu
 import com.prism.docs.core.ui.glass.GlassContextMenuItem
 import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSurface
+import com.prism.docs.core.ui.glass.LocalGlassMotion
+import com.prism.docs.core.ui.glass.glassClickable
 import com.prism.docs.core.ui.glass.glassEntrance
 import com.prism.docs.core.ui.glass.glassPress
 import com.prism.docs.core.ui.theme.LocalHazeState
+import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
+import com.prism.docs.core.ui.theme.PrismDimens
+import com.prism.docs.core.ui.theme.PrismMotion
 import dev.chrisbanes.haze.hazeSource
+import kotlin.math.abs
+import kotlinx.coroutines.launch
 
 @Composable
 fun StorageBrowserSection(
@@ -119,11 +154,13 @@ fun StorageBrowserSection(
   onRequestAllFilesAccess: () -> Unit,
   hasFullAccess: Boolean,
   modifier: Modifier = Modifier,
+  topContentPadding: Dp = 148.dp,
   rootsListState: LazyListState = rememberLazyListState(),
   directoryListState: LazyListState = rememberLazyListState(),
 ) {
   val hazeState = LocalHazeState.current
   val colorScheme = MaterialTheme.colorScheme
+  val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
   val currentDir = storageState.currentDirectory
   val isSafOpen = currentDir?.isSaf == true
 
@@ -132,61 +169,69 @@ fun StorageBrowserSection(
   if (currentDir == null) {
     LazyColumn(
       state = rootsListState,
-      contentPadding = PaddingValues(top = 146.dp, bottom = 128.dp, start = 16.dp, end = 16.dp),
-      verticalArrangement = Arrangement.spacedBy(12.dp),
+      contentPadding =
+        PaddingValues(
+          top = topContentPadding,
+          bottom = navBarBottom + PrismDimens.ListBottomContentPadding,
+          start = 16.dp,
+          end = 16.dp,
+        ),
+      verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceStandard),
       horizontalAlignment = Alignment.CenterHorizontally,
       modifier =
         modifier
           .fillMaxSize()
-          .statusBarsPadding()
           .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
           .testTag("storage_roots_list"),
     ) {
       item {
         Text(
-          text = "Storage Volumes & Linked Folders",
+          text = stringResource(R.string.storage_volumes_header),
           style = MaterialTheme.typography.titleMedium,
           color = colorScheme.onSurface,
-          modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
+          modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
         )
       }
 
       if (storageState.roots.isEmpty()) {
         item {
           GlassSurface(
-            cornerRadius = 24.dp,
+            cornerRadius = PrismDimens.BannerCornerRadius,
             elevation = GlassElevation.SUBTLE,
-            modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
+            modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
           ) {
             Column(
-              modifier = Modifier.padding(20.dp),
-              verticalArrangement = Arrangement.spacedBy(10.dp),
+              modifier = Modifier.padding(PrismDimens.SpaceLarge),
+              verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge),
             ) {
               Text(
-                text = "No browsable storage volumes yet",
+                text = stringResource(R.string.storage_empty_roots_title),
                 style = MaterialTheme.typography.titleMedium,
                 color = colorScheme.onSurface,
               )
               Text(
-                text =
-                  "Grant All Files Access to browse Internal Storage and SD cards directly, or link specific folders through Android's folder picker.",
+                text = stringResource(R.string.storage_empty_roots_body),
                 style = MaterialTheme.typography.bodyMedium,
                 color = colorScheme.onSurfaceVariant,
               )
-              Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              Row(horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge)) {
                 if (!hasFullAccess) {
                   Button(
                     onClick = onRequestAllFilesAccess,
-                    modifier = Modifier.testTag("storage_grant_all_files_button"),
+                    modifier =
+                      Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+                        .testTag("storage_grant_all_files_button"),
                   ) {
-                    Text("Grant Full Access")
+                    Text(stringResource(R.string.access_banner_grant))
                   }
                 }
                 OutlinedButton(
                   onClick = onAddSafFolder,
-                  modifier = Modifier.testTag("storage_pick_saf_folder_button"),
+                  modifier =
+                    Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+                      .testTag("storage_pick_saf_folder_button"),
                 ) {
-                  Text("Add SAF Folder")
+                  Text(stringResource(R.string.storage_add_saf_folder))
                 }
               }
             }
@@ -198,24 +243,26 @@ fun StorageBrowserSection(
           StorageVolumeRootCard(
             root = root,
             onClick = { onOpenRoot(root) },
-            modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
+            modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
           )
         }
 
         item {
           GlassSurface(
-            cornerRadius = 20.dp,
+            cornerRadius = PrismDimens.ToastCornerRadius,
             elevation = GlassElevation.SUBTLE,
             onClick = onAddSafFolder,
+            clickRole = Role.Button,
             modifier =
-              Modifier.fillMaxWidth()
-                .widthIn(max = 760.dp)
+              Modifier.widthIn(max = PrismDimens.ContentMaxWidth)
+                .fillMaxWidth()
+                .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
                 .testTag("storage_add_another_saf_folder"),
           ) {
             Row(
-              modifier = Modifier.padding(16.dp),
+              modifier = Modifier.padding(PrismDimens.SpaceSection),
               verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(12.dp),
+              horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceStandard),
             ) {
               Icon(
                 imageVector = Icons.Rounded.CreateNewFolder,
@@ -223,7 +270,7 @@ fun StorageBrowserSection(
                 tint = colorScheme.primary,
               )
               Text(
-                text = "Link another folder via Storage Access Framework",
+                text = stringResource(R.string.storage_link_another_saf),
                 style = MaterialTheme.typography.titleSmall,
                 color = colorScheme.onSurface,
               )
@@ -242,13 +289,18 @@ fun StorageBrowserSection(
   if (isGridMode) {
     LazyVerticalGrid(
       columns = GridCells.Adaptive(minSize = 156.dp),
-      contentPadding = PaddingValues(top = 146.dp, bottom = 144.dp, start = 16.dp, end = 16.dp),
-      verticalArrangement = Arrangement.spacedBy(12.dp),
-      horizontalArrangement = Arrangement.spacedBy(12.dp),
+      contentPadding =
+        PaddingValues(
+          top = topContentPadding,
+          bottom = navBarBottom + 144.dp,
+          start = 16.dp,
+          end = 16.dp,
+        ),
+      verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceStandard),
+      horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceStandard),
       modifier =
         modifier
           .fillMaxSize()
-          .statusBarsPadding()
           .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
           .testTag("storage_directory_grid"),
     ) {
@@ -286,11 +338,13 @@ fun StorageBrowserSection(
               document = entity,
               thumbnailPipeline = thumbnailPipeline,
               isSelected = entity.id in selectedIds,
+              isSelectionMode = isSelectionMode,
               onClick = {
                 if (isSelectionMode) onToggleSelection(entity.id)
                 else onOpenIndexedDocument(entity)
               },
               onLongClick = { onToggleSelection(entity.id) },
+              onSelectItem = { onToggleSelection(entity.id) },
               onToggleFavorite = { onToggleFavorite(entity.id, entity.isFavorite) },
               onRename = { onRenameDocument(entity) },
               onCopy = { onCopyDocument(entity) },
@@ -326,10 +380,12 @@ fun StorageBrowserSection(
             document = doc,
             thumbnailPipeline = thumbnailPipeline,
             isSelected = doc.id in selectedIds,
+            isSelectionMode = isSelectionMode,
             onClick = {
               if (isSelectionMode) onToggleSelection(doc.id) else onOpenIndexedDocument(doc)
             },
             onLongClick = { onToggleSelection(doc.id) },
+            onSelectItem = { onToggleSelection(doc.id) },
             onToggleFavorite = { onToggleFavorite(doc.id, doc.isFavorite) },
             onRename = { onRenameDocument(doc) },
             onCopy = { onCopyDocument(doc) },
@@ -347,13 +403,18 @@ fun StorageBrowserSection(
   } else {
     LazyColumn(
       state = directoryListState,
-      contentPadding = PaddingValues(top = 146.dp, bottom = 144.dp, start = 16.dp, end = 16.dp),
-      verticalArrangement = Arrangement.spacedBy(10.dp),
+      contentPadding =
+        PaddingValues(
+          top = topContentPadding,
+          bottom = navBarBottom + 144.dp,
+          start = 16.dp,
+          end = 16.dp,
+        ),
+      verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge),
       horizontalAlignment = Alignment.CenterHorizontally,
       modifier =
         modifier
           .fillMaxSize()
-          .statusBarsPadding()
           .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
           .testTag("storage_directory_list"),
     ) {
@@ -368,7 +429,7 @@ fun StorageBrowserSection(
           onCreateFolderClick = onCreateFolderClick,
           onSortFieldSelected = onSortFieldSelected,
           onToggleSortDirection = onToggleSortDirection,
-          modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
+          modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
         )
       }
 
@@ -377,7 +438,7 @@ fun StorageBrowserSection(
         FolderListRow(
           folder = storageState.subfolders[idx],
           onClick = { onOpenSubfolder(storageState.subfolders[idx]) },
-          modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
+          modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
         )
       }
 
@@ -393,18 +454,20 @@ fun StorageBrowserSection(
               document = entity,
               thumbnailPipeline = thumbnailPipeline,
               isSelected = entity.id in selectedIds,
+              isSelectionMode = isSelectionMode,
               onClick = {
                 if (isSelectionMode) onToggleSelection(entity.id)
                 else onOpenIndexedDocument(entity)
               },
               onLongClick = { onToggleSelection(entity.id) },
+              onSelectItem = { onToggleSelection(entity.id) },
               onToggleFavorite = { onToggleFavorite(entity.id, entity.isFavorite) },
               onRename = { onRenameDocument(entity) },
               onCopy = { onCopyDocument(entity) },
               onMove = { onMoveDocument(entity) },
               onShare = { onShareDocument(entity) },
               onTrash = { onTrashDocument(entity) },
-              modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
+              modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
             )
           } else {
             LiveSafListRow(
@@ -421,7 +484,7 @@ fun StorageBrowserSection(
                   )
                 )
               },
-              modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
+              modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
             )
           }
         }
@@ -435,17 +498,19 @@ fun StorageBrowserSection(
             document = doc,
             thumbnailPipeline = thumbnailPipeline,
             isSelected = doc.id in selectedIds,
+            isSelectionMode = isSelectionMode,
             onClick = {
               if (isSelectionMode) onToggleSelection(doc.id) else onOpenIndexedDocument(doc)
             },
             onLongClick = { onToggleSelection(doc.id) },
+            onSelectItem = { onToggleSelection(doc.id) },
             onToggleFavorite = { onToggleFavorite(doc.id, doc.isFavorite) },
             onRename = { onRenameDocument(doc) },
             onCopy = { onCopyDocument(doc) },
             onMove = { onMoveDocument(doc) },
             onShare = { onShareDocument(doc) },
             onTrash = { onTrashDocument(doc) },
-            modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
+            modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
           )
         }
       }
@@ -454,7 +519,7 @@ fun StorageBrowserSection(
         item {
           EmptyFolderCard(
             isSaf = isSafOpen,
-            modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
+            modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
           )
         }
       }
@@ -480,16 +545,32 @@ private fun StorageVolumeRootCard(
   val usedFraction =
     if (hasSpaceInfo) (usedBytes.toFloat() / root.totalBytes.toFloat()).coerceIn(0f, 1f) else 0f
 
+  val subtitle =
+    when {
+      root.sourceType == StorageSourceType.SAF -> stringResource(R.string.storage_saf_live_subtitle)
+      hasSpaceInfo ->
+        stringResource(
+          R.string.storage_free_space,
+          rememberFormattedByteSize(root.availableBytes),
+          rememberFormattedByteSize(root.totalBytes),
+        )
+      else -> root.pathOrUri
+    }
+
   GlassSurface(
     cornerRadius = 22.dp,
     elevation = GlassElevation.SUBTLE,
     onClick = onClick,
+    clickRole = Role.Button,
     modifier = modifier.testTag("storage_root_${root.id}"),
   ) {
-    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(
+      modifier = Modifier.padding(PrismDimens.SpaceSection),
+      verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge),
+    ) {
       Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceStandard),
       ) {
         Box(
           modifier =
@@ -509,11 +590,7 @@ private fun StorageVolumeRootCard(
             overflow = TextOverflow.Ellipsis,
           )
           Text(
-            text =
-              if (root.sourceType == StorageSourceType.SAF) "Live SAF folder (DocumentsContract)"
-              else if (hasSpaceInfo)
-                "${formatByteSize(root.availableBytes)} free of ${formatByteSize(root.totalBytes)}"
-              else root.pathOrUri,
+            text = subtitle,
             style = MaterialTheme.typography.bodySmall,
             color = colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -522,7 +599,7 @@ private fun StorageVolumeRootCard(
         }
         Icon(
           imageVector = Icons.Rounded.ChevronRight,
-          contentDescription = "Open ${root.displayName}",
+          contentDescription = stringResource(R.string.storage_open_root_cd, root.displayName),
           tint = colorScheme.onSurfaceVariant,
         )
       }
@@ -550,34 +627,47 @@ private fun BreadcrumbAndSortHeader(
   modifier: Modifier = Modifier,
 ) {
   val colorScheme = MaterialTheme.colorScheme
-  Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-    GlassSurface(cornerRadius = 18.dp, elevation = GlassElevation.SUBTLE) {
+  Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium)) {
+    GlassSurface(cornerRadius = PrismDimens.FilterBarCornerRadius, elevation = GlassElevation.SUBTLE) {
       Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        IconButton(onClick = onNavigateUp, modifier = Modifier.testTag("breadcrumb_back_button")) {
+        IconButton(
+          onClick = onNavigateUp,
+          modifier =
+            Modifier.defaultMinSize(
+                minWidth = PrismDimens.TouchTargetMin,
+                minHeight = PrismDimens.TouchTargetMin,
+              )
+              .testTag("breadcrumb_back_button"),
+        ) {
           Icon(
             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-            contentDescription = "Parent folder",
+            contentDescription = stringResource(R.string.storage_parent_folder_cd),
             tint = colorScheme.onSurface,
           )
         }
         LazyRow(
           modifier = Modifier.weight(1f),
           verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(4.dp),
+          horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmall),
         ) {
           item {
-            Text(
-              text = "Volumes",
-              style = MaterialTheme.typography.labelLarge,
-              color = colorScheme.primary,
+            Box(
               modifier =
-                Modifier.clip(RoundedCornerShape(8.dp))
-                  .clickable { onNavigateToBreadcrumb(-1) }
-                  .padding(horizontal = 6.dp, vertical = 6.dp),
-            )
+                Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+                  .clip(RoundedCornerShape(8.dp))
+                  .glassClickable(role = Role.Button) { onNavigateToBreadcrumb(-1) }
+                  .padding(horizontal = 8.dp),
+              contentAlignment = Alignment.Center,
+            ) {
+              Text(
+                text = stringResource(R.string.storage_volumes_breadcrumb),
+                style = MaterialTheme.typography.labelLarge,
+                color = colorScheme.primary,
+              )
+            }
           }
           itemsIndexed(breadcrumbs) { idx, seg ->
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -588,36 +678,51 @@ private fun BreadcrumbAndSortHeader(
                 modifier = Modifier.size(16.dp),
               )
               val isCurrent = idx == breadcrumbs.lastIndex
-              Text(
-                text = seg.label,
-                style = MaterialTheme.typography.labelLarge,
-                color = if (isCurrent) colorScheme.onSurface else colorScheme.primary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+              Box(
                 modifier =
-                  Modifier.clip(RoundedCornerShape(8.dp))
-                    .clickable(enabled = !isCurrent) { onNavigateToBreadcrumb(idx) }
-                    .padding(horizontal = 6.dp, vertical = 6.dp),
-              )
+                  Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+                    .clip(RoundedCornerShape(8.dp))
+                    .glassClickable(enabled = !isCurrent, role = Role.Button) {
+                      onNavigateToBreadcrumb(idx)
+                    }
+                    .padding(horizontal = 8.dp),
+                contentAlignment = Alignment.Center,
+              ) {
+                Text(
+                  text = seg.label,
+                  style = MaterialTheme.typography.labelLarge,
+                  color = if (isCurrent) colorScheme.onSurface else colorScheme.primary,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              }
             }
           }
         }
         if (isWatchingLive) {
+          val liveCd = stringResource(R.string.storage_live_watching_cd)
+          val tokens = LocalPrismVisualTokens.current
           Box(
             modifier =
               Modifier.padding(end = 4.dp)
                 .size(8.dp)
                 .clip(CircleShape)
-                .background(PrismColors.EmeraldSheet)
+                .background(tokens.successAccent)
+                .semantics { contentDescription = liveCd }
           )
         }
         IconButton(
           onClick = onCreateFolderClick,
-          modifier = Modifier.testTag("create_folder_button"),
+          modifier =
+            Modifier.defaultMinSize(
+                minWidth = PrismDimens.TouchTargetMin,
+                minHeight = PrismDimens.TouchTargetMin,
+              )
+              .testTag("create_folder_button"),
         ) {
           Icon(
             imageVector = Icons.Rounded.CreateNewFolder,
-            contentDescription = "Create new folder",
+            contentDescription = stringResource(R.string.storage_create_folder_cd),
             tint = colorScheme.primary,
           )
         }
@@ -640,25 +745,31 @@ private fun FolderListRow(
   modifier: Modifier = Modifier,
 ) {
   val colorScheme = MaterialTheme.colorScheme
+  val tokens = LocalPrismVisualTokens.current
+  val modifiedLabel = rememberFormattedModifiedTimestamp(folder.lastModifiedEpochMs)
   GlassSurface(
-    cornerRadius = 18.dp,
+    cornerRadius = PrismDimens.FilterBarCornerRadius,
     elevation = GlassElevation.SUBTLE,
     onClick = onClick,
+    clickRole = Role.Button,
     modifier = modifier,
   ) {
     Row(
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+      modifier =
+        Modifier.fillMaxWidth()
+          .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+          .padding(horizontal = PrismDimens.SpaceRow, vertical = PrismDimens.SpaceStandard),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(12.dp),
+      horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceStandard),
     ) {
       Box(
         modifier =
           Modifier.size(44.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(PrismColors.AmberSlide.copy(alpha = 0.16f)),
+            .background(tokens.warningAccent.copy(alpha = 0.16f)),
         contentAlignment = Alignment.Center,
       ) {
-        Icon(imageVector = Icons.Rounded.Folder, contentDescription = null, tint = PrismColors.AmberSlide)
+        Icon(imageVector = Icons.Rounded.Folder, contentDescription = null, tint = tokens.warningAccent)
       }
       Column(modifier = Modifier.weight(1f)) {
         Text(
@@ -669,14 +780,14 @@ private fun FolderListRow(
           overflow = TextOverflow.Ellipsis,
         )
         Text(
-          text = formatModifiedTimestamp(folder.lastModifiedEpochMs),
+          text = modifiedLabel,
           style = MaterialTheme.typography.bodySmall,
           color = colorScheme.onSurfaceVariant,
         )
       }
       Icon(
         imageVector = Icons.Rounded.ChevronRight,
-        contentDescription = "Open folder ${folder.displayName}",
+        contentDescription = stringResource(R.string.storage_open_folder_cd, folder.displayName),
         tint = colorScheme.onSurfaceVariant,
       )
     }
@@ -686,25 +797,30 @@ private fun FolderListRow(
 @Composable
 private fun FolderGridTile(folder: ScannedDocumentMetadata, onClick: () -> Unit) {
   val colorScheme = MaterialTheme.colorScheme
+  val tokens = LocalPrismVisualTokens.current
   GlassSurface(
-    cornerRadius = 20.dp,
+    cornerRadius = PrismDimens.ToastCornerRadius,
     elevation = GlassElevation.SUBTLE,
     onClick = onClick,
+    clickRole = Role.Button,
     modifier = Modifier.fillMaxWidth(),
   ) {
-    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+      modifier = Modifier.padding(PrismDimens.SpaceStandard),
+      verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
+    ) {
       Box(
         modifier =
           Modifier.fillMaxWidth()
             .aspectRatio(1.25f)
             .clip(RoundedCornerShape(14.dp))
-            .background(PrismColors.AmberSlide.copy(alpha = 0.14f)),
+            .background(tokens.warningAccent.copy(alpha = 0.14f)),
         contentAlignment = Alignment.Center,
       ) {
         Icon(
           imageVector = Icons.Rounded.Folder,
           contentDescription = null,
-          tint = PrismColors.AmberSlide,
+          tint = tokens.warningAccent,
           modifier = Modifier.size(40.dp),
         )
       }
@@ -715,7 +831,11 @@ private fun FolderGridTile(folder: ScannedDocumentMetadata, onClick: () -> Unit)
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
-      Text(text = "Folder", style = MaterialTheme.typography.bodySmall, color = colorScheme.onSurfaceVariant)
+      Text(
+        text = stringResource(R.string.storage_folder_label),
+        style = MaterialTheme.typography.bodySmall,
+        color = colorScheme.onSurfaceVariant,
+      )
     }
   }
 }
@@ -723,11 +843,15 @@ private fun FolderGridTile(folder: ScannedDocumentMetadata, onClick: () -> Unit)
 @Composable
 private fun EmptyFolderCard(isSaf: Boolean, modifier: Modifier = Modifier) {
   val colorScheme = MaterialTheme.colorScheme
-  GlassSurface(cornerRadius = 22.dp, elevation = GlassElevation.SUBTLE, modifier = modifier.fillMaxWidth()) {
+  GlassSurface(
+    cornerRadius = 22.dp,
+    elevation = GlassElevation.SUBTLE,
+    modifier = modifier.fillMaxWidth(),
+  ) {
     Column(
-      modifier = Modifier.padding(24.dp).fillMaxWidth(),
+      modifier = Modifier.padding(PrismDimens.SpaceXLarge).fillMaxWidth(),
       horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.spacedBy(6.dp),
+      verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmallMedium),
     ) {
       Icon(
         imageVector = Icons.Rounded.FolderOpen,
@@ -735,11 +859,16 @@ private fun EmptyFolderCard(isSaf: Boolean, modifier: Modifier = Modifier) {
         tint = colorScheme.onSurfaceVariant,
         modifier = Modifier.size(32.dp),
       )
-      Text(text = "This folder is empty", style = MaterialTheme.typography.titleSmall, color = colorScheme.onSurface)
+      Text(
+        text = stringResource(R.string.storage_empty_folder_title),
+        style = MaterialTheme.typography.titleSmall,
+        color = colorScheme.onSurface,
+      )
       Text(
         text =
-          if (isSaf) "Listed live via DocumentsContract."
-          else "Changes made here appear live via FileObserver.",
+          stringResource(
+            if (isSaf) R.string.storage_empty_folder_saf else R.string.storage_empty_folder_local
+          ),
         style = MaterialTheme.typography.bodySmall,
         color = colorScheme.onSurfaceVariant,
       )
@@ -765,16 +894,48 @@ private fun LiveSafListRow(
       sizeBytes = meta.sizeBytes,
       targetSizePx = 192,
     )
-  GlassSurface(cornerRadius = 18.dp, elevation = GlassElevation.SUBTLE, onClick = onClick, modifier = modifier) {
+  val subtitle =
+    stringResource(
+      R.string.storage_saf_item_subtitle,
+      rememberFormattedByteSize(meta.sizeBytes),
+      rememberFormattedModifiedTimestamp(meta.lastModifiedEpochMs),
+    )
+  GlassSurface(
+    cornerRadius = PrismDimens.FilterBarCornerRadius,
+    elevation = GlassElevation.SUBTLE,
+    onClick = onClick,
+    clickRole = Role.Button,
+    modifier = modifier,
+  ) {
     Row(
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+      modifier =
+        Modifier.fillMaxWidth()
+          .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+          .padding(horizontal = PrismDimens.SpaceStandard, vertical = PrismDimens.SpaceMediumLarge),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(12.dp),
+      horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceStandard),
     ) {
-      DocumentThumbnailView(request = request, pipeline = thumbnailPipeline, cornerRadius = 12.dp, compact = true, modifier = Modifier.size(48.dp))
+      DocumentThumbnailView(
+        request = request,
+        pipeline = thumbnailPipeline,
+        cornerRadius = 12.dp,
+        compact = true,
+        modifier = Modifier.size(PrismDimens.TouchTargetMin),
+      )
       Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(text = meta.displayName, style = MaterialTheme.typography.titleSmall, color = colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(text = "${formatByteSize(meta.sizeBytes)} • ${formatModifiedTimestamp(meta.lastModifiedEpochMs)}", style = MaterialTheme.typography.bodySmall, color = colorScheme.onSurfaceVariant, maxLines = 1)
+        Text(
+          text = meta.displayName,
+          style = MaterialTheme.typography.titleSmall,
+          color = colorScheme.onSurface,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+          text = subtitle,
+          style = MaterialTheme.typography.bodySmall,
+          color = colorScheme.onSurfaceVariant,
+          maxLines = 1,
+        )
       }
     }
   }
@@ -797,11 +958,43 @@ private fun LiveSafGridCard(
       sizeBytes = meta.sizeBytes,
       targetSizePx = 320,
     )
-  GlassSurface(cornerRadius = 20.dp, elevation = GlassElevation.SUBTLE, onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-      DocumentThumbnailView(request = request, pipeline = thumbnailPipeline, cornerRadius = 14.dp, compact = false, modifier = Modifier.fillMaxWidth().aspectRatio(1.18f))
-      Text(text = meta.displayName, style = MaterialTheme.typography.titleSmall, color = colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
-      Text(text = "${formatByteSize(meta.sizeBytes)} • ${formatModifiedTimestamp(meta.lastModifiedEpochMs)}", style = MaterialTheme.typography.labelSmall, color = colorScheme.onSurfaceVariant, maxLines = 1)
+  val subtitle =
+    stringResource(
+      R.string.storage_saf_item_subtitle,
+      rememberFormattedByteSize(meta.sizeBytes),
+      rememberFormattedModifiedTimestamp(meta.lastModifiedEpochMs),
+    )
+  GlassSurface(
+    cornerRadius = PrismDimens.ToastCornerRadius,
+    elevation = GlassElevation.SUBTLE,
+    onClick = onClick,
+    clickRole = Role.Button,
+    modifier = Modifier.fillMaxWidth(),
+  ) {
+    Column(
+      modifier = Modifier.padding(PrismDimens.SpaceMediumLarge),
+      verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
+    ) {
+      DocumentThumbnailView(
+        request = request,
+        pipeline = thumbnailPipeline,
+        cornerRadius = 14.dp,
+        compact = false,
+        modifier = Modifier.fillMaxWidth().aspectRatio(1.18f),
+      )
+      Text(
+        text = meta.displayName,
+        style = MaterialTheme.typography.titleSmall,
+        color = colorScheme.onSurface,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+      )
+      Text(
+        text = subtitle,
+        style = MaterialTheme.typography.labelSmall,
+        color = colorScheme.onSurfaceVariant,
+        maxLines = 1,
+      )
     }
   }
 }
@@ -812,17 +1005,24 @@ fun DocumentListRow(
   document: IndexedDocumentEntity,
   thumbnailPipeline: DocumentThumbnailPipeline,
   isSelected: Boolean,
+  isSelectionMode: Boolean = false,
   onClick: () -> Unit,
   onLongClick: () -> Unit,
+  onSelectItem: (() -> Unit)? = onLongClick,
   onToggleFavorite: () -> Unit,
   onRename: () -> Unit,
-  onCopy: () -> Unit,
-  onMove: () -> Unit,
+  onCopy: (() -> Unit)?,
+  onMove: (() -> Unit)?,
   onShare: () -> Unit,
   onTrash: () -> Unit,
   modifier: Modifier = Modifier,
+  onManageTagsCollections: (() -> Unit)? = null,
+  extraActionLabel: String? = null,
+  onExtraAction: (() -> Unit)? = null,
 ) {
   val colorScheme = MaterialTheme.colorScheme
+  val tokens = LocalPrismVisualTokens.current
+  val haptic = LocalHapticFeedback.current
   val request = document.toThumbnailRequest(targetSizePx = 224)
   val (badgeLabel, badgeColor) =
     remember(document.displayName, document.category) {
@@ -831,38 +1031,86 @@ fun DocumentListRow(
   var menuExpanded by remember { mutableStateOf(false) }
   val interactionSource = remember { MutableInteractionSource() }
 
+  val sizeLabel = rememberFormattedByteSize(document.sizeBytes)
+  val modifiedLabel = rememberFormattedModifiedTimestamp(document.lastModifiedEpochMs)
+  val subtitle = stringResource(R.string.storage_saf_item_subtitle, sizeLabel, modifiedLabel)
+  val rowCd = stringResource(R.string.doc_row_a11y_cd, document.displayName, subtitle)
+  val selectedStateDesc =
+    stringResource(if (isSelected) R.string.state_selected else R.string.state_not_selected)
+  val favActionLabel =
+    stringResource(
+      if (document.isFavorite) R.string.action_remove_favorite else R.string.action_add_favorite
+    )
+  val shareActionLabel = stringResource(R.string.action_share)
+  val deleteActionLabel = stringResource(R.string.action_delete)
+
   GlassSurface(
-    cornerRadius = 24.dp,
+    cornerRadius = PrismDimens.BannerCornerRadius,
     elevation = GlassElevation.SUBTLE,
-    accentTint = if (isSelected) colorScheme.primary else Color.Transparent,
+    accentTint = if (isSelected) colorScheme.primary else null,
     modifier =
       modifier
+        .semantics(mergeDescendants = true) {
+          role = if (isSelectionMode) Role.Checkbox else Role.Button
+          selected = isSelected
+          stateDescription = selectedStateDesc
+          contentDescription = rowCd
+          customActions =
+            listOf(
+              CustomAccessibilityAction(favActionLabel) {
+                onToggleFavorite()
+                true
+              },
+              CustomAccessibilityAction(shareActionLabel) {
+                onShare()
+                true
+              },
+              CustomAccessibilityAction(deleteActionLabel) {
+                onTrash()
+                true
+              },
+            )
+        }
         .glassPress(interactionSource)
         .combinedClickable(
           interactionSource = interactionSource,
           indication = null,
           onClick = onClick,
-          onLongClick = onLongClick,
+          onLongClick = {
+            if (isSelectionMode) {
+              onLongClick()
+            } else {
+              haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+              menuExpanded = true
+            }
+          },
         )
         .testTag("doc_row_${document.id}"),
   ) {
     Row(
-      modifier = Modifier.fillMaxWidth().padding(start = 14.dp, top = 14.dp, bottom = 14.dp, end = 6.dp),
+      modifier =
+        Modifier.fillMaxWidth()
+          .padding(
+            start = PrismDimens.SpaceRow,
+            top = PrismDimens.SpaceRow,
+            bottom = PrismDimens.SpaceRow,
+            end = PrismDimens.SpaceSmallMedium,
+          ),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(14.dp),
+      horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceRow),
     ) {
       Box {
         DocumentThumbnailView(
           request = request,
           pipeline = thumbnailPipeline,
-          cornerRadius = 16.dp,
+          cornerRadius = PrismDimens.SpaceSection,
           compact = true,
-          modifier = Modifier.size(56.dp),
+          modifier = Modifier.size(PrismDimens.HeaderBarHeight),
         )
         if (isSelected) {
           Icon(
             imageVector = Icons.Rounded.CheckCircle,
-            contentDescription = "Selected",
+            contentDescription = null,
             tint = colorScheme.primary,
             modifier =
               Modifier.align(Alignment.TopEnd)
@@ -872,7 +1120,10 @@ fun DocumentListRow(
           )
         }
       }
-      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+      Column(
+        modifier = Modifier.weight(1f),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+      ) {
         Text(
           text = document.displayName,
           style = MaterialTheme.typography.titleMedium,
@@ -882,12 +1133,11 @@ fun DocumentListRow(
         )
         Row(
           verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
         ) {
           FileTypeBadgePill(label = badgeLabel, accent = badgeColor)
           Text(
-            text =
-              "${formatByteSize(document.sizeBytes)} • ${formatModifiedTimestamp(document.lastModifiedEpochMs)}",
+            text = subtitle,
             style = MaterialTheme.typography.bodySmall,
             color = colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -895,29 +1145,53 @@ fun DocumentListRow(
           )
         }
       }
-      IconButton(onClick = onToggleFavorite, modifier = Modifier.testTag("doc_fav_${document.id}")) {
+      IconButton(
+        onClick = onToggleFavorite,
+        modifier =
+          Modifier.defaultMinSize(
+              minWidth = PrismDimens.TouchTargetMin,
+              minHeight = PrismDimens.TouchTargetMin,
+            )
+            .testTag("doc_fav_${document.id}"),
+      ) {
         Icon(
           imageVector = if (document.isFavorite) Icons.Rounded.Star else Icons.Rounded.StarOutline,
-          contentDescription = if (document.isFavorite) "Remove favorite" else "Add favorite",
-          tint = if (document.isFavorite) PrismColors.AmberSlide else colorScheme.onSurfaceVariant,
+          contentDescription = favActionLabel,
+          tint =
+            if (document.isFavorite) tokens.favoriteAccent else colorScheme.onSurfaceVariant,
         )
       }
       Box {
-        IconButton(onClick = { menuExpanded = true }, modifier = Modifier.testTag("doc_more_${document.id}")) {
+        IconButton(
+          onClick = { menuExpanded = true },
+          modifier =
+            Modifier.defaultMinSize(
+                minWidth = PrismDimens.TouchTargetMin,
+                minHeight = PrismDimens.TouchTargetMin,
+              )
+              .testTag("doc_more_${document.id}"),
+        ) {
           Icon(
             imageVector = Icons.Rounded.MoreVert,
-            contentDescription = "Document actions",
+            contentDescription = stringResource(R.string.doc_actions_cd, document.displayName),
             tint = colorScheme.onSurfaceVariant,
           )
         }
         DocumentItemContextMenu(
           expanded = menuExpanded,
+          isFavorite = document.isFavorite,
+          showSelectOption = !isSelectionMode && onSelectItem != null,
+          onSelectItem = onSelectItem,
+          onToggleFavorite = onToggleFavorite,
           onDismiss = { menuExpanded = false },
           onRename = onRename,
           onCopy = onCopy,
           onMove = onMove,
           onShare = onShare,
           onTrash = onTrash,
+          onManageTagsCollections = onManageTagsCollections,
+          extraActionLabel = extraActionLabel,
+          onExtraAction = onExtraAction,
         )
       }
     }
@@ -930,8 +1204,10 @@ fun DocumentGridCard(
   document: IndexedDocumentEntity,
   thumbnailPipeline: DocumentThumbnailPipeline,
   isSelected: Boolean,
+  isSelectionMode: Boolean = false,
   onClick: () -> Unit,
   onLongClick: () -> Unit,
+  onSelectItem: (() -> Unit)? = onLongClick,
   onToggleFavorite: () -> Unit,
   onRename: () -> Unit,
   onCopy: () -> Unit,
@@ -939,82 +1215,139 @@ fun DocumentGridCard(
   onShare: () -> Unit,
   onTrash: () -> Unit,
   modifier: Modifier = Modifier,
+  onManageTagsCollections: (() -> Unit)? = null,
 ) {
   val colorScheme = MaterialTheme.colorScheme
+  val tokens = LocalPrismVisualTokens.current
+  val haptic = LocalHapticFeedback.current
   val request = document.toThumbnailRequest(targetSizePx = 360)
   var menuExpanded by remember { mutableStateOf(false) }
   val interactionSource = remember { MutableInteractionSource() }
 
+  val sizeLabel = rememberFormattedByteSize(document.sizeBytes)
+  val modifiedLabel = rememberFormattedModifiedTimestamp(document.lastModifiedEpochMs)
+  val subtitle = stringResource(R.string.storage_saf_item_subtitle, sizeLabel, modifiedLabel)
+  val cardCd = stringResource(R.string.doc_row_a11y_cd, document.displayName, subtitle)
+  val selectedStateDesc =
+    stringResource(if (isSelected) R.string.state_selected else R.string.state_not_selected)
+  val favActionLabel =
+    stringResource(
+      if (document.isFavorite) R.string.action_remove_favorite else R.string.action_add_favorite
+    )
+
   GlassSurface(
-    cornerRadius = 26.dp,
+    cornerRadius = PrismDimens.RecentCardCornerRadius,
     elevation = GlassElevation.SUBTLE,
-    accentTint = if (isSelected) colorScheme.primary else Color.Transparent,
+    accentTint = if (isSelected) colorScheme.primary else null,
     modifier =
       modifier
         .fillMaxWidth()
+        .semantics(mergeDescendants = true) {
+          role = if (isSelectionMode) Role.Checkbox else Role.Button
+          selected = isSelected
+          stateDescription = selectedStateDesc
+          contentDescription = cardCd
+        }
         .glassPress(interactionSource)
         .combinedClickable(
           interactionSource = interactionSource,
           indication = null,
           onClick = onClick,
-          onLongClick = onLongClick,
+          onLongClick = {
+            if (isSelectionMode) {
+              onLongClick()
+            } else {
+              haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+              menuExpanded = true
+            }
+          },
         )
         .testTag("doc_grid_${document.id}"),
   ) {
-    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(
+      modifier = Modifier.padding(PrismDimens.SpaceStandard),
+      verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge),
+    ) {
+      val (badgeLabel, badgeColor) =
+        remember(document.displayName, document.category) {
+          resolveFileTypeBadge(document.displayName, document.resolvedCategory())
+        }
       Box(modifier = Modifier.fillMaxWidth().aspectRatio(1.08f)) {
         DocumentThumbnailView(
           request = request,
           pipeline = thumbnailPipeline,
-          cornerRadius = 18.dp,
+          cornerRadius = PrismDimens.RecentThumbnailCornerRadius,
           compact = false,
+          showCornerBadge = false,
           modifier = Modifier.fillMaxSize(),
+        )
+        FileTypeBadgePill(
+          label = badgeLabel,
+          accent = badgeColor,
+          modifier = Modifier.align(Alignment.BottomStart).padding(PrismDimens.BadgeCornerInset),
         )
         if (isSelected) {
           Icon(
             imageVector = Icons.Rounded.CheckCircle,
-            contentDescription = "Selected",
+            contentDescription = null,
             tint = colorScheme.primary,
             modifier =
               Modifier.align(Alignment.TopStart)
-                .padding(6.dp)
+                .padding(PrismDimens.SpaceSmallMedium)
                 .size(22.dp)
                 .clip(CircleShape)
                 .background(colorScheme.surface),
           )
         }
-        Row(modifier = Modifier.align(Alignment.TopEnd)) {
+        Row(
+          modifier =
+            Modifier.align(Alignment.TopEnd)
+              .padding(6.dp)
+              .clip(CircleShape)
+              .background(tokens.gridActionScrim),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
           IconButton(
             onClick = onToggleFavorite,
-            modifier = Modifier.size(34.dp).testTag("doc_grid_fav_${document.id}"),
+            modifier =
+              Modifier.size(PrismDimens.TouchTargetMin)
+                .testTag("doc_grid_fav_${document.id}"),
           ) {
             Icon(
               imageVector = if (document.isFavorite) Icons.Rounded.Star else Icons.Rounded.StarOutline,
-              contentDescription = if (document.isFavorite) "Remove favorite" else "Add favorite",
-              tint = if (document.isFavorite) PrismColors.AmberSlide else colorScheme.onSurfaceVariant,
+              contentDescription = favActionLabel,
+              tint =
+                if (document.isFavorite) tokens.favoriteAccent else colorScheme.onSurface,
               modifier = Modifier.size(19.dp),
             )
           }
           Box {
             IconButton(
               onClick = { menuExpanded = true },
-              modifier = Modifier.size(34.dp).testTag("doc_grid_more_${document.id}"),
+              modifier =
+                Modifier.size(PrismDimens.TouchTargetMin)
+                  .testTag("doc_grid_more_${document.id}"),
             ) {
               Icon(
                 imageVector = Icons.Rounded.MoreVert,
-                contentDescription = "Document actions",
-                tint = colorScheme.onSurfaceVariant,
+                contentDescription = stringResource(R.string.doc_actions_cd, document.displayName),
+                tint = colorScheme.onSurface,
                 modifier = Modifier.size(19.dp),
               )
             }
             DocumentItemContextMenu(
               expanded = menuExpanded,
+              isFavorite = document.isFavorite,
+              showSelectOption = !isSelectionMode && onSelectItem != null,
+              onSelectItem = onSelectItem,
+              onToggleFavorite = onToggleFavorite,
               onDismiss = { menuExpanded = false },
               onRename = onRename,
               onCopy = onCopy,
               onMove = onMove,
               onShare = onShare,
               onTrash = onTrash,
+              onManageTagsCollections = onManageTagsCollections,
             )
           }
         }
@@ -1028,8 +1361,7 @@ fun DocumentGridCard(
       )
       Spacer(modifier = Modifier.height(0.dp))
       Text(
-        text =
-          "${formatByteSize(document.sizeBytes)} • ${formatModifiedTimestamp(document.lastModifiedEpochMs)}",
+        text = subtitle,
         style = MaterialTheme.typography.labelSmall,
         color = colorScheme.onSurfaceVariant,
         maxLines = 1,
@@ -1039,6 +1371,12 @@ fun DocumentGridCard(
   }
 }
 
+/**
+ * Connected Library document row with:
+ * - GPU-accelerated swipe gestures (right = Favorite toggle, left = Share / Delete action tray)
+ * - Long-press Liquid Glass context menu (with Select, Favorite, Rename, Copy, Move, Share, Delete)
+ * - Full selection & TalkBack accessibility semantics (Role, selected, stateDescription, customActions)
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LibraryCardDocumentRow(
@@ -1046,8 +1384,10 @@ fun LibraryCardDocumentRow(
   isFirst: Boolean,
   isLast: Boolean,
   isSelected: Boolean,
+  isSelectionMode: Boolean = false,
   onClick: () -> Unit,
   onLongClick: () -> Unit,
+  onSelectItem: (() -> Unit)? = onLongClick,
   onToggleFavorite: () -> Unit,
   onRename: () -> Unit,
   onCopy: () -> Unit,
@@ -1056,143 +1396,423 @@ fun LibraryCardDocumentRow(
   onTrash: () -> Unit,
   modifier: Modifier = Modifier,
   entranceIndex: Int? = null,
+  onManageTagsCollections: (() -> Unit)? = null,
 ) {
   val colorScheme = MaterialTheme.colorScheme
+  val tokens = LocalPrismVisualTokens.current
+  val motionEnabled = LocalGlassMotion.current
+  val haptic = LocalHapticFeedback.current
+  val density = LocalDensity.current
+  val scope = rememberCoroutineScope()
+
   val (badgeLabel, badgeColor) =
     remember(document.displayName, document.category) {
       resolveFileTypeBadge(document.displayName, document.resolvedCategory())
     }
   var menuExpanded by remember { mutableStateOf(false) }
 
+  val sizeText = rememberFormattedByteSize(document.sizeBytes)
+  val dayText = rememberFormattedRelativeDay(document.lastModifiedEpochMs)
   val caption =
-    remember(document.sizeBytes, document.lastModifiedEpochMs, document.isFavorite) {
-      val base = "${formatByteSize(document.sizeBytes)}, ${formatRelativeDay(document.lastModifiedEpochMs)}"
-      if (document.isFavorite) "$base • ★" else base
+    if (document.isFavorite) {
+      stringResource(R.string.doc_row_caption_favorite_format, sizeText, dayText)
+    } else {
+      stringResource(R.string.doc_row_caption_format, sizeText, dayText)
     }
 
   val interactionSource = remember { MutableInteractionSource() }
+  val swipeOffset = remember(document.id) { Animatable(0f) }
+  var crossedFavoriteHaptic by remember(document.id) { mutableStateOf(false) }
 
-  ConnectedGlassCardSlice(
-    isFirst = isFirst,
-    isLast = isLast,
-    cornerRadius = 28.dp,
-    accentTint = if (isSelected) colorScheme.primary else null,
+  val rightTriggerPx = with(density) { PrismDimens.SwipeFavoriteTrigger.toPx() }
+  val maxRightPx = with(density) { PrismDimens.SwipeMaxRight.toPx() }
+  val leftTrayPx = with(density) { PrismDimens.SwipeLeftTrayWidth.toPx() }
+  val maxLeftPx = with(density) { PrismDimens.SwipeMaxLeft.toPx() }
+  val springSpec = PrismMotion.tactileSpring<Float>(reduceMotion = !motionEnabled)
+
+  val showSwipeReveal by remember { derivedStateOf { abs(swipeOffset.value) > 1.5f } }
+
+  val sliceShape =
+    remember(isFirst, isLast) {
+      RoundedCornerShape(
+        topStart = if (isFirst) PrismDimens.ListCardCornerRadius else 0.dp,
+        topEnd = if (isFirst) PrismDimens.ListCardCornerRadius else 0.dp,
+        bottomStart = if (isLast) PrismDimens.ListCardCornerRadius else 0.dp,
+        bottomEnd = if (isLast) PrismDimens.ListCardCornerRadius else 0.dp,
+      )
+    }
+
+  val selectedStateText =
+    stringResource(if (isSelected) R.string.state_selected else R.string.state_not_selected)
+  val favoriteActionLabel =
+    stringResource(
+      if (document.isFavorite) R.string.action_remove_favorite else R.string.action_add_favorite
+    )
+  val shareActionLabel = stringResource(R.string.action_share)
+  val deleteActionLabel = stringResource(R.string.action_delete)
+  val selectActionLabel = stringResource(R.string.action_select_item)
+  val a11yDescription = stringResource(R.string.doc_row_a11y_cd, document.displayName, caption)
+
+  Box(
     modifier =
       modifier
-        .combinedClickable(
-          interactionSource = interactionSource,
-          indication = null,
-          onClick = onClick,
-          onLongClick = onLongClick,
-        )
-        .testTag("doc_row_${document.id}"),
+        .clip(sliceShape)
+        .then(if (entranceIndex != null) Modifier.glassEntrance(index = entranceIndex) else Modifier)
   ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-      Row(
+    if (showSwipeReveal) {
+      Box(
         modifier =
-          Modifier.fillMaxWidth()
-            .then(if (entranceIndex != null) Modifier.glassEntrance(index = entranceIndex) else Modifier)
-            .glassPress(interactionSource, pressedScale = 0.985f)
-            .padding(start = 16.dp, top = 14.dp, bottom = 14.dp, end = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+          Modifier.matchParentSize()
+            .background(
+              if (swipeOffset.value > 0f) tokens.favoriteAccent.copy(alpha = 0.22f)
+              else colorScheme.surfaceVariant.copy(alpha = 0.85f)
+            )
       ) {
-        FileTypeSquareBadge(
-          label = badgeLabel,
-          accent = badgeColor,
-          isSelected = isSelected,
-        )
-
-        Column(
-          modifier = Modifier.weight(1f),
-          verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-          Text(
-            text = document.displayName,
-            style = MaterialTheme.typography.titleMedium,
-            color = colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-          )
-          Text(
-            text = caption,
-            style = MaterialTheme.typography.bodySmall,
-            color = colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-          )
-        }
-
-        Box {
-          IconButton(
-            onClick = { menuExpanded = true },
-            modifier = Modifier.testTag("doc_more_${document.id}"),
+        if (swipeOffset.value > 0f) {
+          Row(
+            modifier =
+              Modifier.align(Alignment.CenterStart)
+                .padding(horizontal = PrismDimens.SpaceLarge),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
           ) {
             Icon(
-              imageVector = Icons.Rounded.MoreHoriz,
-              contentDescription = "Document actions",
-              tint = colorScheme.onSurfaceVariant,
+              imageVector = if (document.isFavorite) Icons.Rounded.StarOutline else Icons.Rounded.Star,
+              contentDescription = null,
+              tint = tokens.favoriteAccent,
+            )
+            Text(
+              text =
+                stringResource(
+                  if (document.isFavorite) R.string.action_unfavorite else R.string.action_favorite
+                ),
+              style = MaterialTheme.typography.labelLarge,
+              color = tokens.favoriteAccent,
             )
           }
-          DocumentItemContextMenu(
-            expanded = menuExpanded,
-            isFavorite = document.isFavorite,
-            onDismiss = { menuExpanded = false },
-            onToggleFavorite = onToggleFavorite,
-            onRename = onRename,
-            onCopy = onCopy,
-            onMove = onMove,
-            onShare = onShare,
-            onTrash = onTrash,
-          )
+        } else {
+          Row(
+            modifier =
+              Modifier.align(Alignment.CenterEnd)
+                .fillMaxHeight()
+                .padding(end = PrismDimens.SpaceMedium),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmall),
+          ) {
+            IconButton(
+              onClick = {
+                scope.launch { swipeOffset.animateTo(0f, springSpec) }
+                onShare()
+              },
+              modifier =
+                Modifier.size(PrismDimens.SwipeActionButtonSize)
+                  .clip(CircleShape)
+                  .background(tokens.swipeShareAccent.copy(alpha = 0.16f))
+                  .testTag("doc_swipe_share_${document.id}"),
+            ) {
+              Icon(
+                imageVector = Icons.Rounded.Share,
+                contentDescription = stringResource(R.string.swipe_share_cd, document.displayName),
+                tint = tokens.swipeShareAccent,
+              )
+            }
+            IconButton(
+              onClick = {
+                scope.launch { swipeOffset.animateTo(0f, springSpec) }
+                onTrash()
+              },
+              modifier =
+                Modifier.size(PrismDimens.SwipeActionButtonSize)
+                  .clip(CircleShape)
+                  .background(tokens.swipeDeleteAccent.copy(alpha = 0.16f))
+                  .testTag("doc_swipe_delete_${document.id}"),
+            ) {
+              Icon(
+                imageVector = Icons.Rounded.DeleteOutline,
+                contentDescription = stringResource(R.string.swipe_delete_cd, document.displayName),
+                tint = tokens.swipeDeleteAccent,
+              )
+            }
+          }
         }
       }
+    }
 
-      if (!isLast) {
-        Box(
+    val draggableState = rememberDraggableState { delta ->
+      scope.launch {
+        val next = (swipeOffset.value + delta).coerceIn(-maxLeftPx, maxRightPx)
+        swipeOffset.snapTo(next)
+        val nowPastFavorite = next >= rightTriggerPx
+        if (nowPastFavorite && !crossedFavoriteHaptic) {
+          crossedFavoriteHaptic = true
+          haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        } else if (!nowPastFavorite) {
+          crossedFavoriteHaptic = false
+        }
+      }
+    }
+
+    ConnectedGlassCardSlice(
+      isFirst = isFirst,
+      isLast = isLast,
+      cornerRadius = PrismDimens.ListCardCornerRadius,
+      accentTint = if (isSelected) colorScheme.primary else null,
+      modifier =
+        Modifier.fillMaxWidth()
+          .graphicsLayer { translationX = swipeOffset.value }
+          .semantics(mergeDescendants = true) {
+            role = if (isSelectionMode) Role.Checkbox else Role.Button
+            selected = isSelected
+            stateDescription = selectedStateText
+            contentDescription = a11yDescription
+            customActions =
+              buildList {
+                add(
+                  CustomAccessibilityAction(favoriteActionLabel) {
+                    onToggleFavorite()
+                    true
+                  }
+                )
+                if (!isSelectionMode && onSelectItem != null) {
+                  add(
+                    CustomAccessibilityAction(selectActionLabel) {
+                      onSelectItem()
+                      true
+                    }
+                  )
+                }
+                add(
+                  CustomAccessibilityAction(shareActionLabel) {
+                    onShare()
+                    true
+                  }
+                )
+                add(
+                  CustomAccessibilityAction(deleteActionLabel) {
+                    onTrash()
+                    true
+                  }
+                )
+              }
+          }
+          .draggable(
+            state = draggableState,
+            orientation = Orientation.Horizontal,
+            enabled = !isSelectionMode,
+            onDragStopped = {
+              val current = swipeOffset.value
+              crossedFavoriteHaptic = false
+              when {
+                current >= rightTriggerPx -> {
+                  onToggleFavorite()
+                  swipeOffset.animateTo(0f, springSpec)
+                }
+                current <= -maxLeftPx * 0.88f -> {
+                  haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                  swipeOffset.animateTo(0f, springSpec)
+                  onTrash()
+                }
+                current <= -leftTrayPx * 0.45f -> {
+                  swipeOffset.animateTo(-leftTrayPx, springSpec)
+                }
+                else -> {
+                  swipeOffset.animateTo(0f, springSpec)
+                }
+              }
+            },
+          )
+          .combinedClickable(
+            interactionSource = interactionSource,
+            indication = null,
+            onClick = {
+              if (abs(swipeOffset.value) > 4f) {
+                scope.launch { swipeOffset.animateTo(0f, springSpec) }
+              } else {
+                onClick()
+              }
+            },
+            onLongClick = {
+              if (abs(swipeOffset.value) > 4f) {
+                scope.launch { swipeOffset.animateTo(0f, springSpec) }
+              } else if (isSelectionMode) {
+                onLongClick()
+              } else {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                menuExpanded = true
+              }
+            },
+          )
+          .testTag("doc_row_${document.id}"),
+    ) {
+      Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
           modifier =
             Modifier.fillMaxWidth()
-              .padding(horizontal = 16.dp)
-              .height(0.75.dp)
-              .background(colorScheme.onSurface.copy(alpha = 0.08f))
-        )
+              .glassPress(interactionSource, pressedScale = 0.985f)
+              .padding(
+                start = PrismDimens.SpaceSection,
+                top = PrismDimens.SpaceRow,
+                bottom = PrismDimens.SpaceRow,
+                end = PrismDimens.SpaceSmallMedium,
+              ),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceRow),
+        ) {
+          FileTypeSquareBadge(
+            label = badgeLabel,
+            accent = badgeColor,
+            isSelected = isSelected,
+          )
+
+          Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+          ) {
+            Text(
+              text = document.displayName,
+              style = MaterialTheme.typography.titleMedium,
+              color = colorScheme.onSurface,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+              text = caption,
+              style = MaterialTheme.typography.bodySmall,
+              color = colorScheme.onSurfaceVariant,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+
+          Box {
+            IconButton(
+              onClick = { menuExpanded = true },
+              modifier =
+                Modifier.defaultMinSize(
+                    minWidth = PrismDimens.TouchTargetMin,
+                    minHeight = PrismDimens.TouchTargetMin,
+                  )
+                  .testTag("doc_more_${document.id}"),
+            ) {
+              Icon(
+                imageVector = Icons.Rounded.MoreHoriz,
+                contentDescription = stringResource(R.string.doc_actions_cd, document.displayName),
+                tint = colorScheme.onSurfaceVariant,
+              )
+            }
+            DocumentItemContextMenu(
+              expanded = menuExpanded,
+              isFavorite = document.isFavorite,
+              showSelectOption = !isSelectionMode && onSelectItem != null,
+              onSelectItem = onSelectItem,
+              onDismiss = { menuExpanded = false },
+              onToggleFavorite = onToggleFavorite,
+              onRename = onRename,
+              onCopy = onCopy,
+              onMove = onMove,
+              onShare = onShare,
+              onTrash = onTrash,
+              onManageTagsCollections = onManageTagsCollections,
+            )
+          }
+        }
+
+        if (!isLast) {
+          Box(
+            modifier =
+              Modifier.fillMaxWidth()
+                .padding(horizontal = PrismDimens.SpaceSection)
+                .height(PrismDimens.HairlineWidth)
+                .background(tokens.rowDivider)
+          )
+        }
       }
     }
   }
 }
 
 @Composable
-private fun DocumentItemContextMenu(
+internal fun DocumentItemContextMenu(
   expanded: Boolean,
   onDismiss: () -> Unit,
   onRename: () -> Unit,
-  onCopy: () -> Unit,
-  onMove: () -> Unit,
+  onCopy: (() -> Unit)?,
+  onMove: (() -> Unit)?,
   onShare: () -> Unit,
   onTrash: () -> Unit,
   isFavorite: Boolean? = null,
   onToggleFavorite: (() -> Unit)? = null,
+  showSelectOption: Boolean = false,
+  onSelectItem: (() -> Unit)? = null,
+  onManageTagsCollections: (() -> Unit)? = null,
+  extraActionLabel: String? = null,
+  onExtraAction: (() -> Unit)? = null,
 ) {
+  val selectLabel = stringResource(R.string.action_select_item)
+  val favoriteLabel =
+    if (isFavorite == true) stringResource(R.string.action_remove_favorite)
+    else stringResource(R.string.action_add_favorite)
+  val tagsCollectionsLabel = stringResource(R.string.action_tags_collections)
+  val renameLabel = stringResource(R.string.action_rename)
+  val copyLabel = stringResource(R.string.action_copy_to)
+  val moveLabel = stringResource(R.string.action_move_to)
+  val shareLabel = stringResource(R.string.action_share)
+  val trashLabel = stringResource(R.string.action_move_to_recycle_bin)
+
   val items = buildList {
+    if (showSelectOption && onSelectItem != null) {
+      add(
+        GlassContextMenuItem(
+          id = "select",
+          label = selectLabel,
+          icon = Icons.Rounded.CheckCircleOutline,
+          onClick = onSelectItem,
+        )
+      )
+    }
     if (isFavorite != null && onToggleFavorite != null) {
       add(
         GlassContextMenuItem(
           id = "favorite",
-          label = if (isFavorite) "Remove favorite" else "Add to favorites",
+          label = favoriteLabel,
           icon = if (isFavorite) Icons.Rounded.Star else Icons.Rounded.StarOutline,
           onClick = onToggleFavorite,
         )
       )
     }
-    add(GlassContextMenuItem("rename", "Rename", Icons.Rounded.DriveFileRenameOutline, onClick = onRename))
-    add(GlassContextMenuItem("copy", "Copy to…", Icons.Rounded.ContentCopy, onClick = onCopy))
-    add(GlassContextMenuItem("move", "Move to…", Icons.AutoMirrored.Rounded.DriveFileMove, onClick = onMove))
-    add(GlassContextMenuItem("share", "Share", Icons.Rounded.Share, onClick = onShare))
+    if (onManageTagsCollections != null) {
+      add(
+        GlassContextMenuItem(
+          id = "tags_collections",
+          label = tagsCollectionsLabel,
+          icon = Icons.AutoMirrored.Rounded.Label,
+          onClick = onManageTagsCollections,
+        )
+      )
+    }
+    if (extraActionLabel != null && onExtraAction != null) {
+      add(
+        GlassContextMenuItem(
+          id = "extra_action",
+          label = extraActionLabel,
+          icon = Icons.Rounded.BookmarkRemove,
+          onClick = onExtraAction,
+        )
+      )
+    }
+    add(GlassContextMenuItem("rename", renameLabel, Icons.Rounded.DriveFileRenameOutline, onClick = onRename))
+    if (onCopy != null) {
+      add(GlassContextMenuItem("copy", copyLabel, Icons.Rounded.ContentCopy, onClick = onCopy))
+    }
+    if (onMove != null) {
+      add(GlassContextMenuItem("move", moveLabel, Icons.AutoMirrored.Rounded.DriveFileMove, onClick = onMove))
+    }
+    add(GlassContextMenuItem("share", shareLabel, Icons.Rounded.Share, onClick = onShare))
     add(
       GlassContextMenuItem(
-        "trash",
-        "Move to Recycle Bin",
-        Icons.Rounded.DeleteOutline,
+        id = "trash",
+        label = trashLabel,
+        icon = Icons.Rounded.DeleteOutline,
         isDestructive = true,
         onClick = onTrash,
       )

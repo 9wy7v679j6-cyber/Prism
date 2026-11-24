@@ -1,0 +1,362 @@
+<resources>
+    <!-- Section titles & switchers -->
+    <string name="section_library">Library</string>
+    <string name="section_storage">Storage</string>
+    <string name="section_recycle_bin">Recycle Bin</string>
+    <string name="switcher_bin">Bin</string>
+    <string name="switcher_bin_count">Bin (%1$d)</string>
+
+    <!-- Subtitles & status -->
+    <string name="library_subtitle_indexing">Indexing documents…</string>
+    <plurals name="library_indexed_files_subtitle">
+        <item quantity="one">%1$s file, all indexed</item>
+        <item quantity="other">%1$s files, all indexed</item>
+    </plurals>
+    <plurals name="recycle_bin_header_subtitle">
+        <item quantity="one">%1$s trashed, 30-day retention</item>
+        <item quantity="other">%1$s trashed, 30-day retention</item>
+    </plurals>
+
+    <!-- Header & Selection mode -->
+    <string name="library_select_button">Select</string>
+    <string name="library_select_button_cd">Enter selection mode</string>
+    <string name="library_sliders_cd">Library filters and settings</string>
+    <plurals name="library_selected_count">
+        <item quantity="one">%d selected</item>
+        <item quantity="other">%d selected</item>
+    </plurals>
+    <string name="selection_select_all">Select all</string>
+    <string name="selection_clear_cd">Exit selection mode</string>
+    <string name="selection_share_cd">Share selected documents</string>
+    <string name="selection_move_cd">Move selected documents</string>
+    <string name="selection_delete_cd">Delete selected documents</string>
+
+    <!-- Search pill -->
+    <string name="library_search_pill_count">Search inside %1$s documents</string>
+    <string name="library_search_pill_empty">Search documents</string>
+
+    <!-- Storage access banner -->
+    <string name="access_banner_title">Limited folder visibility</string>
+    <string name="access_banner_body">Grant All Files Access or link SAF folders so every document appears here.</string>
+    <string name="access_banner_hide">Hide</string>
+    <string name="access_banner_grant">Grant Full Access</string>
+    <string name="access_banner_add_folder">Add Folder</string>
+
+    <!-- Recent & categories -->
+    <string name="library_recent_title">Recent</string>
+    <string name="library_recent_see_all">See all</string>
+    <string name="category_all_files">All files</string>
+    <string name="category_pdf">PDF</string>
+    <string name="category_word">Word</string>
+    <string name="category_excel">Excel</string>
+    <string name="category_slides">Slides</string>
+    <string name="category_images">Images</string>
+    <string name="category_video">Video</string>
+    <string name="category_audio">Audio</string>
+    <string name="category_zip">ZIP</string>
+    <string name="category_books">Books</string>
+    <string name="category_code">Code</string>
+
+    <!-- Date group sticky headers -->
+    <string name="date_group_today">Today</string>
+    <string name="date_group_yesterday">Yesterday</string>
+    <string name="date_group_this_week">This week</string>
+    <string name="date_group_earlier">Earlier</string>
+    <string name="date_group_all_documents">All documents</string>
+
+    <!-- Active filter summary -->
+    <string name="filter_part_name">Name: \"%1$s\"</string>
+    <string name="filter_part_favorites">Favorites</string>
+    <string name="filter_part_recents">All Recents</string>
+    <string name="filter_part_tag">#%1$s</string>
+    <string name="filter_summary_prefix">Filtered: %1$s</string>
+    <string name="filter_clear">Clear</string>
+
+    <!-- Sort controls -->
+    <string name="sort_date">Date</string>
+    <string name="sort_name">Name</string>
+    <string name="sort_size">Size</string>
+    <string name="sort_type">Type</string>
+    <string name="sort_ascending_cd">Ascending, tap to reverse</string>
+    <string name="sort_descending_cd">Descending, tap to reverse</string>
+
+    <!-- Empty state -->
+    <string name="empty_filtered_title">No matching documents</string>
+    <string name="empty_filtered_body">Try clearing your active filters or adjusting your library options.</string>
+    <string name="empty_library_title">No indexed documents yet</string>
+    <string name="empty_library_body_full_release">Tap Sync to scan your device storage for PDF, Word, Excel, Slides, and scanned documents.</string>
+    <string name="empty_library_body_full_debug">Tap Sync to scan your device storage, or open Library Options to generate sample files.</string>
+    <string name="empty_library_body_limited">Grant storage access or link a folder so your documents appear in Prism.</string>
+    <string name="empty_action_clear_filters">Clear Filters</string>
+    <string name="empty_action_open_options">Options</string>
+    <string name="empty_action_sync_now">Sync Now</string>
+    <string name="empty_action_add_folder">Add Folder</string>
+    <string name="empty_action_grant_access">Grant Access</string>
+
+    <!-- Swipe, selection, and document context actions -->
+    <string name="action_favorite">Favorite</string>
+    <string name="action_unfavorite">Unfavorite</string>
+    <string name="action_add_favorite">Add to favorites</string>
+    <string name="action_remove_favorite">Remove favorite</string>
+    <string name="action_select_item">Select</string>
+    <string name="action_rename">Rename</string>
+    <string name="action_copy_to">Copy to…</string>
+    <string name="action_move_to">Move to…</string>
+    <string name="action_share">Share</string>
+    <string name="action_share_chooser_title">Share document</string>
+    <string name="action_move_to_recycle_bin">Move to Recycle Bin</string>
+    <string name="action_delete">Delete</string>
+    <string name="doc_actions_cd">Document actions for %1$s</string>
+    <string name="doc_favorite_badge">★</string>
+    <string name="doc_row_caption_format">%1$s, %2$s</string>
+    <string name="doc_row_caption_favorite_format">%1$s, %2$s • ★</string>
+    <string name="doc_thumbnail_cd">%1$s thumbnail</string>
+
+    <!-- Accessibility states & descriptions -->
+    <string name="state_selected">Selected</string>
+    <string name="state_not_selected">Not selected</string>
+    <string name="state_favorited">Favorited</string>
+    <string name="state_not_favorited">Not favorited</string>
+    <string name="doc_accessibility_cd_favorite">Favorite</string>
+
+    <!-- Formatting helpers -->
+    <string name="format_unknown_dash">—</string>
+    <string name="format_unknown_date">unknown date</string>
+    <string name="format_unknown_date_title">Unknown date</string>
+    <string name="format_bytes_b">%1$d B</string>
+    <string name="format_bytes_kb">%1$.0f KB</string>
+    <string name="format_bytes_mb">%1$.1f MB</string>
+    <string name="format_bytes_gb">%1$.2f GB</string>
+    <string name="format_day_today">today</string>
+    <string name="format_day_yesterday">yesterday</string>
+    <string name="format_just_now">Just now</string>
+    <plurals name="format_minutes_ago">
+        <item quantity="one">%d m ago</item>
+        <item quantity="other">%d m ago</item>
+    </plurals>
+    <plurals name="format_hours_ago">
+        <item quantity="one">%d h ago</item>
+        <item quantity="other">%d h ago</item>
+    </plurals>
+    <plurals name="format_days_ago">
+        <item quantity="one">%d d ago</item>
+        <item quantity="other">%d d ago</item>
+    </plurals>
+
+    <!-- Library Options Sheet -->
+    <string name="options_title">Library Filters &amp; Options</string>
+    <string name="options_done">Done</string>
+    <string name="options_filter_name_title">Filter by Name</string>
+    <string name="options_filter_name_placeholder">Filter files by name…</string>
+    <string name="options_clear_filter_cd">Clear filter text</string>
+    <string name="options_layout_title">Layout</string>
+    <string name="options_layout_list">List</string>
+    <string name="options_layout_grid">Grid</string>
+    <string name="options_sort_by_title">Sort By</string>
+    <string name="options_quick_filters_title">Quick Filters</string>
+    <string name="options_reset_all">Reset all</string>
+    <string name="options_favorites_chip">Favorites (%1$d)</string>
+    <string name="options_recents_chip">Recents (%1$d)</string>
+    <string name="options_settings_tools_title">Settings &amp; Tools</string>
+    <string name="options_appearance_title">Appearance &amp; Liquid Glass</string>
+    <string name="options_appearance_subtitle">Active: %1$s</string>
+    <string name="options_rescan_title">Rescan device documents</string>
+    <string name="options_rescan_subtitle">Refresh Room index across storage &amp; SAF</string>
+    <string name="options_link_saf_title">Link SAF folder</string>
+    <string name="options_link_saf_subtitle">Grant persistent access to a folder via Android picker</string>
+    <string name="options_clear_cache_title">Clear thumbnail cache</string>
+    <string name="options_clear_cache_subtitle">Free cached memory and disk thumbnails</string>
+    <string name="options_debug_samples_title">Create sample files (Debug)</string>
+    <string name="options_debug_samples_subtitle">Write PDF, DOCX, XLSX, PPTX &amp; JPG to Documents/PrismSamples</string>
+
+    <!-- Storage Browser -->
+    <string name="storage_volumes_header">Storage Volumes &amp; Linked Folders</string>
+    <string name="storage_empty_roots_title">No browsable storage volumes yet</string>
+    <string name="storage_empty_roots_body">Grant All Files Access to browse Internal Storage and SD cards directly, or link specific folders through Android\'s folder picker.</string>
+    <string name="storage_add_saf_folder">Add SAF Folder</string>
+    <string name="storage_link_another_saf">Link another folder via Storage Access Framework</string>
+    <string name="storage_saf_live_subtitle">Live SAF folder (DocumentsContract)</string>
+    <string name="storage_free_space">%1$s free of %2$s</string>
+    <string name="storage_open_root_cd">Open %1$s</string>
+    <string name="storage_parent_folder_cd">Parent folder</string>
+    <string name="storage_volumes_breadcrumb">Volumes</string>
+    <string name="storage_create_folder_cd">Create new folder</string>
+    <string name="storage_open_folder_cd">Open folder %1$s</string>
+    <string name="storage_folder_label">Folder</string>
+    <string name="storage_empty_folder_title">This folder is empty</string>
+    <string name="storage_empty_folder_saf">Listed live via DocumentsContract.</string>
+    <string name="storage_empty_folder_local">Changes made here appear live via FileObserver.</string>
+
+    <!-- Recycle Bin -->
+    <string name="recycle_back_cd">Back to Library</string>
+    <string name="recycle_title">Recycle Bin (30-Day)</string>
+    <plurals name="recycle_items_summary">
+        <item quantity="one">%1$d item • %2$s</item>
+        <item quantity="other">%1$d items • %2$s</item>
+    </plurals>
+    <string name="recycle_explanation">Local files stay in a hidden .PrismTrash folder on the same volume so delete and restore are instant renames. SAF files are staged in app-private trash when supported. Items purge automatically after 30 days.</string>
+    <string name="recycle_restore_all">Restore All</string>
+    <string name="recycle_empty_bin">Empty Bin</string>
+    <string name="recycle_empty_title">Recycle Bin is empty</string>
+    <string name="recycle_empty_body">Deleted documents appear here for 30 days before automatic purge.</string>
+    <string name="recycle_confirm_empty_title">Empty Recycle Bin?</string>
+    <plurals name="recycle_confirm_empty_body">
+        <item quantity="one">Permanently delete %1$d item (%2$s)? This cannot be undone.</item>
+        <item quantity="other">Permanently delete all %1$d items (%2$s)? This cannot be undone.</item>
+    </plurals>
+    <string name="recycle_confirm_delete_one_title">Delete permanently?</string>
+    <string name="recycle_confirm_delete_one_body">Remove \"%1$s\" permanently from disk? This cannot be undone.</string>
+    <string name="recycle_delete_forever">Delete Forever</string>
+    <string name="action_cancel">Cancel</string>
+    <plurals name="recycle_days_left">
+        <item quantity="one">%d d left</item>
+        <item quantity="other">%d d left</item>
+    </plurals>
+    <string name="recycle_restore_cd">Restore %1$s</string>
+    <string name="recycle_delete_forever_cd">Delete %1$s permanently</string>
+
+    <!-- File operation dialogs & batch bar -->
+    <string name="dialog_new_folder_title">New Folder</string>
+    <string name="dialog_new_folder_label">Folder name</string>
+    <string name="dialog_new_folder_create">Create</string>
+    <string name="dialog_rename_title">Rename Document</string>
+    <string name="dialog_rename_label">New file name</string>
+    <string name="dialog_rename_hint">Favorites, tags, and collections remain linked after renaming.</string>
+    <string name="picker_copy_here">Copy Here</string>
+    <string name="picker_move_here">Move Here</string>
+    <plurals name="picker_copy_title">
+        <item quantity="one">Copy %d item to…</item>
+        <item quantity="other">Copy %d items to…</item>
+    </plurals>
+    <plurals name="picker_move_title">
+        <item quantity="one">Move %d item to…</item>
+        <item quantity="other">Move %d items to…</item>
+    </plurals>
+    <string name="picker_policy_auto_rename">Auto-rename</string>
+    <string name="picker_policy_skip">Skip</string>
+    <string name="picker_policy_overwrite">Overwrite</string>
+    <string name="picker_no_subfolders">No subfolders here. Tap \"%1$s\" to use this folder.</string>
+    <string name="transfer_copying">Copying</string>
+    <string name="transfer_moving">Moving</string>
+    <string name="transfer_progress_format">%1$s %2$d/%3$d</string>
+    <string name="transfer_progress_background_suffix">%1$s • Background</string>
+    <string name="transfer_complete">Transfer complete</string>
+    <string name="transfer_dismiss_cd">Dismiss transfer summary</string>
+    <string name="batch_clear_cd">Clear selection</string>
+    <string name="batch_copy_cd">Copy selected</string>
+    <string name="batch_move_cd">Move selected</string>
+    <string name="batch_share_cd">Share selected</string>
+    <string name="batch_trash_cd">Move selected to Recycle Bin</string>
+
+    <!-- Storage Browser extra -->
+    <string name="storage_saf_item_subtitle">%1$s • %2$s</string>
+    <string name="storage_live_watching_cd">Live folder monitoring active</string>
+
+    <!-- Accessibility descriptions & custom actions -->
+    <string name="library_loading_cd">Loading documents</string>
+    <string name="doc_row_a11y_cd">%1$s, %2$s</string>
+    <string name="recent_card_a11y_cd">Recent document: %1$s, %2$s</string>
+    <string name="category_chip_cd">%1$s filter</string>
+    <string name="sort_chip_cd">Sort by %1$s</string>
+    <string name="swipe_favorite_cd">Favorite %1$s</string>
+    <string name="swipe_share_cd">Share %1$s</string>
+    <string name="swipe_delete_cd">Delete %1$s</string>
+    <string name="date_section_cd">%1$s section</string>
+    <string name="selection_top_bar_select_all_cd">Select all loaded documents</string>
+    <string name="selection_tag_collection_cd">Assign tags and collections</string>
+    <string name="action_tags_collections">Tags &amp; Collections…</string>
+    <string name="batch_tags_cd">Assign tags and collections to selected</string>
+
+    <!-- Power Tools Entry Points -->
+    <string name="tool_duplicate_finder_title">Duplicate Finder</string>
+    <string name="tool_duplicate_finder_subtitle">Compare by size, partial hash, and SHA-256</string>
+    <string name="tool_storage_analyzer_title">Storage Analyzer</string>
+    <string name="tool_storage_analyzer_subtitle">Breakdown by document type, folders &amp; largest files</string>
+    <string name="tool_tags_collections_title">Tags &amp; Collections</string>
+    <string name="tool_tags_collections_subtitle">Create, rename, delete and organize documents</string>
+    <string name="library_collections_title">Collections</string>
+    <string name="library_collections_manage">Manage</string>
+    <string name="library_tags_manage_chip">+ Manage tags</string>
+    <string name="library_tags_filter_cd">Filter by tag %1$s</string>
+    <plurals name="collection_doc_count">
+        <item quantity="one">%1$d document</item>
+        <item quantity="other">%1$d documents</item>
+    </plurals>
+
+    <!-- Duplicate Finder -->
+    <string name="dup_title">Duplicate Finder</string>
+    <string name="dup_back_cd">Back</string>
+    <string name="dup_rescan_cd">Rescan duplicates</string>
+    <string name="dup_scan_now">Scan Now</string>
+    <string name="dup_scanning_title">Scanning for duplicates…</string>
+    <string name="dup_stage_size">Grouping files by exact size…</string>
+    <string name="dup_stage_partial">Hashing first &amp; last 64 KB (%1$d/%2$d)…</string>
+    <string name="dup_stage_full">Verifying full SHA-256 (%1$d/%2$d)…</string>
+    <string name="dup_cancel_scan">Cancel</string>
+    <string name="dup_reclaimable_banner">You can free %1$s</string>
+    <plurals name="dup_groups_summary">
+        <item quantity="one">%1$d duplicate group • %2$d extra copy</item>
+        <item quantity="other">%1$d duplicate groups • %2$d extra copies</item>
+    </plurals>
+    <string name="dup_keep_newest_action">Keep newest, move the rest to Bin</string>
+    <string name="dup_group_keep_newest_group">Keep newest in this group</string>
+    <string name="dup_keep_badge">Newest • Keep</string>
+    <string name="dup_trash_badge">Extra • Move to Bin</string>
+    <string name="dup_empty_title">No duplicate files found</string>
+    <string name="dup_empty_body">Run a three-stage scan (size, 64 KB edge hash, full SHA-256) to safely detect identical copies across your indexed documents.</string>
+    <string name="dup_cancelled_notice">Duplicate scan cancelled.</string>
+    <string name="dup_bin_notice">Extra copies are moved to your 30-day Recycle Bin, never deleted immediately.</string>
+
+    <!-- Storage Analyzer -->
+    <string name="analyzer_title">Storage Analyzer</string>
+    <string name="analyzer_total_used_label">Total Prism-indexed storage</string>
+    <plurals name="analyzer_indexed_count">
+        <item quantity="one">%1$s across %2$s document</item>
+        <item quantity="other">%1$s across %2$s documents</item>
+    </plurals>
+    <string name="analyzer_ring_center_label">Indexed</string>
+    <string name="analyzer_tap_hint">Tap any ring segment to filter your Library</string>
+    <string name="analyzer_category_other">Other</string>
+    <string name="analyzer_segment_cd">%1$s: %2$s, tap to filter Library</string>
+    <string name="analyzer_biggest_folders_title">Biggest Folders</string>
+    <string name="analyzer_largest_files_title">Largest Files</string>
+    <string name="analyzer_empty_title">No indexed storage data yet</string>
+    <string name="analyzer_empty_body">Index documents in your Library to inspect storage breakdown by type, folder, and file size.</string>
+    <plurals name="analyzer_folder_subtitle">
+        <item quantity="one">%1$d file • %2$s</item>
+        <item quantity="other">%1$d files • %2$s</item>
+    </plurals>
+
+    <!-- Tags & Collections Management & Detail Screen -->
+    <string name="tags_collections_title">Tags &amp; Collections</string>
+    <string name="assign_sheet_title">Assign Tags &amp; Collections</string>
+    <plurals name="assign_sheet_target_count">
+        <item quantity="one">%d document selected</item>
+        <item quantity="other">%d documents selected</item>
+    </plurals>
+    <string name="collections_section_title">Collections</string>
+    <string name="tags_section_title">Tags</string>
+    <string name="collection_new_button">+ New Collection</string>
+    <string name="tag_new_button">+ New Tag</string>
+    <string name="collection_create_title">New Collection</string>
+    <string name="collection_rename_title">Rename Collection</string>
+    <string name="collection_name_label">Collection name</string>
+    <string name="tag_create_title">New Tag</string>
+    <string name="tag_rename_title">Rename Tag</string>
+    <string name="tag_name_label">Tag name</string>
+    <string name="action_save">Save</string>
+    <string name="action_create">Create</string>
+    <string name="action_rename_cd">Rename %1$s</string>
+    <string name="action_delete_cd">Delete %1$s</string>
+    <string name="confirm_delete_collection_title">Delete collection?</string>
+    <string name="confirm_delete_collection_body">Delete \"%1$s\"? Your documents will remain untouched in your Library.</string>
+    <string name="confirm_delete_tag_title">Delete tag?</string>
+    <string name="confirm_delete_tag_body">Delete #%1$s? Your documents will remain untouched.</string>
+    <string name="collections_empty_hint">No collections yet. Create one to group related documents.</string>
+    <string name="tags_empty_hint">No tags yet. Create tags like Urgent, Tax, or Receipts to filter quickly.</string>
+    <string name="collection_detail_empty_title">This collection is empty</string>
+    <string name="collection_detail_empty_body">Use the selection bar or long-press any document in Library to add files to \"%1$s\".</string>
+    <string name="collection_remove_doc">Remove from collection</string>
+    <string name="collection_not_found">Collection not found</string>
+    <string name="collection_back_to_library">Back to Library</string>
+</resources>

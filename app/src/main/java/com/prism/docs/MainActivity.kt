@@ -55,6 +55,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import androidx.compose.material3.MaterialTheme
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.prism.docs.core.data.model.DocumentCategory
 import com.prism.docs.core.data.model.IncomingDocumentRequest
 import com.prism.docs.core.data.model.ThemeMode
 import com.prism.docs.core.ui.glass.DriftingBlobsBackdrop
@@ -68,18 +70,25 @@ import com.prism.docs.core.ui.glass.ProvideGlassMotion
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
 import com.prism.docs.core.ui.theme.LocalHazeState
 import com.prism.docs.core.ui.theme.PrismTheme
+import com.prism.docs.feature.files.CollectionDetailScreen
+import com.prism.docs.feature.files.DuplicateFinderScreen
 import com.prism.docs.feature.files.FilesHomeScreen
+import com.prism.docs.feature.files.FilesViewModel
+import com.prism.docs.feature.files.StorageAnalyzerScreen
 import com.prism.docs.feature.editor.EditorContractScreen
 import com.prism.docs.feature.pdftools.PdfToolsHubScreen
 import com.prism.docs.feature.scan.ScanHubScreen
 import com.prism.docs.feature.search.SearchScreen
 import com.prism.docs.feature.viewer.ViewerShellScreen
+import com.prism.docs.navigation.CollectionDetailRoute
+import com.prism.docs.navigation.DuplicateFinderRoute
 import com.prism.docs.navigation.EditorRoute
 import com.prism.docs.navigation.LibraryRoute
 import com.prism.docs.navigation.OnboardingRoute
 import com.prism.docs.navigation.PdfToolsRoute
 import com.prism.docs.navigation.ScanRoute
 import com.prism.docs.navigation.SearchRoute
+import com.prism.docs.navigation.StorageAnalyzerRoute
 import com.prism.docs.navigation.ViewerRoute
 import com.prism.docs.onboarding.PrismOnboardingScreen
 import dagger.hilt.android.AndroidEntryPoint
@@ -140,7 +149,7 @@ class MainActivity : ComponentActivity() {
               modifier = Modifier.fillMaxSize(),
               base = if (isDarkTheme) MaterialTheme.colorScheme.background else Color(0xFFE8EDF9),
               blobs = if (isDarkTheme) PrismBlobsDark else PrismBlobsLight,
-              blobAlpha = if (uiState.preferences.reduceTransparency) 0f else if (isDarkTheme) 0.45f else 1f,
+              blobAlpha = if (uiState.preferences.reduceTransparency) 0f else if (isDarkTheme) 0.82f else 1f,
             )
           }
         }
@@ -305,7 +314,7 @@ private fun PrismRootShell(
   val env = LocalGlassEnvironment.current
   val backdropBase = if (env.isDark) MaterialTheme.colorScheme.background else Color(0xFFE8EDF9)
   val backdropBlobs = if (env.isDark) PrismBlobsDark else PrismBlobsLight
-  val backdropAlpha = if (env.reduceTransparency) 0f else if (env.isDark) 0.45f else 1f
+  val backdropAlpha = if (env.reduceTransparency) 0f else if (env.isDark) 0.82f else 1f
 
   CompositionLocalProvider(LocalHazeState provides hazeState) {
     SharedTransitionLayout {
@@ -351,7 +360,23 @@ private fun PrismRootShell(
                 )
               }
 
-              composable<LibraryRoute> {
+              composable<LibraryRoute> { entry ->
+                val filesViewModel: FilesViewModel = hiltViewModel()
+                val applyAnalyzerFilter by
+                  entry.savedStateHandle
+                    .getStateFlow("analyzer_filter_apply", false)
+                    .collectAsStateWithLifecycle()
+
+                LaunchedEffect(applyAnalyzerFilter) {
+                  if (applyAnalyzerFilter) {
+                    val catName = entry.savedStateHandle.get<String>("analyzer_filter_category")
+                    val otherOnly = entry.savedStateHandle.get<Boolean>("analyzer_filter_other") ?: false
+                    val cat = catName?.let { runCatching { DocumentCategory.valueOf(it) }.getOrNull() }
+                    filesViewModel.applyAnalyzerCategoryFilter(cat, otherOnly)
+                    entry.savedStateHandle["analyzer_filter_apply"] = false
+                  }
+                }
+
                 FilesHomeScreen(
                   preferences = uiState.preferences,
                   storageAccessState = uiState.storageAccessState,
@@ -376,7 +401,75 @@ private fun PrismRootShell(
                     )
                   },
                   onTabBarCollapsedChange = { isTabBarCollapsed = it },
+                  onOpenDuplicateFinder = { navController.navigate(DuplicateFinderRoute) },
+                  onOpenStorageAnalyzer = { navController.navigate(StorageAnalyzerRoute) },
+                  onOpenCollectionDetail = { colId ->
+                    navController.navigate(CollectionDetailRoute(colId))
+                  },
                   isDebugBuild = BuildConfig.DEBUG,
+                  hasBottomTabBar = !useRailLayout,
+                  viewModel = filesViewModel,
+                )
+              }
+
+              composable<DuplicateFinderRoute> {
+                DuplicateFinderScreen(
+                  onNavigateBack = { navController.popBackStack() },
+                  onOpenDocument = { doc ->
+                    navController.navigate(
+                      ViewerRoute(
+                        uriString = doc.uriString,
+                        displayName = doc.displayName,
+                        mimeType = doc.mimeType,
+                        sizeBytes = doc.sizeBytes,
+                        sourceAction = doc.sourceAction,
+                      )
+                    )
+                  },
+                )
+              }
+
+              composable<StorageAnalyzerRoute> {
+                StorageAnalyzerScreen(
+                  onNavigateBack = { navController.popBackStack() },
+                  onFilterLibraryByCategory = { category, otherOnly ->
+                    runCatching {
+                      navController.getBackStackEntry<LibraryRoute>().savedStateHandle.apply {
+                        set("analyzer_filter_category", category?.name)
+                        set("analyzer_filter_other", otherOnly)
+                        set("analyzer_filter_apply", true)
+                      }
+                    }
+                    navController.popBackStack()
+                  },
+                  onOpenDocument = { doc ->
+                    navController.navigate(
+                      ViewerRoute(
+                        uriString = doc.uriString,
+                        displayName = doc.displayName,
+                        mimeType = doc.mimeType,
+                        sizeBytes = doc.sizeBytes,
+                        sourceAction = doc.sourceAction,
+                      )
+                    )
+                  },
+                )
+              }
+
+              composable<CollectionDetailRoute> {
+                CollectionDetailScreen(
+                  onNavigateBack = { navController.popBackStack() },
+                  onOpenDocument = { doc ->
+                    navController.navigate(
+                      ViewerRoute(
+                        uriString = doc.uriString,
+                        displayName = doc.displayName,
+                        mimeType = doc.mimeType,
+                        sizeBytes = doc.sizeBytes,
+                        sourceAction = doc.sourceAction,
+                      )
+                    )
+                  },
                 )
               }
 

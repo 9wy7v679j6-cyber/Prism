@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
 import com.prism.docs.core.ui.theme.LocalHazeState
 import com.prism.docs.core.ui.theme.PrismColors
+import com.prism.docs.core.ui.theme.PrismDimens
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.HazeTint
@@ -63,7 +64,7 @@ enum class GlassElevation(
     blurRadius = 20.dp,
     shadowElevation = 8.dp,
     lightTintAlpha = 0.56f,
-    darkTintAlpha = 0.46f,
+    darkTintAlpha = 0.08f,
   ),
 
   /** Floating navigation capsules, search bar, and round glass buttons. */
@@ -71,7 +72,7 @@ enum class GlassElevation(
     blurRadius = 24.dp,
     shadowElevation = 14.dp,
     lightTintAlpha = 0.62f,
-    darkTintAlpha = 0.56f,
+    darkTintAlpha = 0.10f,
   ),
 
   /** Modal bottom sheets, context menus, and popovers. */
@@ -79,7 +80,7 @@ enum class GlassElevation(
     blurRadius = 32.dp,
     shadowElevation = 20.dp,
     lightTintAlpha = 0.82f,
-    darkTintAlpha = 0.72f,
+    darkTintAlpha = 0.12f,
   ),
 }
 
@@ -89,10 +90,10 @@ enum class GlassElevation(
  *   run hardware-accelerated Haze real-time backdrop blur over both [DriftingBlobsBackdrop] and
  *   scrolling content.
  * - Inline cards inside scrolling `hazeSource` lists ([useBackdropBlur] = false, default for
- *   [GlassElevation.SUBTLE]) render luminous multi-stop frosted translucent glass over the soft
- *   drifting blobs with zero cyclic Haze bugs and zero per-card blur passes.
- * - Optional [enableAnimatedSheen] draws the sweeping glass highlight cleanly *inside* the
- *   clipped shape bounds so it never bleeds over drop shadows.
+ *   [GlassElevation.SUBTLE]) render luminous frosted translucent glass over the canvas/blobs
+ *   with zero cyclic Haze bugs and zero per-card blur passes.
+ * - Dark theme pairs deep navy-violet canvas depth with white 8–12% glass tint and a crisp
+ *   1dp brighter top specular edge.
  */
 @Composable
 fun GlassSurface(
@@ -115,95 +116,126 @@ fun GlassSurface(
   val tier = env.capabilityTier
   val isDark = env.isDark
 
-  val baseSurfaceColor = if (isDark) Color(0xFF101726) else Color(0xFFFFFFFF)
+  val baseSurfaceColor = if (isDark) PrismColors.DarkGlassTint else PrismColors.LightGlassBase
 
   val adaptiveTintAlpha =
-    ((if (isDark) elevation.darkTintAlpha else elevation.lightTintAlpha) * env.tintScale)
-      .coerceIn(0.16f, 0.94f)
+    if (isDark) {
+      (elevation.darkTintAlpha * env.tintScale).coerceIn(0.06f, 0.15f)
+    } else {
+      (elevation.lightTintAlpha * env.tintScale).coerceIn(0.16f, 0.94f)
+    }
 
   val tintColor =
-    remember(baseSurfaceColor, accentTint, tier, adaptiveTintAlpha) {
-      if (accentTint != null && accentTint.alpha > 0f) {
+    remember(baseSurfaceColor, accentTint, tier, adaptiveTintAlpha, isDark) {
+      if (tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY) {
+        if (isDark) PrismColors.DarkSurface.copy(alpha = 0.98f)
+        else PrismColors.LightSurface.copy(alpha = 0.98f)
+      } else if (accentTint != null && accentTint.alpha > 0f) {
         Color(
-          red = baseSurfaceColor.red * 0.86f + accentTint.red * 0.14f,
-          green = baseSurfaceColor.green * 0.86f + accentTint.green * 0.14f,
-          blue = baseSurfaceColor.blue * 0.86f + accentTint.blue * 0.14f,
-          alpha = if (tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY) 0.98f else adaptiveTintAlpha,
+          red = baseSurfaceColor.red * 0.82f + accentTint.red * 0.18f,
+          green = baseSurfaceColor.green * 0.82f + accentTint.green * 0.18f,
+          blue = baseSurfaceColor.blue * 0.82f + accentTint.blue * 0.18f,
+          alpha = adaptiveTintAlpha,
         )
       } else {
-        baseSurfaceColor.copy(
-          alpha = if (tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY) 0.98f else adaptiveTintAlpha
-        )
+        baseSurfaceColor.copy(alpha = adaptiveTintAlpha)
       }
     }
 
   val blurDp = (elevation.blurRadius * env.blurScale).coerceIn(14.dp, 36.dp)
 
-  // Bright white specular edge fading smoothly around the shape
+  // Specular perimeter border with a noticeably brighter 1dp top edge
   val specularBorderBrush =
     remember(tier, isDark, colorScheme.outline, colorScheme.outlineVariant) {
       if (tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY) {
-        Brush.linearGradient(
+        Brush.verticalGradient(
           colors = listOf(colorScheme.outline, colorScheme.outlineVariant)
         )
       } else if (isDark) {
-        Brush.linearGradient(
+        Brush.verticalGradient(
           colorStops =
             arrayOf(
-              0.0f to Color.White.copy(alpha = 0.42f),
-              0.30f to Color.White.copy(alpha = 0.16f),
-              0.66f to Color.White.copy(alpha = 0.06f),
-              1.0f to Color.White.copy(alpha = 0.24f),
+              0.0f to Color.White.copy(alpha = 0.50f),
+              0.20f to Color.White.copy(alpha = 0.20f),
+              0.72f to Color.White.copy(alpha = 0.09f),
+              1.0f to Color.White.copy(alpha = 0.16f),
             )
         )
       } else {
-        Brush.linearGradient(
+        Brush.verticalGradient(
           colorStops =
             arrayOf(
-              0.0f to Color.White.copy(alpha = 0.96f),
-              0.30f to Color.White.copy(alpha = 0.64f),
-              0.64f to Color.White.copy(alpha = 0.26f),
-              1.0f to Color.White.copy(alpha = 0.78f),
+              0.0f to Color.White.copy(alpha = 0.98f),
+              0.25f to Color.White.copy(alpha = 0.68f),
+              0.70f to Color.White.copy(alpha = 0.30f),
+              1.0f to Color.White.copy(alpha = 0.72f),
             )
         )
       }
     }
 
-  // Rich luminous frosted fill for inline cards & pre-API 31 devices (lets drifting blobs glow through)
   val frostedFillBrush =
-    remember(tintColor, adaptiveTintAlpha, isDark) {
+    remember(tintColor, adaptiveTintAlpha, isDark, elevation, accentTint) {
       if (isDark) {
-        Brush.verticalGradient(
-          colors =
-            listOf(
-              tintColor.copy(alpha = (adaptiveTintAlpha + 0.18f).coerceAtMost(0.86f)),
-              tintColor.copy(alpha = (adaptiveTintAlpha + 0.10f).coerceAtMost(0.78f)),
-            )
-        )
+        if (elevation == GlassElevation.OVERLAY) {
+          val overlayTop =
+            if (accentTint != null && accentTint.alpha > 0f) {
+              Color(
+                red = PrismColors.DarkOverlayGlassFallback.red * 0.86f + accentTint.red * 0.14f,
+                green = PrismColors.DarkOverlayGlassFallback.green * 0.86f + accentTint.green * 0.14f,
+                blue = PrismColors.DarkOverlayGlassFallback.blue * 0.86f + accentTint.blue * 0.14f,
+                alpha = 0.96f,
+              )
+            } else {
+              PrismColors.DarkOverlayGlassFallback.copy(alpha = 0.96f)
+            }
+          // Non-blur overlays (e.g., popup context menus in separate windows) pair deep navy-violet with 12% white tint
+          Brush.verticalGradient(
+            colors =
+              listOf(
+                overlayTop,
+                PrismColors.DarkCanvas.copy(alpha = 0.94f),
+              )
+          )
+        } else {
+          Brush.verticalGradient(
+            colors =
+              listOf(
+                tintColor.copy(alpha = (adaptiveTintAlpha + 0.03f).coerceAtMost(0.15f)),
+                tintColor,
+              )
+          )
+        }
       } else {
         Brush.verticalGradient(
           colors =
             listOf(
-              tintColor.copy(alpha = (adaptiveTintAlpha + 0.16f).coerceAtMost(0.82f)),
-              tintColor.copy(alpha = (adaptiveTintAlpha + 0.04f).coerceAtMost(0.70f)),
+              tintColor.copy(alpha = (adaptiveTintAlpha + 0.16f).coerceAtMost(0.84f)),
+              tintColor.copy(alpha = (adaptiveTintAlpha + 0.04f).coerceAtMost(0.72f)),
             )
         )
       }
     }
 
   val shadowColor =
-    if (isDark) Color.Black.copy(alpha = 0.48f) else Color(0xFF334778).copy(alpha = 0.14f)
+    if (isDark) PrismColors.DarkShadowAmbient else PrismColors.LightShadowAmbient
 
   val shouldUseHaze = useBackdropBlur && tier.supportsBackdropBlur && hazeState != null
   val useAgsl = shouldUseHaze && tier.supportsAgslRefraction && enableRefraction
 
   val backgroundModifier =
     if (shouldUseHaze && hazeState != null) {
+      val hazeBg =
+        if (isDark && elevation == GlassElevation.OVERLAY) {
+          PrismColors.DarkOverlayGlassFallback.copy(alpha = 0.74f)
+        } else {
+          colorScheme.background
+        }
       Modifier.hazeEffect(
         state = hazeState,
         style =
           HazeStyle(
-            backgroundColor = colorScheme.surface,
+            backgroundColor = hazeBg,
             blurRadius = blurDp,
             tint = HazeTint(color = tintColor),
             noiseFactor = 0f,
@@ -212,14 +244,20 @@ fun GlassSurface(
     } else if (tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY) {
       Modifier.background(color = colorScheme.surface)
     } else {
-      Modifier.background(brush = frostedFillBrush)
+      val overlayTintMod =
+        if (isDark && elevation == GlassElevation.OVERLAY) {
+          Modifier.background(brush = frostedFillBrush).background(color = tintColor)
+        } else {
+          Modifier.background(brush = frostedFillBrush)
+        }
+      overlayTintMod
     }
 
   val topSheenModifier =
     if (enableTopSheen && tier != GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY) {
-      val sheenStart = Color.White.copy(alpha = if (isDark) 0.09f else 0.34f)
+      val sheenStart = Color.White.copy(alpha = if (isDark) 0.10f else 0.34f)
       Modifier.drawBehind {
-        val sheenHeight = size.height * 0.44f
+        val sheenHeight = size.height * 0.42f
         drawRect(
           brush =
             Brush.verticalGradient(
@@ -270,7 +308,7 @@ fun GlassSurface(
         .then(backgroundModifier)
         .then(topSheenModifier)
         .then(animatedSheenModifier)
-        .border(width = 1.25.dp, brush = specularBorderBrush, shape = shape),
+        .border(width = PrismDimens.GlassBorderWidth, brush = specularBorderBrush, shape = shape),
   ) {
     CompositionLocalProvider(LocalContentColor provides colorScheme.onSurface) {
       content()
@@ -281,7 +319,7 @@ fun GlassSurface(
 /**
  * Seamless slice of a single large rounded Liquid Glass list card so Paging 3 / LazyColumn
  * stays fully virtualized while rendering visually as ONE continuous rounded glass card
- * with a bright outer white specular border and zero internal seams or cyclic blur passes.
+ * with a bright 1dp top specular edge and zero internal seams or cyclic blur passes.
  */
 @Composable
 fun ConnectedGlassCardSlice(
@@ -308,23 +346,28 @@ fun ConnectedGlassCardSlice(
       )
     }
 
-  val baseSurfaceColor = if (isDark) Color(0xFF101726) else Color(0xFFFFFFFF)
+  val baseSurfaceColor = if (isDark) PrismColors.DarkGlassTint else PrismColors.LightGlassBase
   val adaptiveTintAlpha =
-    ((if (isDark) 0.56f else 0.68f) * env.tintScale).coerceIn(0.24f, 0.94f)
+    if (isDark) {
+      (0.09f * env.tintScale).coerceIn(0.07f, 0.13f)
+    } else {
+      (0.68f * env.tintScale).coerceIn(0.24f, 0.94f)
+    }
 
   val tintColor =
-    remember(baseSurfaceColor, accentTint, tier, adaptiveTintAlpha) {
-      if (accentTint != null && accentTint.alpha > 0f) {
+    remember(baseSurfaceColor, accentTint, tier, adaptiveTintAlpha, isDark) {
+      if (tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY) {
+        if (isDark) PrismColors.DarkSurface.copy(alpha = 0.98f)
+        else PrismColors.LightSurface.copy(alpha = 0.98f)
+      } else if (accentTint != null && accentTint.alpha > 0f) {
         Color(
-          red = baseSurfaceColor.red * 0.86f + accentTint.red * 0.14f,
-          green = baseSurfaceColor.green * 0.86f + accentTint.green * 0.14f,
-          blue = baseSurfaceColor.blue * 0.86f + accentTint.blue * 0.14f,
-          alpha = if (tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY) 0.98f else adaptiveTintAlpha,
+          red = baseSurfaceColor.red * 0.82f + accentTint.red * 0.18f,
+          green = baseSurfaceColor.green * 0.82f + accentTint.green * 0.18f,
+          blue = baseSurfaceColor.blue * 0.82f + accentTint.blue * 0.18f,
+          alpha = adaptiveTintAlpha,
         )
       } else {
-        baseSurfaceColor.copy(
-          alpha = if (tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY) 0.98f else adaptiveTintAlpha
-        )
+        baseSurfaceColor.copy(alpha = adaptiveTintAlpha)
       }
     }
 
@@ -337,7 +380,9 @@ fun ConnectedGlassCardSlice(
           Brush.verticalGradient(
             colors =
               listOf(
-                tintColor.copy(alpha = (tintColor.alpha + if (isDark) 0.08f else 0.14f).coerceAtMost(0.92f)),
+                tintColor.copy(
+                  alpha = (tintColor.alpha + if (isDark) 0.03f else 0.14f).coerceAtMost(if (isDark) 0.14f else 0.92f)
+                ),
                 tintColor,
               )
           )
@@ -351,15 +396,15 @@ fun ConnectedGlassCardSlice(
     if (tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY) {
       colorScheme.outlineVariant
     } else if (isDark) {
-      Color.White.copy(alpha = 0.28f)
+      Color.White.copy(alpha = 0.46f)
     } else {
-      Color.White.copy(alpha = 0.92f)
+      Color.White.copy(alpha = 0.96f)
     }
   val borderSide =
     if (tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY) {
       colorScheme.outlineVariant
     } else if (isDark) {
-      Color.White.copy(alpha = 0.16f)
+      Color.White.copy(alpha = 0.14f)
     } else {
       Color.White.copy(alpha = 0.68f)
     }
@@ -367,19 +412,19 @@ fun ConnectedGlassCardSlice(
   val perimeterBorderModifier =
     Modifier.drawWithContent {
       drawContent()
-      val strokePx = 1.25.dp.toPx()
+      val strokePx = PrismDimens.GlassTopEdgeWidth.toPx()
       val halfStroke = strokePx / 2f
       val r = cornerRadius.toPx().coerceAtMost(minOf(size.width, size.height) / 2f)
 
       if (isFirst && isLast) {
         drawRoundRect(
           brush =
-            Brush.linearGradient(
+            Brush.verticalGradient(
               colorStops =
                 arrayOf(
                   0.0f to borderHighlight,
-                  0.5f to borderSide,
-                  1.0f to borderHighlight.copy(alpha = borderHighlight.alpha * 0.85f),
+                  0.35f to borderSide,
+                  1.0f to borderSide.copy(alpha = borderSide.alpha * 0.90f),
                 )
             ),
           topLeft = Offset(halfStroke, halfStroke),
@@ -419,7 +464,7 @@ fun ConnectedGlassCardSlice(
           }
         drawPath(
           path = path,
-          brush = Brush.verticalGradient(listOf(borderSide, borderHighlight.copy(alpha = borderHighlight.alpha * 0.85f))),
+          brush = Brush.verticalGradient(listOf(borderSide, borderHighlight.copy(alpha = borderHighlight.alpha * 0.65f))),
           style = Stroke(width = strokePx),
         )
       } else {

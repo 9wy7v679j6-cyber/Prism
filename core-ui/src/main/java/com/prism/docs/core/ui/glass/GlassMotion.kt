@@ -50,6 +50,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -79,16 +80,22 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.prism.docs.core.ui.R
+import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.min
@@ -145,12 +152,12 @@ val PrismBlobsLight = listOf(
     GlassBlob(Color(0xFF9CF0DC), cx = 0.92f, cy = 0.92f, radius = 0.50f, driftX = 0.12f, driftY = 0.04f, cycles = 2, phase = 0.10f),
 )
 
-/** Darker, calmer blobs for the dark theme. */
+/** Deep navy-violet atmospheric blobs tuned for the dark glass theme. */
 val PrismBlobsDark = listOf(
-    GlassBlob(Color(0xFF3B5BDB), cx = 0.10f, cy = 0.08f, radius = 0.55f, driftX = 0.10f, driftY = 0.05f, cycles = 4),
-    GlassBlob(Color(0xFF7048E8), cx = 0.95f, cy = 0.30f, radius = 0.60f, driftX = 0.12f, driftY = 0.04f, cycles = 3, phase = 0.30f),
-    GlassBlob(Color(0xFFC2255C), cx = 0.08f, cy = 0.62f, radius = 0.52f, driftX = 0.10f, driftY = 0.05f, cycles = 5, phase = 0.60f),
-    GlassBlob(Color(0xFF0CA678), cx = 0.92f, cy = 0.92f, radius = 0.50f, driftX = 0.12f, driftY = 0.04f, cycles = 2, phase = 0.10f),
+    GlassBlob(Color(0xFF3456E8), cx = 0.12f, cy = 0.08f, radius = 0.56f, driftX = 0.10f, driftY = 0.05f, cycles = 4),
+    GlassBlob(Color(0xFF7442F0), cx = 0.92f, cy = 0.28f, radius = 0.62f, driftX = 0.12f, driftY = 0.04f, cycles = 3, phase = 0.30f),
+    GlassBlob(Color(0xFF6B2CB8), cx = 0.10f, cy = 0.62f, radius = 0.54f, driftX = 0.10f, driftY = 0.05f, cycles = 5, phase = 0.60f),
+    GlassBlob(Color(0xFF17669C), cx = 0.90f, cy = 0.92f, radius = 0.52f, driftX = 0.12f, driftY = 0.04f, cycles = 2, phase = 0.10f),
 )
 
 /**
@@ -374,6 +381,8 @@ fun Modifier.glassSlidingPill(
     inset: Dp = 4.dp,
     cornerRadius: Dp = 999.dp,
     brush: Brush = SolidColor(Color.White),
+    shadowColor: Color = Color(0x1E344E9E),
+    borderColor: Color = Color.Transparent,
 ): Modifier = composed {
     if (count <= 0) return@composed this
     val motion = LocalGlassMotion.current
@@ -395,7 +404,7 @@ fun Modifier.glassSlidingPill(
         val r = min(cornerRadius.toPx(), min(segment, h) / 2f)
         // Soft shadow under the pill.
         drawRoundRect(
-            color = Color(0x1E344E9E),
+            color = shadowColor,
             topLeft = Offset(x, i + 2.5.dp.toPx()),
             size = Size(segment, h),
             cornerRadius = CornerRadius(r, r),
@@ -406,6 +415,17 @@ fun Modifier.glassSlidingPill(
             size = Size(segment, h),
             cornerRadius = CornerRadius(r, r),
         )
+        if (borderColor.alpha > 0f) {
+            val strokePx = 1.dp.toPx()
+            val halfStroke = strokePx / 2f
+            drawRoundRect(
+                color = borderColor,
+                topLeft = Offset(x + halfStroke, i + halfStroke),
+                size = Size((segment - strokePx).coerceAtLeast(1f), (h - strokePx).coerceAtLeast(1f)),
+                cornerRadius = CornerRadius((r - halfStroke).coerceAtLeast(0f), (r - halfStroke).coerceAtLeast(0f)),
+                style = Stroke(width = strokePx),
+            )
+        }
     }
 }
 
@@ -431,6 +451,84 @@ fun rememberHeaderScrollProgress(listState: LazyListState, thresholdDp: Dp = 56.
     }
 }
 
+@Composable
+fun rememberHeaderScrollProgress(gridState: LazyGridState, thresholdDp: Dp = 56.dp): State<Float> {
+    val thresholdPx = with(LocalDensity.current) { thresholdDp.toPx() }
+    return remember(gridState, thresholdPx) {
+        derivedStateOf {
+            if (gridState.firstVisibleItemIndex > 0) {
+                1f
+            } else {
+                (gridState.firstVisibleItemScrollOffset / thresholdPx).coerceIn(0f, 1f)
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// 6b. Draw-phase shimmer skeleton sweep (zero recompositions, zero per-frame allocations)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Renders a rounded skeleton fill and a sweeping light band strictly inside the Compose draw
+ * phase ([drawBehind]) using a pre-allocated [Brush] and GPU matrix translation.
+ */
+fun Modifier.glassShimmer(
+    cornerRadius: Dp = 14.dp,
+    periodMs: Int = 1350,
+    bandWidthDp: Dp = 140.dp,
+): Modifier = composed {
+    val motion = LocalGlassMotion.current
+    val tokens = LocalPrismVisualTokens.current
+    val baseColor = tokens.shimmerBase
+    val highlightColor = tokens.shimmerHighlight
+    val density = LocalDensity.current
+    val bandWidthPx = with(density) { bandWidthDp.toPx() }
+
+    val sweepBrush = remember(highlightColor, bandWidthPx) {
+        Brush.linearGradient(
+            colors = listOf(Color.Transparent, highlightColor, Color.Transparent),
+            start = Offset.Zero,
+            end = Offset(bandWidthPx, bandWidthPx * 0.42f),
+        )
+    }
+
+    val progress: State<Float> = if (motion) {
+        val infinite = rememberInfiniteTransition(label = "glassShimmer")
+        infinite.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = periodMs, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "glassShimmerProgress",
+        )
+    } else {
+        remember { mutableStateOf(0f) }
+    }
+
+    this
+        .clip(RoundedCornerShape(cornerRadius))
+        .drawBehind {
+            drawRect(color = baseColor)
+            if (motion && size.width > 0f && size.height > 0f) {
+                val p = progress.value
+                val travel = size.width + bandWidthPx * 2f
+                val tx = -bandWidthPx + travel * p
+                clipRect {
+                    translate(left = tx) {
+                        drawRect(
+                            brush = sweepBrush,
+                            topLeft = Offset.Zero,
+                            size = Size(bandWidthPx, size.height),
+                        )
+                    }
+                }
+            }
+        }
+}
+
 // ---------------------------------------------------------------------------------------------
 // 7. Diagnostics
 // ---------------------------------------------------------------------------------------------
@@ -441,9 +539,15 @@ fun GlassMotionStatusText(appReduceMotion: Boolean, modifier: Modifier = Modifie
     val context = LocalContext.current
     val scale = remember(context) { systemAnimatorScale(context) }
     val on = !appReduceMotion && scale > 0f
+    val statusLabel = stringResource(if (on) R.string.glass_motion_status_on else R.string.glass_motion_status_off)
     Text(
-        text = "Glass motion: ${if (on) "ON" else "OFF"} " +
-            "(system animator scale $scale, app Reduce Motion $appReduceMotion, API ${Build.VERSION.SDK_INT})",
+        text = stringResource(
+            R.string.glass_motion_status_format,
+            statusLabel,
+            scale,
+            appReduceMotion.toString(),
+            Build.VERSION.SDK_INT,
+        ),
         modifier = modifier,
     )
 }
@@ -460,7 +564,11 @@ fun GlassMotionStatusText(appReduceMotion: Boolean, modifier: Modifier = Modifie
 fun GlassMotionDemo(appReduceMotion: Boolean = false) {
     ProvideGlassMotion(appReduceMotion) {
         var selected by remember { mutableIntStateOf(0) }
-        val tabs = listOf("Library", "Scan", "Tools")
+        val tabs = listOf(
+            stringResource(R.string.glass_demo_library),
+            stringResource(R.string.glass_demo_scan),
+            stringResource(R.string.glass_demo_tools),
+        )
         val glass = Color.White.copy(alpha = 0.45f)
         val rim = Color.White.copy(alpha = 0.85f)
 
@@ -489,7 +597,10 @@ fun GlassMotionDemo(appReduceMotion: Boolean = false) {
                                 .glassSheen(cornerRadius = 26.dp),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Text("Card ${i + 1}", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = stringResource(R.string.glass_demo_card_label, i + 1),
+                                fontWeight = FontWeight.SemiBold,
+                            )
                         }
                     }
                 }

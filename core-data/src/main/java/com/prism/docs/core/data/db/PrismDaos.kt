@@ -26,13 +26,69 @@ data class CategoryCountRow(
   val totalBytes: Long,
 )
 
+data class FolderStorageStatRow(
+  val parentPath: String,
+  val itemCount: Int,
+  val totalBytes: Long,
+)
+
+data class CollectionWithCountRow(
+  val id: Long,
+  val name: String,
+  val accentHex: String,
+  val iconName: String,
+  val createdAtEpochMs: Long,
+  val updatedAtEpochMs: Long,
+  val documentCount: Int,
+  val totalBytes: Long,
+)
+
+data class TagWithCountRow(
+  val id: Long,
+  val name: String,
+  val colorHex: String,
+  val createdAtEpochMs: Long,
+  val documentCount: Int,
+)
+
 @Dao
 interface DocumentIndexDao {
-  @RawQuery(observedEntities = [IndexedDocumentEntity::class])
+  @RawQuery(observedEntities = [IndexedDocumentEntity::class, DocumentCollectionCrossRef::class, DocumentTagCrossRef::class])
   fun pagingSourceRaw(query: SupportSQLiteQuery): PagingSource<Int, IndexedDocumentEntity>
 
   @Query("SELECT * FROM indexed_documents WHERE isTrashed = 0 ORDER BY lastModifiedEpochMs DESC")
   fun observeActiveDocuments(): Flow<List<IndexedDocumentEntity>>
+
+  @Query(
+    "SELECT * FROM indexed_documents WHERE isTrashed = 0 ORDER BY sizeBytes DESC, lastModifiedEpochMs DESC LIMIT :limit"
+  )
+  fun observeLargestDocuments(limit: Int = 40): Flow<List<IndexedDocumentEntity>>
+
+  @Query(
+    "SELECT parentPath, COUNT(*) AS itemCount, COALESCE(SUM(sizeBytes), 0) AS totalBytes " +
+      "FROM indexed_documents WHERE isTrashed = 0 GROUP BY parentPath ORDER BY totalBytes DESC LIMIT :limit"
+  )
+  fun observeFolderStorageStats(limit: Int = 25): Flow<List<FolderStorageStatRow>>
+
+  @Query(
+    "SELECT * FROM indexed_documents WHERE isTrashed = 0 AND sizeBytes > 0 " +
+      "ORDER BY sizeBytes DESC, lastModifiedEpochMs DESC, id ASC"
+  )
+  suspend fun getActiveDuplicateCandidates(): List<IndexedDocumentEntity>
+
+  @Query(
+    "SELECT * FROM indexed_documents WHERE isTrashed = 0 AND contentHash IS NOT NULL " +
+      "ORDER BY sizeBytes DESC, lastModifiedEpochMs DESC, id ASC"
+  )
+  fun observeHashedActiveDocuments(): Flow<List<IndexedDocumentEntity>>
+
+  @Query(
+    "UPDATE indexed_documents SET partialHash = :partialHash, contentHash = :contentHash WHERE id = :id"
+  )
+  suspend fun updateDocumentHashes(id: Long, partialHash: String?, contentHash: String?)
+
+  @Query("UPDATE indexed_documents SET partialHash = NULL, contentHash = NULL WHERE isTrashed = 0")
+  suspend fun clearActiveHashes()
 
   @Query(
     "SELECT * FROM indexed_documents WHERE isTrashed = 0 AND lastOpenedEpochMs IS NOT NULL ORDER BY lastOpenedEpochMs DESC LIMIT :limit"
@@ -96,7 +152,7 @@ interface DocumentIndexDao {
     "UPDATE indexed_documents SET displayName = :displayName, normalizedName = :normalizedName, " +
       "parentPath = :parentPath, mimeType = :mimeType, extension = :extension, category = :category, " +
       "sizeBytes = :sizeBytes, lastModifiedEpochMs = :lastModifiedEpochMs, sourceType = :sourceType, " +
-      "lastIndexedEpochMs = :lastIndexedEpochMs WHERE id = :id"
+      "lastIndexedEpochMs = :lastIndexedEpochMs, partialHash = NULL, contentHash = NULL WHERE id = :id"
   )
   suspend fun updateScannedMetadata(
     id: Long,
@@ -170,11 +226,35 @@ interface DocumentIndexDao {
 
 @Dao
 interface CollectionDao {
-  @Query("SELECT * FROM collections ORDER BY createdAtEpochMs DESC")
+  @Query("SELECT * FROM collections ORDER BY updatedAtEpochMs DESC, createdAtEpochMs DESC")
   fun observeCollections(): Flow<List<CollectionEntity>>
+
+  @Query(
+    "SELECT c.id, c.name, c.accentHex, c.iconName, c.createdAtEpochMs, c.updatedAtEpochMs, " +
+      "SUM(CASE WHEN d.id IS NOT NULL AND d.isTrashed = 0 THEN 1 ELSE 0 END) AS documentCount, " +
+      "COALESCE(SUM(CASE WHEN d.id IS NOT NULL AND d.isTrashed = 0 THEN d.sizeBytes ELSE 0 END), 0) AS totalBytes " +
+      "FROM collections c " +
+      "LEFT JOIN document_collection_cross_ref r ON c.id = r.collectionId " +
+      "LEFT JOIN indexed_documents d ON d.id = r.documentId " +
+      "GROUP BY c.id " +
+      "ORDER BY c.updatedAtEpochMs DESC, c.createdAtEpochMs DESC"
+  )
+  fun observeCollectionsWithStats(): Flow<List<CollectionWithCountRow>>
+
+  @Query("SELECT * FROM collections WHERE id = :collectionId LIMIT 1")
+  fun observeById(collectionId: Long): Flow<CollectionEntity?>
+
+  @Query("SELECT * FROM collections WHERE id = :collectionId LIMIT 1")
+  suspend fun getById(collectionId: Long): CollectionEntity?
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun upsert(collection: CollectionEntity): Long
+
+  @Query("UPDATE collections SET name = :newName, updatedAtEpochMs = :updatedAtEpochMs WHERE id = :collectionId")
+  suspend fun rename(collectionId: Long, newName: String, updatedAtEpochMs: Long)
+
+  @Query("UPDATE collections SET updatedAtEpochMs = :updatedAtEpochMs WHERE id = :collectionId")
+  suspend fun touchUpdated(collectionId: Long, updatedAtEpochMs: Long)
 
   @Query("DELETE FROM collections WHERE id = :collectionId")
   suspend fun deleteById(collectionId: Long)
@@ -182,18 +262,32 @@ interface CollectionDao {
   @Insert(onConflict = OnConflictStrategy.IGNORE)
   suspend fun addDocumentToCollection(crossRef: DocumentCollectionCrossRef)
 
+  @Insert(onConflict = OnConflictStrategy.IGNORE)
+  suspend fun addDocumentsToCollection(crossRefs: List<DocumentCollectionCrossRef>)
+
   @Query(
     "DELETE FROM document_collection_cross_ref WHERE documentId = :documentId AND collectionId = :collectionId"
   )
   suspend fun removeDocumentFromCollection(documentId: Long, collectionId: Long)
 
   @Query(
+    "DELETE FROM document_collection_cross_ref WHERE collectionId = :collectionId AND documentId IN (:documentIds)"
+  )
+  suspend fun removeDocumentsFromCollection(documentIds: List<Long>, collectionId: Long)
+
+  @Query(
     "SELECT d.* FROM indexed_documents d " +
       "INNER JOIN document_collection_cross_ref r ON d.id = r.documentId " +
       "WHERE r.collectionId = :collectionId AND d.isTrashed = 0 " +
-      "ORDER BY r.addedAtEpochMs DESC"
+      "ORDER BY r.addedAtEpochMs DESC, d.lastModifiedEpochMs DESC"
   )
   fun observeDocumentsInCollection(collectionId: Long): Flow<List<IndexedDocumentEntity>>
+
+  @Query("SELECT * FROM document_collection_cross_ref WHERE documentId IN (:documentIds)")
+  fun observeCrossRefsForDocuments(documentIds: List<Long>): Flow<List<DocumentCollectionCrossRef>>
+
+  @Query("SELECT * FROM document_collection_cross_ref WHERE documentId IN (:documentIds)")
+  suspend fun getCrossRefsForDocuments(documentIds: List<Long>): List<DocumentCollectionCrossRef>
 }
 
 @Dao
@@ -201,8 +295,25 @@ interface TagDao {
   @Query("SELECT * FROM tags ORDER BY name COLLATE NOCASE ASC")
   fun observeTags(): Flow<List<TagEntity>>
 
+  @Query(
+    "SELECT t.id, t.name, t.colorHex, t.createdAtEpochMs, " +
+      "SUM(CASE WHEN d.id IS NOT NULL AND d.isTrashed = 0 THEN 1 ELSE 0 END) AS documentCount " +
+      "FROM tags t " +
+      "LEFT JOIN document_tag_cross_ref r ON t.id = r.tagId " +
+      "LEFT JOIN indexed_documents d ON d.id = r.documentId " +
+      "GROUP BY t.id " +
+      "ORDER BY t.name COLLATE NOCASE ASC"
+  )
+  fun observeTagsWithStats(): Flow<List<TagWithCountRow>>
+
+  @Query("SELECT * FROM tags WHERE LOWER(name) = LOWER(:name) LIMIT 1")
+  suspend fun findByNameIgnoreCase(name: String): TagEntity?
+
   @Insert(onConflict = OnConflictStrategy.ABORT)
   suspend fun insert(tag: TagEntity): Long
+
+  @Query("UPDATE tags SET name = :newName WHERE id = :tagId")
+  suspend fun rename(tagId: Long, newName: String)
 
   @Query("DELETE FROM tags WHERE id = :tagId")
   suspend fun deleteById(tagId: Long)
@@ -210,8 +321,14 @@ interface TagDao {
   @Insert(onConflict = OnConflictStrategy.IGNORE)
   suspend fun attachTag(crossRef: DocumentTagCrossRef)
 
+  @Insert(onConflict = OnConflictStrategy.IGNORE)
+  suspend fun attachTags(crossRefs: List<DocumentTagCrossRef>)
+
   @Query("DELETE FROM document_tag_cross_ref WHERE documentId = :documentId AND tagId = :tagId")
   suspend fun detachTag(documentId: Long, tagId: Long)
+
+  @Query("DELETE FROM document_tag_cross_ref WHERE tagId = :tagId AND documentId IN (:documentIds)")
+  suspend fun detachTagFromDocuments(documentIds: List<Long>, tagId: Long)
 
   @Query(
     "SELECT t.* FROM tags t " +
@@ -219,6 +336,12 @@ interface TagDao {
       "WHERE r.documentId = :documentId ORDER BY t.name COLLATE NOCASE ASC"
   )
   fun observeTagsForDocument(documentId: Long): Flow<List<TagEntity>>
+
+  @Query("SELECT * FROM document_tag_cross_ref WHERE documentId IN (:documentIds)")
+  fun observeCrossRefsForDocuments(documentIds: List<Long>): Flow<List<DocumentTagCrossRef>>
+
+  @Query("SELECT * FROM document_tag_cross_ref WHERE documentId IN (:documentIds)")
+  suspend fun getCrossRefsForDocuments(documentIds: List<Long>): List<DocumentTagCrossRef>
 }
 
 @Dao

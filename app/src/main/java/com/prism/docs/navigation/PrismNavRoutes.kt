@@ -22,3 +22,10 @@ data class ViewerRoute(
 )
 
 @Serializable data object EditorRoute
+
+@Serializable data object DuplicateFinderRoute
+
+@Serializable data object StorageAnalyzerRoute
+
+@Serializable data class CollectionDetailRoute(val collectionId: Long)
+

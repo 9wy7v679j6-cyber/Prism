@@ -137,6 +137,7 @@ data class DirectoryChangeEvent(
 
 data class FileListQuery(
   val category: DocumentCategory? = null,
+  val otherCategoriesOnly: Boolean = false,
   val parentPath: String? = null,
   val collectionId: Long? = null,
   val tagId: Long? = null,

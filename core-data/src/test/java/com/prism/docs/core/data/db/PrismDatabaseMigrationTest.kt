@@ -165,4 +165,121 @@ class PrismDatabaseMigrationTest {
       roomDb.close()
     }
   }
+
+  @Test
+  fun migrate3To4AddsPartialHashSizeIndexesAndCollectionUpdatedAtWhilePreservingData() = runTest {
+    val dbName = "prism_migration_3_to_4_test.db"
+    helper.createDatabase(dbName, 3).apply {
+      execSQL(
+        """
+        INSERT INTO indexed_documents
+          (id, uriString, displayName, normalizedName, parentPath, mimeType, extension, category, sizeBytes, lastModifiedEpochMs, isFavorite, isTrashed, sourceType, lastIndexedEpochMs)
+        VALUES
+          (1, 'file:///storage/emulated/0/Documents/Report.pdf', 'Report.pdf', 'report.pdf', '/storage/emulated/0/Documents', 'application/pdf', 'pdf', 'PDF', 240000, 1700000000000, 1, 0, 'FILESYSTEM', 1700000001000)
+        """.trimIndent()
+      )
+      execSQL(
+        """
+        INSERT INTO collections (id, name, accentHex, iconName, createdAtEpochMs)
+        VALUES (7, 'Q4 Finance', '#3B5EF6', 'folder', 1700000005000)
+        """.trimIndent()
+      )
+      execSQL(
+        """
+        INSERT INTO document_collection_cross_ref (documentId, collectionId, addedAtEpochMs)
+        VALUES (1, 7, 1700000006000)
+        """.trimIndent()
+      )
+      execSQL(
+        """
+        INSERT INTO tags (id, name, colorHex, createdAtEpochMs)
+        VALUES (3, 'Audit', '#157A42', 1700000007000)
+        """.trimIndent()
+      )
+      execSQL(
+        """
+        INSERT INTO document_tag_cross_ref (documentId, tagId, taggedAtEpochMs)
+        VALUES (1, 3, 1700000008000)
+        """.trimIndent()
+      )
+      close()
+    }
+
+    val migratedDb = helper.runMigrationsAndValidate(dbName, 4, true, PrismMigrations.MIGRATION_3_4)
+
+    val indexNames = mutableSetOf<String>()
+    migratedDb.query("PRAGMA index_list('indexed_documents')").use { cursor ->
+      val nameCol = cursor.getColumnIndex("name")
+      while (cursor.moveToNext()) {
+        if (nameCol >= 0) indexNames.add(cursor.getString(nameCol))
+      }
+    }
+    assertTrue(
+      "Missing contentHash index in $indexNames",
+      "index_indexed_documents_contentHash" in indexNames,
+    )
+    assertTrue(
+      "Missing isTrashed+sizeBytes index in $indexNames",
+      "index_indexed_documents_isTrashed_sizeBytes" in indexNames,
+    )
+    migratedDb.close()
+
+    val roomDb =
+      Room.databaseBuilder(
+          ApplicationProvider.getApplicationContext(),
+          PrismDatabase::class.java,
+          dbName,
+        )
+        .addMigrations(*PrismMigrations.ALL_MIGRATIONS)
+        .allowMainThreadQueries()
+        .build()
+    try {
+      val doc = roomDb.documentIndexDao().getById(1L)
+      assertEquals("Report.pdf", doc?.displayName)
+      assertEquals(null, doc?.partialHash)
+
+      val collection = roomDb.collectionDao().getById(7L)
+      assertEquals("Q4 Finance", collection?.name)
+      assertEquals(1700000005000L, collection?.updatedAtEpochMs)
+
+      val inCol = roomDb.collectionDao().observeDocumentsInCollection(7L).first()
+      assertEquals(listOf("Report.pdf"), inCol.map { it.displayName })
+
+      val tags = roomDb.tagDao().observeTagsForDocument(1L).first()
+      assertEquals(listOf("Audit"), tags.map { it.name })
+
+      val collectionsWithStats = roomDb.collectionDao().observeCollectionsWithStats().first()
+      assertEquals(1, collectionsWithStats.first().documentCount)
+      assertEquals(240000L, collectionsWithStats.first().totalBytes)
+    } finally {
+      roomDb.close()
+    }
+  }
+
+  @Test
+  fun migrate1Through4ChainValidatesLatestSchema() = runTest {
+    val dbName = "prism_migration_1_to_4_test.db"
+    helper.createDatabase(dbName, 1).apply {
+      execSQL(
+        """
+        INSERT INTO indexed_documents
+          (id, uriString, displayName, parentPath, mimeType, category, sizeBytes, lastModifiedEpochMs, isFavorite, isTrashed)
+        VALUES
+          (1, 'file:///storage/emulated/0/Documents/Legacy.pdf', 'Legacy.pdf', '/storage/emulated/0/Documents', 'application/pdf', 'PDF', 12000, 1700000000000, 0, 0)
+        """.trimIndent()
+      )
+      close()
+    }
+
+    val migratedDb =
+      helper.runMigrationsAndValidate(
+        dbName,
+        4,
+        true,
+        PrismMigrations.MIGRATION_1_2,
+        PrismMigrations.MIGRATION_2_3,
+        PrismMigrations.MIGRATION_3_4,
+      )
+    migratedDb.close()
+  }
 }

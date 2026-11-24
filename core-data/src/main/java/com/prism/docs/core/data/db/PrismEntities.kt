@@ -20,6 +20,8 @@ import androidx.room.PrimaryKey
     Index(value = ["isFavorite"]),
     Index(value = ["lastOpenedEpochMs"]),
     Index(value = ["isTrashed", "trashedAtEpochMs"]),
+    Index(value = ["contentHash"]),
+    Index(value = ["isTrashed", "sizeBytes"]),
   ],
 )
 data class IndexedDocumentEntity(
@@ -38,6 +40,7 @@ data class IndexedDocumentEntity(
   val isTrashed: Boolean = false,
   val trashedAtEpochMs: Long? = null,
   val originalParentPath: String? = null,
+  val partialHash: String? = null,
   val contentHash: String? = null,
   @ColumnInfo(defaultValue = "FILESYSTEM") val sourceType: String = "FILESYSTEM",
   @ColumnInfo(defaultValue = "0") val lastIndexedEpochMs: Long = 0L,
@@ -53,6 +56,7 @@ data class CollectionEntity(
   val accentHex: String,
   @ColumnInfo(defaultValue = "folder") val iconName: String = "folder",
   val createdAtEpochMs: Long,
+  @ColumnInfo(defaultValue = "0") val updatedAtEpochMs: Long = createdAtEpochMs,
 )
 
 @Entity(

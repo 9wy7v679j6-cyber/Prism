@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -46,16 +47,21 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.prism.docs.core.ui.R
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
+import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
+import com.prism.docs.core.ui.theme.PrismDimens
 
 data class GlassTabItem(
   val id: String,
@@ -81,6 +87,7 @@ fun GlassFloatingTabBar(
   modifier: Modifier = Modifier,
 ) {
   val env = LocalGlassEnvironment.current
+  val tokens = LocalPrismVisualTokens.current
   val motion = LocalGlassMotion.current
   val haptics = LocalHapticFeedback.current
   val colorScheme = MaterialTheme.colorScheme
@@ -92,14 +99,19 @@ fun GlassFloatingTabBar(
       label = "tab_bar_scroll_tuck",
     )
 
-  val selectedBlue = if (env.isDark) colorScheme.primary else PrismColors.IndigoBlue
-  val selectedPillBg = if (env.isDark) Color(0xFF253452) else Color.White
+  val selectedContentColor = tokens.tabActiveContent
+  val selectedPillBg = tokens.segmentThumb
+  val selectedPillBorder = if (env.isDark) tokens.segmentThumbBorder else Color.Transparent
   val selectedIndex = tabs.indexOfFirst { it.id == selectedId }.coerceAtLeast(0)
   val pillBrush = remember(selectedPillBg) { SolidColor(selectedPillBg) }
+  val selectedStateLabel = stringResource(R.string.glass_state_selected)
+  val notSelectedStateLabel = stringResource(R.string.glass_state_not_selected)
+  val openSearchCd = stringResource(R.string.glass_open_search_cd)
 
   Row(
     modifier =
       modifier
+        .widthIn(max = 560.dp)
         .fillMaxWidth()
         .navigationBarsPadding()
         .padding(horizontal = 18.dp, vertical = 12.dp)
@@ -133,6 +145,8 @@ fun GlassFloatingTabBar(
               inset = 5.dp,
               cornerRadius = 999.dp,
               brush = pillBrush,
+              shadowColor = tokens.pillShadow,
+              borderColor = selectedPillBorder,
             )
             .padding(5.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -143,9 +157,9 @@ fun GlassFloatingTabBar(
           val contentColor by
             animateColorAsState(
               targetValue =
-                if (isSelected) selectedBlue
-                else if (env.isDark) colorScheme.onSurfaceVariant
-                else Color(0xFF172236),
+                if (isSelected) selectedContentColor
+                else if (env.isDark) PrismColors.DarkTabInactive
+                else PrismColors.LightTabInactive,
               label = "tab_content_color_${tab.id}",
             )
 
@@ -162,6 +176,7 @@ fun GlassFloatingTabBar(
                 }
                 .semantics {
                   selected = isSelected
+                  stateDescription = if (isSelected) selectedStateLabel else notSelectedStateLabel
                   contentDescription = tab.label
                 }
                 .testTag(tab.testTag)
@@ -208,8 +223,8 @@ fun GlassFloatingTabBar(
       clickRole = Role.Button,
       modifier =
         Modifier.size(68.dp)
-          .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
-          .semantics { contentDescription = "Open Search" }
+          .defaultMinSize(minWidth = PrismDimens.TouchTargetMin, minHeight = PrismDimens.TouchTargetMin)
+          .semantics { contentDescription = openSearchCd }
           .testTag("glass_search_orb_button"),
     ) {
       Icon(
@@ -236,6 +251,9 @@ fun GlassNavigationRail(
   val env = LocalGlassEnvironment.current
   val haptics = LocalHapticFeedback.current
   val colorScheme = MaterialTheme.colorScheme
+  val searchDocumentsCd = stringResource(R.string.glass_search_documents_cd)
+  val selectedStateLabel = stringResource(R.string.glass_state_selected)
+  val notSelectedStateLabel = stringResource(R.string.glass_state_not_selected)
 
   Column(
     modifier =
@@ -260,7 +278,7 @@ fun GlassNavigationRail(
     ) {
       Icon(
         imageVector = Icons.Rounded.Search,
-        contentDescription = "Search documents",
+        contentDescription = searchDocumentsCd,
         tint = colorScheme.primary,
         modifier = Modifier.align(Alignment.Center).size(24.dp),
       )
@@ -295,7 +313,11 @@ fun GlassNavigationRail(
                   haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                   onSelectTab(tab.id)
                 }
-                .semantics { selected = isSelected }
+                .semantics {
+                  selected = isSelected
+                  stateDescription = if (isSelected) selectedStateLabel else notSelectedStateLabel
+                  contentDescription = tab.label
+                }
                 .testTag("rail_${tab.testTag}")
                 .padding(horizontal = 8.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -303,7 +325,7 @@ fun GlassNavigationRail(
           ) {
             Icon(
               imageVector = if (isSelected) tab.selectedIcon else tab.icon,
-              contentDescription = tab.label,
+              contentDescription = null,
               tint = tint,
               modifier = Modifier.size(22.dp),
             )
@@ -357,7 +379,9 @@ fun GlassToolbarGroup(
             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
             action.onClick()
           },
-          modifier = Modifier.size(44.dp).defaultMinSize(48.dp, 48.dp).testTag(action.testTag),
+          modifier =
+            Modifier.defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
+              .testTag(action.testTag),
         ) {
           Icon(
             imageVector = action.icon,
@@ -393,6 +417,9 @@ fun GlassSearchField(
 ) {
   val colorScheme = MaterialTheme.colorScheme
 
+  val clearSearchCd = stringResource(R.string.glass_clear_search_cd)
+  val searchFiltersCd = stringResource(R.string.glass_search_filters_cd)
+
   GlassSurface(
     cornerRadius = 28.dp,
     elevation = GlassElevation.FLOATING,
@@ -400,9 +427,9 @@ fun GlassSearchField(
     modifier = modifier.fillMaxWidth().height(54.dp).testTag("glass_search_field"),
   ) {
     Row(
-      modifier = Modifier.fillMaxWidth().fillMaxHeight().padding(horizontal = 16.dp),
+      modifier = Modifier.fillMaxWidth().fillMaxHeight().padding(start = 16.dp, end = 6.dp),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(10.dp),
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
       Icon(
         imageVector = Icons.Rounded.Search,
@@ -434,11 +461,14 @@ fun GlassSearchField(
       AnimatedVisibility(visible = query.isNotEmpty()) {
         IconButton(
           onClick = { onQueryChange("") },
-          modifier = Modifier.size(40.dp).testTag("glass_search_clear_button"),
+          modifier =
+            Modifier.size(PrismDimens.TouchTargetMin)
+              .defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
+              .testTag("glass_search_clear_button"),
         ) {
           Icon(
             imageVector = Icons.Rounded.Close,
-            contentDescription = "Clear search query",
+            contentDescription = clearSearchCd,
             tint = colorScheme.onSurfaceVariant,
             modifier = Modifier.size(19.dp),
           )
@@ -447,11 +477,14 @@ fun GlassSearchField(
       if (onFilterClick != null) {
         IconButton(
           onClick = onFilterClick,
-          modifier = Modifier.size(40.dp).testTag("glass_search_filter_button"),
+          modifier =
+            Modifier.size(PrismDimens.TouchTargetMin)
+              .defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
+              .testTag("glass_search_filter_button"),
         ) {
           Icon(
             imageVector = Icons.Rounded.Tune,
-            contentDescription = "Search filters",
+            contentDescription = searchFiltersCd,
             tint = colorScheme.primary,
             modifier = Modifier.size(20.dp),
           )

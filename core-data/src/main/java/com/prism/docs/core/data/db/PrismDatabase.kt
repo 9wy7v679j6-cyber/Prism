@@ -13,7 +13,7 @@ import androidx.room.RoomDatabase
     RecycleBinEntryEntity::class,
     IndexerStateEntity::class,
   ],
-  version = 3,
+  version = 4,
   exportSchema = true,
 )
 abstract class PrismDatabase : RoomDatabase() {

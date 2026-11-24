@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -65,10 +66,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -76,8 +79,11 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import com.prism.docs.core.ui.R
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
+import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
+import com.prism.docs.core.ui.theme.PrismDimens
 import com.prism.docs.core.ui.theme.PrismMotion
 import kotlinx.coroutines.launch
 
@@ -94,24 +100,33 @@ fun GlassSegmentedControl(
 ) {
   if (options.isEmpty()) return
   val env = LocalGlassEnvironment.current
+  val tokens = LocalPrismVisualTokens.current
   val colorScheme = MaterialTheme.colorScheme
   val haptics = LocalHapticFeedback.current
   val clampedIndex = selectedIndex.coerceIn(0, options.lastIndex)
 
-  val trackRecessColor =
-    if (env.isDark) Color.Black.copy(alpha = 0.28f) else Color(0xFF1A2C56).copy(alpha = 0.11f)
-  val thumbBgColor = if (env.isDark) Color(0xFF283654) else Color.White
+  val trackRecessColor = tokens.segmentRecess
+  val thumbBgColor = tokens.segmentThumb
+  val thumbBorderColor = if (env.isDark) tokens.segmentThumbBorder else Color.Transparent
   val thumbBrush = remember(thumbBgColor) { SolidColor(thumbBgColor) }
-  val activeTextColor = if (env.isDark) colorScheme.primary else PrismColors.IndigoBlue
-  val inactiveTextColor = if (env.isDark) colorScheme.onSurfaceVariant else Color(0xFF3E4C66)
+  val activeTextColor = tokens.segmentActiveText
+  val inactiveTextColor =
+    if (env.isDark) PrismColors.DarkTabInactive else PrismColors.LightSegmentInactive
+  val selectedStateLabel = stringResource(R.string.glass_state_selected)
+  val notSelectedStateLabel = stringResource(R.string.glass_state_not_selected)
 
   GlassSurface(
-    cornerRadius = 22.dp,
+    cornerRadius = 24.dp,
     elevation = GlassElevation.SUBTLE,
     useBackdropBlur = false,
     enableRefraction = false,
     enableTopSheen = false,
-    modifier = modifier.fillMaxWidth().height(44.dp).testTag("glass_segmented_control"),
+    modifier =
+      modifier
+        .fillMaxWidth()
+        .height(PrismDimens.TouchTargetMin)
+        .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+        .testTag("glass_segmented_control"),
   ) {
     Row(
       modifier =
@@ -123,6 +138,8 @@ fun GlassSegmentedControl(
             inset = 4.dp,
             cornerRadius = 999.dp,
             brush = thumbBrush,
+            shadowColor = tokens.pillShadow,
+            borderColor = thumbBorderColor,
           )
           .padding(4.dp),
     ) {
@@ -137,14 +154,19 @@ fun GlassSegmentedControl(
           modifier =
             Modifier.weight(1f)
               .fillMaxHeight()
-              .clip(RoundedCornerShape(18.dp))
+              .clip(RoundedCornerShape(20.dp))
               .glassClickable(role = Role.Tab) {
                 if (!isSelected) {
                   haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                   onSelect(index)
                 }
               }
-              .semantics { selected = isSelected }
+              .semantics {
+                selected = isSelected
+                stateDescription = if (isSelected) selectedStateLabel else notSelectedStateLabel
+                contentDescription = label
+              }
+              .padding(horizontal = 6.dp)
               .testTag("glass_segment_$index"),
           contentAlignment = Alignment.Center,
         ) {
@@ -457,8 +479,8 @@ fun GlassBottomSheet(
                   targetOffsetY = { it },
                 ),
             )
-            .fillMaxWidth()
             .widthIn(max = 640.dp)
+            .fillMaxWidth()
             .height(containerHeight * targetFraction)
             .graphicsLayer {
               translationY = dragOffsetPx.value.coerceAtLeast(-48f)
@@ -514,6 +536,7 @@ fun GlassBottomSheet(
           modifier =
             Modifier.fillMaxSize()
               .navigationBarsPadding()
+              .imePadding()
               .padding(horizontal = 20.dp, vertical = 12.dp),
         ) {
           // Drag handle pill
@@ -549,6 +572,8 @@ fun GlassPageThumbnailStrip(
   val colorScheme = MaterialTheme.colorScheme
   val haptics = LocalHapticFeedback.current
   val pages = remember(pageCount) { (1..pageCount).toList() }
+  val selectedStateLabel = stringResource(R.string.glass_state_selected)
+  val notSelectedStateLabel = stringResource(R.string.glass_state_not_selected)
 
   GlassSurface(
     cornerRadius = 24.dp,
@@ -565,9 +590,11 @@ fun GlassPageThumbnailStrip(
         val isActive = index == currentPage
         val borderColor =
           if (isActive) colorScheme.primary else colorScheme.onSurface.copy(alpha = 0.16f)
+        val pageCd = stringResource(R.string.glass_page_number_cd, pageNumber, pageCount)
         Box(
           modifier =
             Modifier.size(width = thumbnailWidth, height = thumbnailHeight)
+              .defaultMinSize(minWidth = PrismDimens.TouchTargetMin, minHeight = PrismDimens.TouchTargetMin)
               .clip(RoundedCornerShape(10.dp))
               .background(
                 if (isActive) {
@@ -587,7 +614,8 @@ fun GlassPageThumbnailStrip(
               }
               .semantics {
                 selected = isActive
-                contentDescription = "Page $pageNumber of $pageCount"
+                stateDescription = if (isActive) selectedStateLabel else notSelectedStateLabel
+                contentDescription = pageCd
               }
               .testTag("thumbnail_page_$pageNumber"),
           contentAlignment = Alignment.Center,

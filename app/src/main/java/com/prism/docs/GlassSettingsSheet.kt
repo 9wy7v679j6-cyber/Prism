@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
@@ -16,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.ProvideTextStyle
 import com.prism.docs.core.data.model.GlassIntensity
@@ -58,24 +60,28 @@ fun GlassSettingsSheet(
   ) {
     Row(
       modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.SpaceBetween,
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
-      Column {
+      Column(modifier = Modifier.weight(1f)) {
         Text(
           text = "Glass & Accessibility",
           style = MaterialTheme.typography.titleLarge,
           color = colorScheme.onSurface,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis,
         )
         Text(
           text = env.capabilityTier.label,
           style = MaterialTheme.typography.labelSmall,
           color = colorScheme.primary,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
         )
       }
       TextButton(
         onClick = onDismiss,
-        modifier = Modifier.testTag("close_glass_sheet_button"),
+        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("close_glass_sheet_button"),
       ) {
         Text("Done")
       }

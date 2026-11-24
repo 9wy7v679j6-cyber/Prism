@@ -10,6 +10,8 @@ import com.prism.docs.core.data.db.PrismDatabase
 import com.prism.docs.core.data.db.PrismMigrations
 import com.prism.docs.core.data.db.RecycleBinDao
 import com.prism.docs.core.data.db.TagDao
+import com.prism.docs.core.data.duplicates.AndroidDuplicateByteReader
+import com.prism.docs.core.data.duplicates.DuplicateByteReader
 import com.prism.docs.core.data.storage.DocumentStorageGateway
 import com.prism.docs.core.data.storage.UnifiedDocumentStorageGateway
 import dagger.Binds
@@ -66,4 +68,10 @@ abstract class StorageBindingModule {
   abstract fun bindDocumentStorageGateway(
     impl: UnifiedDocumentStorageGateway,
   ): DocumentStorageGateway
+
+  @Binds
+  @Singleton
+  abstract fun bindDuplicateByteReader(
+    impl: AndroidDuplicateByteReader,
+  ): DuplicateByteReader
 }

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -16,9 +17,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Label
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CreateNewFolder
+import androidx.compose.material.icons.rounded.DonutLarge
+import androidx.compose.material.icons.rounded.FileCopy
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Science
@@ -37,6 +41,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.prism.docs.core.data.model.FileSortField
 import com.prism.docs.core.ui.glass.GlassBottomSheet
@@ -45,11 +54,10 @@ import com.prism.docs.core.ui.glass.GlassSegmentedControl
 import com.prism.docs.core.ui.glass.GlassSheetDetent
 import com.prism.docs.core.ui.glass.GlassSurface
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
+import com.prism.docs.core.ui.theme.PrismDimens
 
 /**
  * Glass options & filters sheet reachable from the top-right round sliders button on Library.
- * Keeps the main Library canvas ultra-clean while keeping name filter, sort, layout, favorites,
- * collections/tags, Glass settings, sync, and debug-only sample file generation one tap away.
  */
 @Composable
 internal fun LibraryOptionsGlassSheet(
@@ -69,6 +77,9 @@ internal fun LibraryOptionsGlassSheet(
   onCollectionSelected: (Long?) -> Unit,
   onTagSelected: (Long?) -> Unit,
   onClearFilters: () -> Unit,
+  onOpenDuplicateFinder: () -> Unit,
+  onOpenStorageAnalyzer: () -> Unit,
+  onOpenManageTagsCollections: () -> Unit,
   onOpenGlassSettings: () -> Unit,
   onTriggerSync: () -> Unit,
   onAddSafFolder: () -> Unit,
@@ -81,6 +92,8 @@ internal fun LibraryOptionsGlassSheet(
 
   val env = LocalGlassEnvironment.current
   val colorScheme = MaterialTheme.colorScheme
+  val selectedStateLabel = stringResource(R.string.state_selected)
+  val notSelectedStateLabel = stringResource(R.string.state_not_selected)
 
   GlassBottomSheet(
     visible = visible,
@@ -90,44 +103,54 @@ internal fun LibraryOptionsGlassSheet(
   ) {
     Row(
       modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.SpaceBetween,
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
       Text(
-        text = "Library Filters & Options",
+        text = stringResource(R.string.options_title),
         style = MaterialTheme.typography.titleLarge,
         color = colorScheme.onSurface,
+        maxLines = 2,
+        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        modifier = Modifier.weight(1f),
       )
       TextButton(
         onClick = onDismiss,
-        modifier = Modifier.testTag("close_library_options_button"),
+        modifier =
+          Modifier.defaultMinSize(minWidth = PrismDimens.TouchTargetMin, minHeight = PrismDimens.TouchTargetMin)
+            .testTag("close_library_options_button"),
       ) {
-        Text("Done")
+        Text(stringResource(R.string.options_done))
       }
     }
 
-    Spacer(Modifier.height(10.dp))
+    Spacer(Modifier.height(PrismDimens.SpaceMediumLarge))
 
     Column(
       modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-      verticalArrangement = Arrangement.spacedBy(16.dp),
+      verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSection),
     ) {
-      // Name filter (explicitly reachable from the sliders button)
-      Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+      Column(verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmallMedium)) {
         Text(
-          text = "Filter by Name",
+          text = stringResource(R.string.options_filter_name_title),
           style = MaterialTheme.typography.titleSmall,
           color = colorScheme.onSurfaceVariant,
         )
         OutlinedTextField(
           value = uiState.query.namePrefix.orEmpty(),
           onValueChange = onNamePrefixChange,
-          placeholder = { Text("Filter files by name…") },
+          placeholder = { Text(stringResource(R.string.options_filter_name_placeholder)) },
           leadingIcon = { Icon(imageVector = Icons.Rounded.Search, contentDescription = null) },
           trailingIcon = {
             if (!uiState.query.namePrefix.isNullOrBlank()) {
-              IconButton(onClick = { onNamePrefixChange("") }) {
-                Icon(imageVector = Icons.Rounded.Close, contentDescription = "Clear filter text")
+              IconButton(
+                onClick = { onNamePrefixChange("") },
+                modifier = Modifier.defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin),
+              ) {
+                Icon(
+                  imageVector = Icons.Rounded.Close,
+                  contentDescription = stringResource(R.string.options_clear_filter_cd),
+                )
               }
             }
           },
@@ -137,25 +160,27 @@ internal fun LibraryOptionsGlassSheet(
         )
       }
 
-      // View mode switcher
-      Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+      Column(verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmallMedium)) {
         Text(
-          text = "Layout",
+          text = stringResource(R.string.options_layout_title),
           style = MaterialTheme.typography.titleSmall,
           color = colorScheme.onSurfaceVariant,
         )
         GlassSegmentedControl(
-          options = listOf("List", "Grid"),
+          options =
+            listOf(
+              stringResource(R.string.options_layout_list),
+              stringResource(R.string.options_layout_grid),
+            ),
           selectedIndex = if (uiState.isGridMode) 1 else 0,
           onSelect = { idx -> onSetGridMode(idx == 1) },
           modifier = Modifier.fillMaxWidth().testTag("toggle_layout_segmented"),
         )
       }
 
-      // Sort options
-      Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+      Column(verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmallMedium)) {
         Text(
-          text = "Sort By",
+          text = stringResource(R.string.options_sort_by_title),
           style = MaterialTheme.typography.titleSmall,
           color = colorScheme.onSurfaceVariant,
         )
@@ -168,30 +193,31 @@ internal fun LibraryOptionsGlassSheet(
         )
       }
 
-      // Quick filters (Favorites, Recents, Collections, Tags)
-      Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+      Column(verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmallMedium)) {
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically,
         ) {
           Text(
-            text = "Quick Filters",
+            text = stringResource(R.string.options_quick_filters_title),
             style = MaterialTheme.typography.titleSmall,
             color = colorScheme.onSurfaceVariant,
           )
           if (hasActiveSecondaryFilters || uiState.query.category != null) {
             TextButton(
               onClick = onClearFilters,
-              modifier = Modifier.testTag("clear_all_filters_button"),
+              modifier =
+                Modifier.defaultMinSize(minWidth = PrismDimens.TouchTargetMin, minHeight = PrismDimens.TouchTargetMin)
+                  .testTag("clear_all_filters_button"),
             ) {
-              Text("Reset all")
+              Text(stringResource(R.string.options_reset_all))
             }
           }
         }
         LazyRow(
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-          contentPadding = PaddingValues(end = 12.dp),
+          horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
+          contentPadding = PaddingValues(end = PrismDimens.SpaceStandard),
           modifier = Modifier.fillMaxWidth(),
         ) {
           item {
@@ -199,11 +225,17 @@ internal fun LibraryOptionsGlassSheet(
               selected = uiState.query.favoritesOnly,
               onClick = onToggleFavoritesOnly,
               shape = RoundedCornerShape(16.dp),
-              label = { Text("Favorites (${uiState.favoritesCount})") },
+              label = { Text(stringResource(R.string.options_favorites_chip, uiState.favoritesCount)) },
               leadingIcon = {
                 Icon(Icons.Rounded.Star, contentDescription = null, modifier = Modifier.size(16.dp))
               },
-              modifier = Modifier.testTag("filter_favorites_chip"),
+              modifier =
+                Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+                  .semantics {
+                    stateDescription =
+                      if (uiState.query.favoritesOnly) selectedStateLabel else notSelectedStateLabel
+                  }
+                  .testTag("filter_favorites_chip"),
             )
           }
           item {
@@ -211,43 +243,88 @@ internal fun LibraryOptionsGlassSheet(
               selected = uiState.query.recentsOnly,
               onClick = onToggleRecentsOnly,
               shape = RoundedCornerShape(16.dp),
-              label = { Text("Recents (${uiState.recentsCount})") },
+              label = { Text(stringResource(R.string.options_recents_chip, uiState.recentsCount)) },
               leadingIcon = {
                 Icon(Icons.Rounded.History, contentDescription = null, modifier = Modifier.size(16.dp))
               },
-              modifier = Modifier.testTag("filter_recents_chip"),
+              modifier =
+                Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+                  .semantics {
+                    stateDescription =
+                      if (uiState.query.recentsOnly) selectedStateLabel else notSelectedStateLabel
+                  }
+                  .testTag("filter_recents_chip"),
             )
           }
           items(uiState.collections, key = { "opt_col_${it.id}" }) { col ->
+            val isColSelected = uiState.query.collectionId == col.id
             FilterChip(
-              selected = uiState.query.collectionId == col.id,
+              selected = isColSelected,
               onClick = { onCollectionSelected(col.id) },
               shape = RoundedCornerShape(16.dp),
               label = { Text(col.name) },
+              modifier =
+                Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin).semantics {
+                  stateDescription = if (isColSelected) selectedStateLabel else notSelectedStateLabel
+                },
             )
           }
           items(uiState.tags, key = { "opt_tag_${it.id}" }) { tag ->
+            val isTagSelected = uiState.query.tagId == tag.id
             FilterChip(
-              selected = uiState.query.tagId == tag.id,
+              selected = isTagSelected,
               onClick = { onTagSelected(tag.id) },
               shape = RoundedCornerShape(16.dp),
-              label = { Text("#${tag.name}") },
+              label = { Text(stringResource(R.string.filter_part_tag, tag.name)) },
+              modifier =
+                Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin).semantics {
+                  stateDescription = if (isTagSelected) selectedStateLabel else notSelectedStateLabel
+                },
             )
           }
         }
       }
 
-      // Library & Appearance Actions
-      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Column(verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium)) {
         Text(
-          text = "Settings & Tools",
+          text = stringResource(R.string.options_settings_tools_title),
           style = MaterialTheme.typography.titleSmall,
           color = colorScheme.onSurfaceVariant,
         )
         OptionsActionRow(
+          icon = Icons.Rounded.FileCopy,
+          title = stringResource(R.string.tool_duplicate_finder_title),
+          subtitle = stringResource(R.string.tool_duplicate_finder_subtitle),
+          testTag = "options_duplicate_finder_button",
+          onClick = {
+            onDismiss()
+            onOpenDuplicateFinder()
+          },
+        )
+        OptionsActionRow(
+          icon = Icons.Rounded.DonutLarge,
+          title = stringResource(R.string.tool_storage_analyzer_title),
+          subtitle = stringResource(R.string.tool_storage_analyzer_subtitle),
+          testTag = "options_storage_analyzer_button",
+          onClick = {
+            onDismiss()
+            onOpenStorageAnalyzer()
+          },
+        )
+        OptionsActionRow(
+          icon = Icons.AutoMirrored.Rounded.Label,
+          title = stringResource(R.string.tool_tags_collections_title),
+          subtitle = stringResource(R.string.tool_tags_collections_subtitle),
+          testTag = "options_tags_collections_button",
+          onClick = {
+            onDismiss()
+            onOpenManageTagsCollections()
+          },
+        )
+        OptionsActionRow(
           icon = Icons.Rounded.Palette,
-          title = "Appearance & Liquid Glass",
-          subtitle = "Active: ${env.capabilityTier.label}",
+          title = stringResource(R.string.options_appearance_title),
+          subtitle = stringResource(R.string.options_appearance_subtitle, env.capabilityTier.label),
           testTag = "top_glass_settings_button",
           onClick = {
             onDismiss()
@@ -256,8 +333,8 @@ internal fun LibraryOptionsGlassSheet(
         )
         OptionsActionRow(
           icon = Icons.Rounded.Sync,
-          title = "Rescan device documents",
-          subtitle = "Refresh Room index across storage & SAF",
+          title = stringResource(R.string.options_rescan_title),
+          subtitle = stringResource(R.string.options_rescan_subtitle),
           testTag = "top_sync_index_button",
           onClick = {
             onDismiss()
@@ -266,8 +343,8 @@ internal fun LibraryOptionsGlassSheet(
         )
         OptionsActionRow(
           icon = Icons.Rounded.CreateNewFolder,
-          title = "Link SAF folder",
-          subtitle = "Grant persistent access to a folder via Android picker",
+          title = stringResource(R.string.options_link_saf_title),
+          subtitle = stringResource(R.string.options_link_saf_subtitle),
           testTag = "options_link_saf_button",
           onClick = {
             onDismiss()
@@ -276,8 +353,8 @@ internal fun LibraryOptionsGlassSheet(
         )
         OptionsActionRow(
           icon = Icons.Rounded.CleaningServices,
-          title = "Clear thumbnail cache",
-          subtitle = "Free cached memory and disk thumbnails",
+          title = stringResource(R.string.options_clear_cache_title),
+          subtitle = stringResource(R.string.options_clear_cache_subtitle),
           testTag = "options_clear_thumb_cache_button",
           onClick = {
             onDismiss()
@@ -287,8 +364,8 @@ internal fun LibraryOptionsGlassSheet(
         if (isDebugBuild) {
           OptionsActionRow(
             icon = Icons.Rounded.Science,
-            title = "Create sample files (Debug)",
-            subtitle = "Write PDF, DOCX, XLSX, PPTX & JPG to Documents/PrismSamples",
+            title = stringResource(R.string.options_debug_samples_title),
+            subtitle = stringResource(R.string.options_debug_samples_subtitle),
             testTag = "debug_create_sample_files_button",
             onClick = {
               onDismiss()
@@ -298,7 +375,7 @@ internal fun LibraryOptionsGlassSheet(
         }
       }
 
-      Spacer(Modifier.height(12.dp))
+      Spacer(Modifier.height(PrismDimens.SpaceStandard))
     }
   }
 }
@@ -313,24 +390,28 @@ private fun OptionsActionRow(
 ) {
   val colorScheme = MaterialTheme.colorScheme
   GlassSurface(
-    cornerRadius = 18.dp,
+    cornerRadius = PrismDimens.FilterBarCornerRadius,
     elevation = GlassElevation.SUBTLE,
     enableRefraction = false,
     onClick = onClick,
-    modifier = Modifier.fillMaxWidth().testTag(testTag),
+    clickRole = Role.Button,
+    modifier =
+      Modifier.fillMaxWidth()
+        .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+        .testTag(testTag),
   ) {
     Row(
       modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(12.dp),
+      horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceStandard),
     ) {
       Icon(
         imageVector = icon,
         contentDescription = null,
         tint = colorScheme.primary,
-        modifier = Modifier.size(22.dp),
+        modifier = Modifier.size(PrismDimens.HeaderIconSize),
       )
-      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceXSmall)) {
         Text(
           text = title,
           style = MaterialTheme.typography.titleSmall,

@@ -6,10 +6,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,10 +28,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.prism.docs.core.ui.glass.GlassElevation
@@ -35,6 +45,7 @@ import com.prism.docs.core.ui.glass.GlassSurface
 import com.prism.docs.core.ui.glass.ObserveScrollCollapse
 import com.prism.docs.core.ui.glass.ScrollEdgeFade
 import com.prism.docs.core.ui.glass.rememberHeaderScrollProgress
+import com.prism.docs.core.ui.theme.LocalGlassEnvironment
 import com.prism.docs.core.ui.theme.LocalHazeState
 import dev.chrisbanes.haze.hazeSource
 
@@ -47,18 +58,30 @@ fun ScanHubScreen(
   val headerScrollProgress = rememberHeaderScrollProgress(listState)
   val hazeState = LocalHazeState.current
   val colorScheme = MaterialTheme.colorScheme
+  val density = LocalDensity.current
+
+  val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+  val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+  var topHeaderPx by remember { mutableIntStateOf(0) }
+  val topHeaderDp =
+    if (topHeaderPx > 0) with(density) { topHeaderPx.toDp() } else statusBarTop + 88.dp
 
   ObserveScrollCollapse(listState = listState, onCollapsedChanged = onTabBarCollapsedChange)
 
   Box(modifier = modifier.fillMaxSize()) {
     LazyColumn(
       state = listState,
-      contentPadding = PaddingValues(top = 96.dp, bottom = 128.dp, start = 20.dp, end = 20.dp),
+      contentPadding =
+        PaddingValues(
+          top = topHeaderDp + 8.dp,
+          bottom = navBarBottom + 116.dp,
+          start = 20.dp,
+          end = 20.dp,
+        ),
       verticalArrangement = Arrangement.spacedBy(14.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
       modifier =
         Modifier.fillMaxSize()
-          .statusBarsPadding()
           .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
           .testTag("scan_hub_list"),
     ) {
@@ -102,7 +125,7 @@ fun ScanHubScreen(
 
     ScrollEdgeFade(
       isTop = true,
-      height = 168.dp,
+      height = topHeaderDp + 14.dp,
       strongTint = true,
       scrollProgress = headerScrollProgress,
       modifier = Modifier.align(Alignment.TopCenter),
@@ -112,6 +135,7 @@ fun ScanHubScreen(
       modifier =
         Modifier.align(Alignment.TopStart)
           .fillMaxWidth()
+          .onSizeChanged { topHeaderPx = it.height }
           .statusBarsPadding()
           .padding(horizontal = 20.dp, vertical = 12.dp),
       verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -128,7 +152,11 @@ fun ScanHubScreen(
       )
     }
 
-    ScrollEdgeFade(isTop = false, height = 104.dp, modifier = Modifier.align(Alignment.BottomCenter))
+    ScrollEdgeFade(
+      isTop = false,
+      height = navBarBottom + 96.dp,
+      modifier = Modifier.align(Alignment.BottomCenter),
+    )
   }
 }
 
@@ -139,11 +167,13 @@ private fun ScanFeatureCard(
   subtitle: String,
   badge: String,
 ) {
+  val env = LocalGlassEnvironment.current
   val colorScheme = MaterialTheme.colorScheme
   GlassSurface(
     cornerRadius = 24.dp,
     elevation = GlassElevation.SUBTLE,
-    modifier = Modifier.fillMaxWidth().widthIn(max = 720.dp),
+    accentTint = colorScheme.primary,
+    modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
   ) {
     Row(
       modifier = Modifier.padding(18.dp),
@@ -154,7 +184,7 @@ private fun ScanFeatureCard(
         modifier =
           Modifier.size(44.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(colorScheme.primary.copy(alpha = 0.14f)),
+            .background(colorScheme.primary.copy(alpha = if (env.isDark) 0.20f else 0.14f)),
         contentAlignment = Alignment.Center,
       ) {
         Icon(imageVector = icon, contentDescription = null, tint = colorScheme.primary)
@@ -165,7 +195,7 @@ private fun ScanFeatureCard(
       ) {
         Row(
           modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
           verticalAlignment = Alignment.CenterVertically,
         ) {
           Text(
@@ -178,6 +208,7 @@ private fun ScanFeatureCard(
             text = badge,
             style = MaterialTheme.typography.labelSmall,
             color = colorScheme.primary,
+            maxLines = 1,
           )
         }
         Text(
