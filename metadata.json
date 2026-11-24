@@ -1,0 +1,6 @@
+{
+  "name": "Prism",
+  "description": "Offline-first Android document manager, universal viewer, OCR scanner, and PDF toolkit with a native Liquid Glass interface.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
