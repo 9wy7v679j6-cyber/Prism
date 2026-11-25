@@ -294,6 +294,29 @@ fun FilesHomeScreen(
   val storageDirScroll = rememberHeaderScrollProgress(storageDirListState)
   val recycleBinScroll = rememberHeaderScrollProgress(recycleBinListState)
 
+  LaunchedEffect(uiState.section, uiState.isSelectionMode, uiState.isGridMode) {
+    onTabBarCollapsedChange(false)
+  }
+
+  when (uiState.section) {
+    FilesSection.STORAGE -> {
+      val activeStorageList =
+        if (uiState.storageBrowser.currentDirectory == null) storageRootsListState
+        else storageDirListState
+      ObserveScrollCollapse(
+        listState = activeStorageList,
+        onCollapsedChanged = onTabBarCollapsedChange,
+      )
+    }
+    FilesSection.RECYCLE_BIN -> {
+      ObserveScrollCollapse(
+        listState = recycleBinListState,
+        onCollapsedChanged = onTabBarCollapsedChange,
+      )
+    }
+    FilesSection.LIBRARY -> Unit
+  }
+
   val headerScrollProgress =
     when (uiState.section) {
       FilesSection.LIBRARY -> if (uiState.isGridMode) libraryGridScroll else libraryListScroll
@@ -1062,6 +1085,7 @@ private fun LibraryPagingSection(
     label = "library_layout_mode",
   ) { isGrid ->
   if (isGrid) {
+    ObserveScrollCollapse(gridState = gridState, onCollapsedChanged = onTabBarCollapsedChange)
     LazyVerticalGrid(
       state = gridState,
       columns = GridCells.Adaptive(minSize = PrismDimens.GridCardMinSize),

@@ -43,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -67,6 +68,7 @@ import com.prism.docs.core.ui.glass.GlassTabItem
 import com.prism.docs.core.ui.glass.PrismBlobsDark
 import com.prism.docs.core.ui.glass.PrismBlobsLight
 import com.prism.docs.core.ui.glass.ProvideGlassMotion
+import com.prism.docs.core.ui.glass.rememberTabBarNestedScrollConnection
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
 import com.prism.docs.core.ui.theme.LocalHazeState
 import com.prism.docs.core.ui.theme.PrismTheme
@@ -311,6 +313,18 @@ private fun PrismRootShell(
   val startDestination: Any =
     if (uiState.preferences.onboardingCompleted) LibraryRoute else OnboardingRoute
 
+  LaunchedEffect(isTopLevelDestination) {
+    if (!isTopLevelDestination) {
+      isTabBarCollapsed = false
+    }
+  }
+
+  val tabBarNestedScroll =
+    rememberTabBarNestedScrollConnection(
+      isCollapsed = { isTabBarCollapsed },
+      onCollapsedChanged = { isTabBarCollapsed = it },
+    )
+
   val env = LocalGlassEnvironment.current
   val backdropBase = if (env.isDark) MaterialTheme.colorScheme.background else Color(0xFFE8EDF9)
   val backdropBlobs = if (env.isDark) PrismBlobsDark else PrismBlobsLight
@@ -336,7 +350,18 @@ private fun PrismRootShell(
             )
           }
 
-          Box(modifier = Modifier.weight(1f).fillMaxSize()) {
+          Box(
+            modifier =
+              Modifier.weight(1f)
+                .fillMaxSize()
+                .then(
+                  if (!useRailLayout && isTopLevelDestination) {
+                    Modifier.nestedScroll(tabBarNestedScroll)
+                  } else {
+                    Modifier
+                  }
+                )
+          ) {
             NavHost(
               navController = navController,
               startDestination = startDestination,
@@ -534,6 +559,7 @@ private fun PrismRootShell(
                 onSelectTab = selectTab,
                 onSearchClick = { navController.navigate(SearchRoute) },
                 isCollapsed = isTabBarCollapsed,
+                onCollapsedChange = { isTabBarCollapsed = it },
                 modifier = Modifier.align(Alignment.BottomCenter),
               )
             }
