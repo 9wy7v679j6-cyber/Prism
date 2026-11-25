@@ -2,10 +2,19 @@ package com.prism.docs.core.ui.glass
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,8 +44,15 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,8 +60,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -62,6 +77,8 @@ import com.prism.docs.core.ui.theme.LocalGlassEnvironment
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
 import com.prism.docs.core.ui.theme.PrismDimens
+import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 data class GlassTabItem(
   val id: String,
@@ -74,8 +91,9 @@ data class GlassTabItem(
 /**
  * Floating Liquid Glass bottom capsule navigation bar paired with a detached circular Search orb.
  *
- * Uses constant layout bounds (68.dp) and pure GPU [graphicsLayer] scroll-tuck motion so
- * scrolling never triggers layout re-measurement or Haze blur buffer reallocations (locked 120fps).
+ * Supports both tap and 120fps horizontal finger-scrubbing across tabs with live haptic ticks,
+ * GPU icon bounce, and constant layout bounds (68.dp) so scrolling never triggers re-measurement
+ * or Haze blur buffer reallocations.
  */
 @Composable
 fun GlassFloatingTabBar(
@@ -86,10 +104,12 @@ fun GlassFloatingTabBar(
   isCollapsed: Boolean,
   modifier: Modifier = Modifier,
 ) {
+  if (tabs.isEmpty()) return
   val env = LocalGlassEnvironment.current
   val tokens = LocalPrismVisualTokens.current
   val motion = LocalGlassMotion.current
-  val haptics = LocalHapticFeedback.current
+  val haptics = rememberPrismHaptics()
+  val scope = rememberCoroutineScope()
   val colorScheme = MaterialTheme.colorScheme
 
   val compactProgress =
@@ -107,6 +127,30 @@ fun GlassFloatingTabBar(
   val selectedStateLabel = stringResource(R.string.glass_state_selected)
   val notSelectedStateLabel = stringResource(R.string.glass_state_not_selected)
   val openSearchCd = stringResource(R.string.glass_open_search_cd)
+
+  val latestTabs by rememberUpdatedState(tabs)
+  val latestSelectedIndex by rememberUpdatedState(selectedIndex)
+  val latestOnSelectTab by rememberUpdatedState(onSelectTab)
+
+  val pillAnim = remember(tabs.size) { Animatable(selectedIndex.toFloat()) }
+  var isDragging by remember(tabs.size) { mutableStateOf(false) }
+  var liveDragSlot by remember(tabs.size) { mutableFloatStateOf(selectedIndex.toFloat()) }
+  var hoveredSlot by remember(tabs.size) { mutableStateOf<Int?>(null) }
+
+  LaunchedEffect(selectedIndex) {
+    if (!isDragging) {
+      pillAnim.animateTo(
+        targetValue = selectedIndex.toFloat(),
+        animationSpec = if (motion) spring(dampingRatio = 0.78f, stiffness = 420f) else snap(),
+      )
+    }
+  }
+
+  val pillPositionState =
+    remember(tabs.size) {
+      derivedStateOf { if (isDragging) liveDragSlot else pillAnim.value }
+    }
+  val activeVisualIndex = hoveredSlot ?: selectedIndex
 
   Row(
     modifier =
@@ -139,6 +183,60 @@ fun GlassFloatingTabBar(
         modifier =
           Modifier.fillMaxWidth()
             .fillMaxHeight()
+            .pointerInput(tabs.size, motion) {
+              val insetPx = 5.dp.toPx()
+              val maxIdx = (tabs.size - 1).coerceAtLeast(0).toFloat()
+              fun xToSlot(x: Float): Float {
+                val segW = ((size.width - 2f * insetPx) / tabs.size).coerceAtLeast(1f)
+                val raw = (x - insetPx) / segW - 0.5f
+                return when {
+                  raw < 0f -> raw * 0.22f
+                  raw > maxIdx -> maxIdx + (raw - maxIdx) * 0.22f
+                  else -> raw
+                }
+              }
+              awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val slop =
+                  awaitHorizontalTouchSlopOrCancellation(down.id) { change, _ ->
+                    change.consume()
+                  }
+                if (slop != null) {
+                  haptics.dragStart()
+                  val startRaw = xToSlot(slop.position.x)
+                  var currentSnapped = startRaw.roundToInt().coerceIn(0, latestTabs.lastIndex)
+                  liveDragSlot = startRaw
+                  hoveredSlot = currentSnapped
+                  isDragging = true
+                  horizontalDrag(slop.id) { change ->
+                    change.consume()
+                    val raw = xToSlot(change.position.x)
+                    liveDragSlot = raw
+                    val snapped = raw.roundToInt().coerceIn(0, latestTabs.lastIndex)
+                    if (snapped != currentSnapped) {
+                      currentSnapped = snapped
+                      hoveredSlot = snapped
+                      haptics.segmentTick()
+                    }
+                  }
+                  val releasePos = liveDragSlot
+                  val finalSlot = currentSnapped
+                  hoveredSlot = null
+                  if (finalSlot != latestSelectedIndex) {
+                    latestTabs.getOrNull(finalSlot)?.let { latestOnSelectTab(it.id) }
+                  }
+                  scope.launch {
+                    pillAnim.snapTo(releasePos)
+                    isDragging = false
+                    pillAnim.animateTo(
+                      targetValue = finalSlot.toFloat(),
+                      animationSpec =
+                        if (motion) spring(dampingRatio = 0.74f, stiffness = 460f) else snap(),
+                    )
+                  }
+                }
+              }
+            }
             .glassSlidingPill(
               selectedIndex = selectedIndex,
               count = tabs.size,
@@ -147,20 +245,29 @@ fun GlassFloatingTabBar(
               brush = pillBrush,
               shadowColor = tokens.pillShadow,
               borderColor = selectedPillBorder,
+              positionOverride = pillPositionState,
             )
             .padding(5.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(0.dp),
       ) {
-        tabs.forEach { tab ->
+        tabs.forEachIndexed { index, tab ->
           val isSelected = tab.id == selectedId
+          val isHighlighted = index == activeVisualIndex
           val contentColor by
             animateColorAsState(
               targetValue =
-                if (isSelected) selectedContentColor
+                if (isHighlighted) selectedContentColor
                 else if (env.isDark) PrismColors.DarkTabInactive
                 else PrismColors.LightTabInactive,
               label = "tab_content_color_${tab.id}",
+            )
+          val iconScale =
+            animateFloatAsState(
+              targetValue = if (isHighlighted) 1.09f else 1f,
+              animationSpec =
+                if (motion) spring(dampingRatio = 0.56f, stiffness = 460f) else snap(),
+              label = "tab_icon_scale_${tab.id}",
             )
 
           Box(
@@ -168,9 +275,11 @@ fun GlassFloatingTabBar(
               Modifier.weight(1f)
                 .fillMaxHeight()
                 .clip(RoundedCornerShape(29.dp))
-                .glassClickable(role = Role.Tab) {
+                .glassClickable(role = Role.Tab, hapticOnClick = false) {
                   if (!isSelected) {
-                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    haptics.segmentTick()
+                  } else {
+                    haptics.tap()
                   }
                   onSelectTab(tab.id)
                 }
@@ -188,17 +297,22 @@ fun GlassFloatingTabBar(
               verticalArrangement = Arrangement.Center,
             ) {
               Icon(
-                imageVector = if (isSelected) tab.selectedIcon else tab.icon,
+                imageVector = if (isHighlighted) tab.selectedIcon else tab.icon,
                 contentDescription = null,
                 tint = contentColor,
-                modifier = Modifier.size(22.dp),
+                modifier =
+                  Modifier.size(22.dp).graphicsLayer {
+                    val s = iconScale.value
+                    scaleX = s
+                    scaleY = s
+                  },
               )
               Spacer(Modifier.height(2.dp))
               Text(
                 text = tab.label,
                 style =
                   MaterialTheme.typography.labelMedium.copy(
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                    fontWeight = if (isHighlighted) FontWeight.SemiBold else FontWeight.Medium,
                   ),
                 color = contentColor,
                 maxLines = 1,
@@ -217,9 +331,10 @@ fun GlassFloatingTabBar(
       elevation = GlassElevation.FLOATING,
       useBackdropBlur = true,
       onClick = {
-        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        haptics.tap()
         onSearchClick()
       },
+      hapticOnClick = false,
       clickRole = Role.Button,
       modifier =
         Modifier.size(68.dp)
@@ -249,7 +364,8 @@ fun GlassNavigationRail(
   modifier: Modifier = Modifier,
 ) {
   val env = LocalGlassEnvironment.current
-  val haptics = LocalHapticFeedback.current
+  val motion = LocalGlassMotion.current
+  val haptics = rememberPrismHaptics()
   val colorScheme = MaterialTheme.colorScheme
   val searchDocumentsCd = stringResource(R.string.glass_search_documents_cd)
   val selectedStateLabel = stringResource(R.string.glass_state_selected)
@@ -270,9 +386,10 @@ fun GlassNavigationRail(
       elevation = GlassElevation.FLOATING,
       useBackdropBlur = true,
       onClick = {
-        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        haptics.tap()
         onSearchClick()
       },
+      hapticOnClick = false,
       clickRole = Role.Button,
       modifier = Modifier.size(56.dp).testTag("glass_rail_search_button"),
     ) {
@@ -297,20 +414,35 @@ fun GlassNavigationRail(
       ) {
         tabs.forEach { tab ->
           val isSelected = tab.id == selectedId
-          val bg =
-            if (isSelected) {
-              colorScheme.primary.copy(alpha = if (env.isDark) 0.24f else 0.14f)
-            } else {
-              Color.Transparent
-            }
-          val tint = if (isSelected) colorScheme.primary else colorScheme.onSurfaceVariant
+          val bg by
+            animateColorAsState(
+              targetValue =
+                if (isSelected) {
+                  colorScheme.primary.copy(alpha = if (env.isDark) 0.24f else 0.14f)
+                } else {
+                  Color.Transparent
+                },
+              label = "rail_bg_${tab.id}",
+            )
+          val tint by
+            animateColorAsState(
+              targetValue = if (isSelected) colorScheme.primary else colorScheme.onSurfaceVariant,
+              label = "rail_tint_${tab.id}",
+            )
+          val iconScale =
+            animateFloatAsState(
+              targetValue = if (isSelected) 1.08f else 1f,
+              animationSpec =
+                if (motion) spring(dampingRatio = 0.60f, stiffness = 460f) else snap(),
+              label = "rail_icon_scale_${tab.id}",
+            )
           Column(
             modifier =
               Modifier.defaultMinSize(minWidth = 64.dp, minHeight = 52.dp)
                 .clip(RoundedCornerShape(20.dp))
                 .background(bg)
-                .glassClickable(role = Role.Tab) {
-                  haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                .glassClickable(role = Role.Tab, hapticOnClick = false) {
+                  if (!isSelected) haptics.segmentTick() else haptics.tap()
                   onSelectTab(tab.id)
                 }
                 .semantics {
@@ -327,7 +459,12 @@ fun GlassNavigationRail(
               imageVector = if (isSelected) tab.selectedIcon else tab.icon,
               contentDescription = null,
               tint = tint,
-              modifier = Modifier.size(22.dp),
+              modifier =
+                Modifier.size(22.dp).graphicsLayer {
+                  val s = iconScale.value
+                  scaleX = s
+                  scaleY = s
+                },
             )
             Spacer(Modifier.height(2.dp))
             Text(
@@ -360,8 +497,9 @@ fun GlassToolbarGroup(
   actions: List<GlassToolbarAction>,
   modifier: Modifier = Modifier,
 ) {
+  val motion = LocalGlassMotion.current
   val colorScheme = MaterialTheme.colorScheme
-  val haptics = LocalHapticFeedback.current
+  val haptics = rememberPrismHaptics()
 
   GlassSurface(
     cornerRadius = 24.dp,
@@ -374,9 +512,21 @@ fun GlassToolbarGroup(
       verticalAlignment = Alignment.CenterVertically,
     ) {
       actions.forEachIndexed { index, action ->
+        val tint by
+          animateColorAsState(
+            targetValue = if (action.active) colorScheme.primary else colorScheme.onSurface,
+            label = "toolbar_tint_${action.testTag}",
+          )
+        val iconScale =
+          animateFloatAsState(
+            targetValue = if (action.active) 1.08f else 1f,
+            animationSpec =
+              if (motion) spring(dampingRatio = 0.62f, stiffness = 460f) else snap(),
+            label = "toolbar_scale_${action.testTag}",
+          )
         IconButton(
           onClick = {
-            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            haptics.tap()
             action.onClick()
           },
           modifier =
@@ -386,8 +536,13 @@ fun GlassToolbarGroup(
           Icon(
             imageVector = action.icon,
             contentDescription = action.contentDescription,
-            tint = if (action.active) colorScheme.primary else colorScheme.onSurface,
-            modifier = Modifier.size(21.dp),
+            tint = tint,
+            modifier =
+              Modifier.size(21.dp).graphicsLayer {
+                val s = iconScale.value
+                scaleX = s
+                scaleY = s
+              },
           )
         }
         if (index < actions.lastIndex) {
@@ -416,6 +571,7 @@ fun GlassSearchField(
   onFilterClick: (() -> Unit)? = null,
 ) {
   val colorScheme = MaterialTheme.colorScheme
+  val haptics = rememberPrismHaptics()
 
   val clearSearchCd = stringResource(R.string.glass_clear_search_cd)
   val searchFiltersCd = stringResource(R.string.glass_search_filters_cd)
@@ -458,9 +614,16 @@ fun GlassSearchField(
           modifier = Modifier.fillMaxWidth().testTag("glass_search_input"),
         )
       }
-      AnimatedVisibility(visible = query.isNotEmpty()) {
+      AnimatedVisibility(
+        visible = query.isNotEmpty(),
+        enter = fadeIn() + scaleIn(initialScale = 0.8f),
+        exit = fadeOut() + scaleOut(targetScale = 0.8f),
+      ) {
         IconButton(
-          onClick = { onQueryChange("") },
+          onClick = {
+            haptics.tap()
+            onQueryChange("")
+          },
           modifier =
             Modifier.size(PrismDimens.TouchTargetMin)
               .defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
@@ -476,7 +639,10 @@ fun GlassSearchField(
       }
       if (onFilterClick != null) {
         IconButton(
-          onClick = onFilterClick,
+          onClick = {
+            haptics.tap()
+            onFilterClick()
+          },
           modifier =
             Modifier.size(PrismDimens.TouchTargetMin)
               .defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)

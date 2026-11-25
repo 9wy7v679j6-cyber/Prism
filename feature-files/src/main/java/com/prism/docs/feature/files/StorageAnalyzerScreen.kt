@@ -78,6 +78,7 @@ import com.prism.docs.core.data.model.IncomingDocumentRequest
 import com.prism.docs.core.data.thumbnail.DocumentThumbnailPipeline
 import com.prism.docs.core.ui.glass.ConnectedGlassCardSlice
 import com.prism.docs.core.ui.glass.GlassElevation
+import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.glass.GlassSurface
 import com.prism.docs.core.ui.glass.LocalGlassMotion
 import com.prism.docs.core.ui.glass.ScrollEdgeFade
@@ -288,8 +289,12 @@ fun StorageAnalyzerScreen(
           modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
           verticalAlignment = Alignment.CenterVertically,
         ) {
+          val navHaptics = rememberPrismHaptics()
           IconButton(
-            onClick = onNavigateBack,
+            onClick = {
+              navHaptics.tap()
+              onNavigateBack()
+            },
             modifier = Modifier.size(PrismDimens.TouchTargetMin).testTag("analyzer_back_button"),
           ) {
             Icon(
@@ -324,6 +329,7 @@ private fun StorageRingSummaryCard(
   val colorScheme = MaterialTheme.colorScheme
   val tokens = LocalPrismVisualTokens.current
   val motionEnabled = LocalGlassMotion.current
+  val haptics = rememberPrismHaptics()
 
   var revealTarget by remember { mutableStateOf(0f) }
   LaunchedEffect(segments) { revealTarget = 1f }
@@ -413,6 +419,7 @@ private fun StorageRingSummaryCard(
                         rel >= startRel && rel <= startRel + slice.sweepAngleDeg
                       }
                     if (hit != null) {
+                      haptics.segmentTick()
                       onSegmentTap(hit.segment)
                     }
                   }

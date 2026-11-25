@@ -1,5 +1,14 @@
 package com.prism.docs.feature.files
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -74,6 +83,7 @@ import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSurface
 import com.prism.docs.core.ui.glass.ScrollEdgeFade
 import com.prism.docs.core.ui.glass.rememberHeaderScrollProgress
+import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.theme.LocalHazeState
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
@@ -91,6 +101,7 @@ fun DuplicateFinderScreen(
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
   val hazeState = LocalHazeState.current
   val colorScheme = MaterialTheme.colorScheme
+  val haptics = rememberPrismHaptics()
   val density = LocalDensity.current
   val listState = rememberLazyListState()
   val scrollProgress = rememberHeaderScrollProgress(listState)
@@ -146,7 +157,10 @@ fun DuplicateFinderScreen(
             groupCount = uiState.groups.size,
             extraCopiesCount = uiState.totalExtraCopies,
             isTrashing = uiState.isTrashing,
-            onKeepNewestAll = viewModel::keepNewestMoveAllToBin,
+            onKeepNewestAll = {
+              haptics.confirm()
+              viewModel.keepNewestMoveAllToBin()
+            },
             modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
           )
         }
@@ -156,7 +170,10 @@ fun DuplicateFinderScreen(
             group = group,
             thumbnailPipeline = viewModel.thumbnailPipeline,
             isBusy = uiState.isTrashing,
-            onKeepNewestInGroup = { viewModel.keepNewestInGroup(group) },
+            onKeepNewestInGroup = {
+              haptics.confirm()
+              viewModel.keepNewestInGroup(group)
+            },
             onOpenDocument = { doc ->
               onOpenDocument(
                 IncomingDocumentRequest(
@@ -220,7 +237,10 @@ fun DuplicateFinderScreen(
           verticalAlignment = Alignment.CenterVertically,
         ) {
           IconButton(
-            onClick = onNavigateBack,
+            onClick = {
+              haptics.tap()
+              onNavigateBack()
+            },
             modifier = Modifier.size(PrismDimens.TouchTargetMin).testTag("dup_back_button"),
           ) {
             Icon(
@@ -238,7 +258,10 @@ fun DuplicateFinderScreen(
             modifier = Modifier.weight(1f).semantics { heading() },
           )
           IconButton(
-            onClick = viewModel::startRescan,
+            onClick = {
+              haptics.tap()
+              viewModel.startRescan()
+            },
             enabled = !uiState.progress.isRunning,
             modifier = Modifier.size(PrismDimens.TouchTargetMin).testTag("dup_rescan_button"),
           ) {
@@ -254,24 +277,37 @@ fun DuplicateFinderScreen(
       }
     }
 
-    uiState.statusMessage?.let { msg ->
-      GlassSurface(
-        cornerRadius = PrismDimens.ToastCornerRadius,
-        elevation = GlassElevation.FLOATING,
-        useBackdropBlur = true,
-        modifier =
-          Modifier.align(Alignment.BottomCenter)
-            .navigationBarsPadding()
-            .padding(horizontal = PrismDimens.ScreenHorizontalPadding, vertical = PrismDimens.SpaceXLarge)
-            .widthIn(max = PrismDimens.OverlayMaxWidth)
-            .testTag("dup_status_toast"),
-      ) {
-        Text(
-          text = msg,
-          style = MaterialTheme.typography.labelLarge,
-          color = colorScheme.onSurface,
-          modifier = Modifier.padding(horizontal = PrismDimens.SpaceSection, vertical = PrismDimens.SpaceMediumLarge),
-        )
+    AnimatedVisibility(
+      visible = uiState.statusMessage != null,
+      enter =
+        slideInVertically(
+          animationSpec = spring(dampingRatio = 0.78f, stiffness = 460f),
+          initialOffsetY = { it / 2 },
+        ) + fadeIn(tween(140)) + scaleIn(initialScale = 0.92f),
+      exit =
+        slideOutVertically(targetOffsetY = { it / 3 }) +
+          fadeOut(tween(120)) +
+          scaleOut(targetScale = 0.94f),
+      modifier =
+        Modifier.align(Alignment.BottomCenter)
+          .navigationBarsPadding()
+          .padding(horizontal = PrismDimens.ScreenHorizontalPadding, vertical = PrismDimens.SpaceXLarge)
+          .widthIn(max = PrismDimens.OverlayMaxWidth),
+    ) {
+      uiState.statusMessage?.let { msg ->
+        GlassSurface(
+          cornerRadius = PrismDimens.ToastCornerRadius,
+          elevation = GlassElevation.FLOATING,
+          useBackdropBlur = true,
+          modifier = Modifier.testTag("dup_status_toast"),
+        ) {
+          Text(
+            text = msg,
+            style = MaterialTheme.typography.labelLarge,
+            color = colorScheme.onSurface,
+            modifier = Modifier.padding(horizontal = PrismDimens.SpaceSection, vertical = PrismDimens.SpaceMediumLarge),
+          )
+        }
       }
     }
   }

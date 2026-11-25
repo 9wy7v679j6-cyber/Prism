@@ -53,6 +53,7 @@ import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSegmentedControl
 import com.prism.docs.core.ui.glass.GlassSheetDetent
 import com.prism.docs.core.ui.glass.GlassSurface
+import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
 import com.prism.docs.core.ui.theme.PrismDimens
 
@@ -92,6 +93,7 @@ internal fun LibraryOptionsGlassSheet(
 
   val env = LocalGlassEnvironment.current
   val colorScheme = MaterialTheme.colorScheme
+  val haptics = rememberPrismHaptics()
   val selectedStateLabel = stringResource(R.string.state_selected)
   val notSelectedStateLabel = stringResource(R.string.state_not_selected)
 
@@ -115,7 +117,10 @@ internal fun LibraryOptionsGlassSheet(
         modifier = Modifier.weight(1f),
       )
       TextButton(
-        onClick = onDismiss,
+        onClick = {
+          haptics.tap()
+          onDismiss()
+        },
         modifier =
           Modifier.defaultMinSize(minWidth = PrismDimens.TouchTargetMin, minHeight = PrismDimens.TouchTargetMin)
             .testTag("close_library_options_button"),
@@ -206,7 +211,10 @@ internal fun LibraryOptionsGlassSheet(
           )
           if (hasActiveSecondaryFilters || uiState.query.category != null) {
             TextButton(
-              onClick = onClearFilters,
+              onClick = {
+                haptics.tap()
+                onClearFilters()
+              },
               modifier =
                 Modifier.defaultMinSize(minWidth = PrismDimens.TouchTargetMin, minHeight = PrismDimens.TouchTargetMin)
                   .testTag("clear_all_filters_button"),
@@ -223,7 +231,10 @@ internal fun LibraryOptionsGlassSheet(
           item {
             FilterChip(
               selected = uiState.query.favoritesOnly,
-              onClick = onToggleFavoritesOnly,
+              onClick = {
+                haptics.segmentTick()
+                onToggleFavoritesOnly()
+              },
               shape = RoundedCornerShape(16.dp),
               label = { Text(stringResource(R.string.options_favorites_chip, uiState.favoritesCount)) },
               leadingIcon = {
@@ -241,7 +252,10 @@ internal fun LibraryOptionsGlassSheet(
           item {
             FilterChip(
               selected = uiState.query.recentsOnly,
-              onClick = onToggleRecentsOnly,
+              onClick = {
+                haptics.segmentTick()
+                onToggleRecentsOnly()
+              },
               shape = RoundedCornerShape(16.dp),
               label = { Text(stringResource(R.string.options_recents_chip, uiState.recentsCount)) },
               leadingIcon = {
@@ -260,7 +274,10 @@ internal fun LibraryOptionsGlassSheet(
             val isColSelected = uiState.query.collectionId == col.id
             FilterChip(
               selected = isColSelected,
-              onClick = { onCollectionSelected(col.id) },
+              onClick = {
+                haptics.segmentTick()
+                onCollectionSelected(col.id)
+              },
               shape = RoundedCornerShape(16.dp),
               label = { Text(col.name) },
               modifier =
@@ -273,7 +290,10 @@ internal fun LibraryOptionsGlassSheet(
             val isTagSelected = uiState.query.tagId == tag.id
             FilterChip(
               selected = isTagSelected,
-              onClick = { onTagSelected(tag.id) },
+              onClick = {
+                haptics.segmentTick()
+                onTagSelected(tag.id)
+              },
               shape = RoundedCornerShape(16.dp),
               label = { Text(stringResource(R.string.filter_part_tag, tag.name)) },
               modifier =

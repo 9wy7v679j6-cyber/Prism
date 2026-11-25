@@ -109,6 +109,7 @@ fun GlassSurface(
   enableAnimatedSheen: Boolean = false,
   onClick: (() -> Unit)? = null,
   clickRole: Role? = null,
+  hapticOnClick: Boolean = true,
   content: @Composable BoxScope.() -> Unit,
 ) {
   val env = LocalGlassEnvironment.current
@@ -282,6 +283,7 @@ fun GlassSurface(
     if (onClick != null) {
       Modifier.glassClickable(
         role = clickRole ?: Role.Button,
+        hapticOnClick = hapticOnClick,
         onClick = onClick,
       )
     } else {

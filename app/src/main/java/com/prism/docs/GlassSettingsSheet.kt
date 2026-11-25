@@ -29,6 +29,7 @@ import com.prism.docs.core.ui.glass.GlassSegmentedControl
 import com.prism.docs.core.ui.glass.GlassSheetDetent
 import com.prism.docs.core.ui.glass.GlassSlider
 import com.prism.docs.core.ui.glass.GlassToggle
+import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
 import kotlin.math.roundToInt
 
@@ -51,6 +52,7 @@ fun GlassSettingsSheet(
 
   val env = LocalGlassEnvironment.current
   val colorScheme = MaterialTheme.colorScheme
+  val haptics = rememberPrismHaptics()
 
   GlassBottomSheet(
     visible = visible,
@@ -80,7 +82,10 @@ fun GlassSettingsSheet(
         )
       }
       TextButton(
-        onClick = onDismiss,
+        onClick = {
+          haptics.tap()
+          onDismiss()
+        },
         modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("close_glass_sheet_button"),
       ) {
         Text("Done")

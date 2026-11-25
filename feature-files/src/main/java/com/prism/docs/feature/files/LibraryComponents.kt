@@ -1,6 +1,11 @@
 package com.prism.docs.feature.files
 
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -73,6 +78,7 @@ import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSurface
 import com.prism.docs.core.ui.glass.glassClickable
 import com.prism.docs.core.ui.glass.glassShimmer
+import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
 import com.prism.docs.core.ui.theme.PrismDimens
@@ -247,6 +253,11 @@ internal fun LibraryCollapsingTopBar(
   val rightClearanceDp =
     if (rightClusterWidthPx.intValue > 0) with(density) { rightClusterWidthPx.intValue.toDp() } + 10.dp
     else 144.dp
+  val subtitleStartPad by
+    androidx.compose.animation.core.animateDpAsState(
+      targetValue = if (isScrolledUnder) 16.dp else 0.dp,
+      label = "library_subtitle_start_pad",
+    )
 
   Box(
     modifier =
@@ -274,7 +285,7 @@ internal fun LibraryCollapsingTopBar(
     Row(
       modifier =
         Modifier.align(Alignment.CenterStart)
-          .padding(start = 4.dp, end = rightClearanceDp)
+          .padding(start = subtitleStartPad, end = rightClearanceDp)
           .graphicsLayer { alpha = (1f - scrollProgress.value * 2.4f).coerceIn(0f, 1f) },
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmallMedium),
@@ -296,34 +307,39 @@ internal fun LibraryCollapsingTopBar(
     }
 
     // Small centered "Library" title fading in once scrolled under without colliding with right cluster
-    Text(
-      text = title,
-      style =
-        MaterialTheme.typography.titleLarge.copy(
-          fontSize = 18.sp,
-          fontWeight = FontWeight.Bold,
-        ),
-      color = colorScheme.onSurface,
-      maxLines = 1,
-      overflow = TextOverflow.Ellipsis,
-      textAlign = TextAlign.Center,
+    Box(
       modifier =
-        Modifier.align(Alignment.Center)
-          .padding(horizontal = rightClearanceDp)
+        Modifier.align(Alignment.CenterStart)
+          .fillMaxWidth()
+          .padding(start = 16.dp, end = rightClearanceDp)
           .graphicsLayer {
             val a = ((scrollProgress.value - 0.35f) / 0.50f).coerceIn(0f, 1f)
             alpha = a
             translationY = (1f - a) * 6.dp.toPx()
-          }
-          .testTag("library_collapsed_title"),
-    )
+          },
+      contentAlignment = Alignment.Center,
+    ) {
+      Text(
+        text = title,
+        style =
+          MaterialTheme.typography.titleLarge.copy(
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+          ),
+        color = colorScheme.onSurface,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.testTag("library_collapsed_title"),
+      )
+    }
 
     // Visible "Select" glass pill + Sliders round glass button on the right (48dp touch targets)
     Row(
       modifier =
         Modifier.align(Alignment.CenterEnd)
           .onSizeChanged { rightClusterWidthPx.intValue = it.width }
-          .padding(end = if (isScrolledUnder) 4.dp else 0.dp),
+          .padding(end = 4.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
     ) {
@@ -332,8 +348,9 @@ internal fun LibraryCollapsingTopBar(
         cornerRadius = PrismDimens.CategoryChipCornerRadius,
         shape = CircleShape,
         elevation = GlassElevation.FLOATING,
-        useBackdropBlur = isScrolledUnder,
+        useBackdropBlur = true,
         onClick = onEnterSelectionMode,
+        hapticOnClick = false,
         clickRole = Role.Button,
         modifier =
           Modifier.height(PrismDimens.TouchTargetMin)
@@ -342,7 +359,7 @@ internal fun LibraryCollapsingTopBar(
             .testTag("library_select_button"),
       ) {
         Box(
-          modifier = Modifier.padding(horizontal = 14.dp),
+          modifier = Modifier.align(Alignment.Center).padding(horizontal = 16.dp),
           contentAlignment = Alignment.Center,
         ) {
           Text(
@@ -359,7 +376,7 @@ internal fun LibraryCollapsingTopBar(
           cornerRadius = PrismDimens.CategoryChipCornerRadius,
           shape = CircleShape,
           elevation = GlassElevation.FLOATING,
-          useBackdropBlur = isScrolledUnder,
+          useBackdropBlur = true,
           onClick = onSettingsClick,
           clickRole = Role.Button,
           modifier =
@@ -377,12 +394,15 @@ internal fun LibraryCollapsingTopBar(
             modifier = Modifier.align(Alignment.Center).size(PrismDimens.HeaderIconSize),
           )
         }
-        if (hasActiveFilters) {
+        androidx.compose.animation.AnimatedVisibility(
+          visible = hasActiveFilters,
+          enter = scaleIn(initialScale = 0.4f) + fadeIn(),
+          exit = scaleOut(targetScale = 0.4f) + fadeOut(),
+          modifier = Modifier.align(Alignment.TopEnd).padding(PrismDimens.HeaderFilterDotPadding),
+        ) {
           Box(
             modifier =
-              Modifier.align(Alignment.TopEnd)
-                .padding(PrismDimens.HeaderFilterDotPadding)
-                .size(PrismDimens.HeaderFilterDotSize)
+              Modifier.size(PrismDimens.HeaderFilterDotSize)
                 .clip(CircleShape)
                 .background(colorScheme.primary)
           )
@@ -409,6 +429,7 @@ internal fun SelectionGlassTopBar(
 ) {
   val colorScheme = MaterialTheme.colorScheme
   val tokens = LocalPrismVisualTokens.current
+  val haptics = rememberPrismHaptics()
   val hasSelection = selectedCount > 0
 
   GlassSurface(
@@ -431,7 +452,10 @@ internal fun SelectionGlassTopBar(
         verticalAlignment = Alignment.CenterVertically,
       ) {
         IconButton(
-          onClick = onClearSelection,
+          onClick = {
+            haptics.tap()
+            onClearSelection()
+          },
           modifier =
             Modifier.size(PrismDimens.TouchTargetMin)
               .testTag("selection_clear_button"),
@@ -457,7 +481,7 @@ internal fun SelectionGlassTopBar(
           modifier =
             Modifier.height(PrismDimens.TouchTargetMin)
               .clip(CircleShape)
-              .glassClickable(role = Role.Button, onClick = onSelectAll)
+              .glassClickable(role = Role.Button, hapticOnClick = false, onClick = onSelectAll)
               .semantics { contentDescription = selectAllCd }
               .padding(horizontal = 12.dp)
               .testTag("selection_select_all_button"),
@@ -478,7 +502,10 @@ internal fun SelectionGlassTopBar(
         verticalAlignment = Alignment.CenterVertically,
       ) {
         IconButton(
-          onClick = onTagsCollections,
+          onClick = {
+            haptics.tap()
+            onTagsCollections()
+          },
           enabled = hasSelection,
           modifier =
             Modifier.size(PrismDimens.TouchTargetMin)
@@ -492,7 +519,10 @@ internal fun SelectionGlassTopBar(
         }
 
         IconButton(
-          onClick = onShare,
+          onClick = {
+            haptics.tap()
+            onShare()
+          },
           enabled = hasSelection,
           modifier =
             Modifier.size(PrismDimens.TouchTargetMin)
@@ -506,7 +536,10 @@ internal fun SelectionGlassTopBar(
         }
 
         IconButton(
-          onClick = onMove,
+          onClick = {
+            haptics.tap()
+            onMove()
+          },
           enabled = hasSelection,
           modifier =
             Modifier.size(PrismDimens.TouchTargetMin)
@@ -520,7 +553,10 @@ internal fun SelectionGlassTopBar(
         }
 
         IconButton(
-          onClick = onDelete,
+          onClick = {
+            haptics.reject()
+            onDelete()
+          },
           enabled = hasSelection,
           modifier =
             Modifier.size(PrismDimens.TouchTargetMin)
@@ -737,13 +773,17 @@ internal fun LibraryEmptyStateCard(
         horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceStandard),
         verticalAlignment = Alignment.CenterVertically,
       ) {
+        val haptics = rememberPrismHaptics()
         PrimaryGlassButton(
           label = primaryLabel,
           onClick = onPrimaryClick,
           modifier = Modifier.testTag("library_empty_primary_button"),
         )
         TextButton(
-          onClick = onSecondaryClick,
+          onClick = {
+            haptics.tap()
+            onSecondaryClick()
+          },
           modifier =
             Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
               .testTag("library_empty_secondary_button"),

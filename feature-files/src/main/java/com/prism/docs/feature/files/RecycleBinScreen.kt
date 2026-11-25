@@ -57,6 +57,7 @@ import com.prism.docs.core.ui.glass.GlassSurface
 import com.prism.docs.core.ui.theme.LocalHazeState
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
+import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.theme.PrismDimens
 import dev.chrisbanes.haze.hazeSource
 import kotlin.math.ceil
@@ -78,6 +79,7 @@ fun RecycleBinSection(
   val hazeState = LocalHazeState.current
   val colorScheme = MaterialTheme.colorScheme
   val tokens = LocalPrismVisualTokens.current
+  val haptics = rememberPrismHaptics()
   val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
   var confirmEmpty by remember { mutableStateOf(false) }
   var pendingPermanentDelete by remember { mutableStateOf<RecycleBinEntryEntity?>(null) }
@@ -118,7 +120,10 @@ fun RecycleBinSection(
             horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
           ) {
             IconButton(
-              onClick = onNavigateBack,
+              onClick = {
+                haptics.tap()
+                onNavigateBack()
+              },
               modifier =
                 Modifier.defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
                   .testTag("recycle_bin_back_button"),
@@ -154,7 +159,10 @@ fun RecycleBinSection(
               verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmall),
             ) {
               OutlinedButton(
-                onClick = onRestoreAll,
+                onClick = {
+                  haptics.confirm()
+                  onRestoreAll()
+                },
                 modifier =
                   Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
                     .testTag("recycle_bin_restore_all"),
@@ -162,7 +170,10 @@ fun RecycleBinSection(
                 Text(stringResource(R.string.recycle_restore_all))
               }
               Button(
-                onClick = { confirmEmpty = true },
+                onClick = {
+                  haptics.reject()
+                  confirmEmpty = true
+                },
                 colors =
                   ButtonDefaults.buttonColors(
                     containerColor = PrismColors.CoralPdf,
@@ -235,6 +246,7 @@ fun RecycleBinSection(
       confirmButton = {
         Button(
           onClick = {
+            haptics.reject()
             confirmEmpty = false
             onEmptyRecycleBin()
           },
@@ -262,6 +274,7 @@ fun RecycleBinSection(
       confirmButton = {
         Button(
           onClick = {
+            haptics.reject()
             val id = target.documentId
             pendingPermanentDelete = null
             onDeleteEntryPermanently(id)
@@ -339,8 +352,12 @@ private fun RecycleBinItemRow(
           overflow = TextOverflow.Ellipsis,
         )
       }
+      val itemHaptics = rememberPrismHaptics()
       IconButton(
-        onClick = onRestore,
+        onClick = {
+          itemHaptics.confirm()
+          onRestore()
+        },
         modifier =
           Modifier.defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
             .testTag("trash_restore_${entry.documentId}"),
@@ -352,7 +369,10 @@ private fun RecycleBinItemRow(
         )
       }
       IconButton(
-        onClick = onDeleteForever,
+        onClick = {
+          itemHaptics.reject()
+          onDeleteForever()
+        },
         modifier =
           Modifier.defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
             .testTag("trash_delete_${entry.documentId}"),

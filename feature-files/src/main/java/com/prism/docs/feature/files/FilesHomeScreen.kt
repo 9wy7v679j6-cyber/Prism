@@ -4,8 +4,27 @@ import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -80,15 +99,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -123,6 +141,7 @@ import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSegmentedControl
 import com.prism.docs.core.ui.glass.GlassSheetDetent
 import com.prism.docs.core.ui.glass.GlassSurface
+import com.prism.docs.core.ui.glass.LocalGlassMotion
 import com.prism.docs.core.ui.glass.ObserveScrollCollapse
 import com.prism.docs.core.ui.glass.ScrollEdgeFade
 import com.prism.docs.core.ui.glass.glassClickable
@@ -130,6 +149,7 @@ import com.prism.docs.core.ui.glass.glassEntrance
 import com.prism.docs.core.ui.glass.glassPress
 import com.prism.docs.core.ui.glass.horizontalRightEdgeFade
 import com.prism.docs.core.ui.glass.rememberHeaderScrollProgress
+import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.theme.LocalHazeState
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
@@ -158,7 +178,8 @@ fun FilesHomeScreen(
   viewModel: FilesViewModel = hiltViewModel(),
 ) {
   val context = LocalContext.current
-  val haptic = LocalHapticFeedback.current
+  val haptics = rememberPrismHaptics()
+  val motionEnabled = LocalGlassMotion.current
   val density = LocalDensity.current
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
   val libraryItems = viewModel.libraryPagingData.collectAsLazyPagingItems()
@@ -169,6 +190,16 @@ fun FilesHomeScreen(
   val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
   var libraryTopHeightPx by remember { mutableIntStateOf(0) }
   var secondaryTopHeightPx by remember { mutableIntStateOf(0) }
+  val currentSectionIndex =
+    when (uiState.section) {
+      FilesSection.LIBRARY -> 0
+      FilesSection.STORAGE -> 1
+      FilesSection.RECYCLE_BIN -> 2
+    }
+  var lastSectionIndex by rememberSaveable { mutableIntStateOf(currentSectionIndex) }
+  LaunchedEffect(currentSectionIndex) {
+    lastSectionIndex = currentSectionIndex
+  }
 
   var showOptionsSheet by rememberSaveable { mutableStateOf(false) }
   var optionsDetent by remember { mutableStateOf(GlassSheetDetent.HALF) }
@@ -197,12 +228,10 @@ fun FilesHomeScreen(
   val toggleSelectionWithHaptics: (Long) -> Unit = { docId ->
     val wasEmpty = uiState.selectedIds.isEmpty()
     val adding = docId !in uiState.selectedIds
-    if (adding) {
-      haptic.performHapticFeedback(
-        if (wasEmpty) HapticFeedbackType.LongPress else HapticFeedbackType.SegmentTick
-      )
+    if (adding && wasEmpty) {
+      haptics.longPress()
     } else {
-      haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+      haptics.segmentTick()
     }
     viewModel.toggleSelection(docId)
   }
@@ -289,110 +318,136 @@ fun FilesHomeScreen(
     )
 
   Box(modifier = modifier.fillMaxSize()) {
-    when (uiState.section) {
-      FilesSection.LIBRARY ->
-        LibraryPagingSection(
-          uiState = uiState,
-          listState = libraryListState,
-          gridState = libraryGridState,
-          sectionTitle = sectionTitle,
-          topBarHeightDp = measuredTopHeightDp,
-          topContentPadding = animatedTopPadding,
-          headerScrollProgress = headerScrollProgress,
-          hasActiveSecondaryFilters = hasActiveSecondaryFilters,
-          isDebugBuild = isDebugBuild,
-          preferences = preferences,
-          storageAccessState = storageAccessState,
-          pagedItems = libraryItems,
-          thumbnailPipeline = viewModel.thumbnailPipeline,
-          onOpenOptionsSheet = {
-            optionsDetent = GlassSheetDetent.HALF
-            showOptionsSheet = true
-          },
-          onOpenSearch = onOpenSearch,
-          onSelectSection = viewModel::setSection,
-          onRequestAllFilesAccess = onRequestAllFilesAccess,
-          onAddSafFolder = onAddSafFolder,
-          onDismissAccessBanner = onDismissAccessBanner,
-          onTriggerSync = viewModel::triggerManualSync,
-          onCategorySelected = viewModel::setCategoryFilter,
-          onTagSelected = viewModel::setTagFilter,
-          onOpenDuplicateFinder = onOpenDuplicateFinder,
-          onOpenStorageAnalyzer = onOpenStorageAnalyzer,
-          onOpenCollectionDetail = onOpenCollectionDetail,
-          onOpenManageTagsCollections = viewModel::openManageTagsCollectionsSheet,
-          onManageDocumentTagsCollections = { doc -> viewModel.openAssignSheet(listOf(doc.id)) },
-          onSeeAllRecents = {
-            if (!uiState.query.recentsOnly) {
-              viewModel.toggleRecentsOnly()
-            }
-          },
-          onClearFilters = viewModel::clearAllFilters,
-          onOpenDocument = openIndexedDoc,
-          onToggleSelection = toggleSelectionWithHaptics,
-          onToggleFavorite = viewModel::toggleFavorite,
-          onRenameDocument = viewModel::openRenameDialog,
-          onCopyDocument = {
-            viewModel.openDestinationPicker(TransferOperationType.COPY, listOf(it.id))
-          },
-          onMoveDocument = {
-            viewModel.openDestinationPicker(TransferOperationType.MOVE, listOf(it.id))
-          },
-          onShareDocument = { shareIds(listOf(it.id)) },
-          onTrashDocument = { viewModel.moveToRecycleBin(listOf(it.id)) },
-          onTabBarCollapsedChange = onTabBarCollapsedChange,
-        )
+    AnimatedContent(
+      targetState = uiState.section,
+      transitionSpec = {
+        if (motionEnabled) {
+          val direction = if (targetState.ordinal >= initialState.ordinal) 1 else -1
+          (fadeIn(animationSpec = tween(durationMillis = 170)) +
+            slideInHorizontally(
+              animationSpec = spring(dampingRatio = 0.86f, stiffness = 460f),
+              initialOffsetX = { fullWidth -> direction * (fullWidth / 12) },
+            ))
+            .togetherWith(
+              fadeOut(animationSpec = tween(durationMillis = 115)) +
+                slideOutHorizontally(
+                  animationSpec = tween(durationMillis = 130),
+                  targetOffsetX = { fullWidth -> -direction * (fullWidth / 14) },
+                )
+            )
+        } else {
+          EnterTransition.None togetherWith ExitTransition.None
+        }
+      },
+      modifier = Modifier.fillMaxSize(),
+      label = "files_section_transition",
+    ) { activeSection ->
+      when (activeSection) {
+        FilesSection.LIBRARY ->
+          LibraryPagingSection(
+            uiState = uiState,
+            listState = libraryListState,
+            gridState = libraryGridState,
+            sectionTitle = sectionTitle,
+            animateSwitcherFromIndex = lastSectionIndex,
+            topBarHeightDp = measuredTopHeightDp,
+            topContentPadding = animatedTopPadding,
+            headerScrollProgress = headerScrollProgress,
+            hasActiveSecondaryFilters = hasActiveSecondaryFilters,
+            isDebugBuild = isDebugBuild,
+            preferences = preferences,
+            storageAccessState = storageAccessState,
+            pagedItems = libraryItems,
+            thumbnailPipeline = viewModel.thumbnailPipeline,
+            onOpenOptionsSheet = {
+              optionsDetent = GlassSheetDetent.HALF
+              showOptionsSheet = true
+            },
+            onOpenSearch = onOpenSearch,
+            onSelectSection = viewModel::setSection,
+            onRequestAllFilesAccess = onRequestAllFilesAccess,
+            onAddSafFolder = onAddSafFolder,
+            onDismissAccessBanner = onDismissAccessBanner,
+            onTriggerSync = viewModel::triggerManualSync,
+            onCategorySelected = viewModel::setCategoryFilter,
+            onTagSelected = viewModel::setTagFilter,
+            onOpenDuplicateFinder = onOpenDuplicateFinder,
+            onOpenStorageAnalyzer = onOpenStorageAnalyzer,
+            onOpenCollectionDetail = onOpenCollectionDetail,
+            onOpenManageTagsCollections = viewModel::openManageTagsCollectionsSheet,
+            onManageDocumentTagsCollections = { doc -> viewModel.openAssignSheet(listOf(doc.id)) },
+            onSeeAllRecents = {
+              if (!uiState.query.recentsOnly) {
+                viewModel.toggleRecentsOnly()
+              }
+            },
+            onClearFilters = viewModel::clearAllFilters,
+            onOpenDocument = openIndexedDoc,
+            onToggleSelection = toggleSelectionWithHaptics,
+            onToggleFavorite = viewModel::toggleFavorite,
+            onRenameDocument = viewModel::openRenameDialog,
+            onCopyDocument = {
+              viewModel.openDestinationPicker(TransferOperationType.COPY, listOf(it.id))
+            },
+            onMoveDocument = {
+              viewModel.openDestinationPicker(TransferOperationType.MOVE, listOf(it.id))
+            },
+            onShareDocument = { shareIds(listOf(it.id)) },
+            onTrashDocument = { viewModel.moveToRecycleBin(listOf(it.id)) },
+            onTabBarCollapsedChange = onTabBarCollapsedChange,
+          )
 
-      FilesSection.STORAGE ->
-        StorageBrowserSection(
-          storageState = uiState.storageBrowser,
-          isGridMode = uiState.isGridMode,
-          topContentPadding = animatedTopPadding,
-          sortField = uiState.query.sortField,
-          sortDirection = uiState.query.sortDirection,
-          selectedIds = uiState.selectedIds,
-          isSelectionMode = uiState.isSelectionMode,
-          pagedLocalFiles = storageDirectoryItems,
-          thumbnailPipeline = viewModel.thumbnailPipeline,
-          onOpenRoot = viewModel::openStorageRoot,
-          onOpenSubfolder = viewModel::openSubfolder,
-          onNavigateToBreadcrumb = viewModel::navigateToBreadcrumb,
-          onNavigateUp = viewModel::navigateUpDirectory,
-          onCreateFolderClick = viewModel::openCreateFolderDialog,
-          onOpenIndexedDocument = openIndexedDoc,
-          onOpenRawDocument = onOpenDocument,
-          onToggleSelection = toggleSelectionWithHaptics,
-          onToggleFavorite = viewModel::toggleFavorite,
-          onRenameDocument = viewModel::openRenameDialog,
-          onCopyDocument = {
-            viewModel.openDestinationPicker(TransferOperationType.COPY, listOf(it.id))
-          },
-          onMoveDocument = {
-            viewModel.openDestinationPicker(TransferOperationType.MOVE, listOf(it.id))
-          },
-          onShareDocument = { shareIds(listOf(it.id)) },
-          onTrashDocument = { viewModel.moveToRecycleBin(listOf(it.id)) },
-          onSortFieldSelected = viewModel::setSortField,
-          onToggleSortDirection = viewModel::toggleSortDirection,
-          onAddSafFolder = onAddSafFolder,
-          onRequestAllFilesAccess = onRequestAllFilesAccess,
-          hasFullAccess = storageAccessState.canBrowseFullDevice,
-          rootsListState = storageRootsListState,
-          directoryListState = storageDirListState,
-        )
+        FilesSection.STORAGE ->
+          StorageBrowserSection(
+            storageState = uiState.storageBrowser,
+            isGridMode = uiState.isGridMode,
+            topContentPadding = animatedTopPadding,
+            sortField = uiState.query.sortField,
+            sortDirection = uiState.query.sortDirection,
+            selectedIds = uiState.selectedIds,
+            isSelectionMode = uiState.isSelectionMode,
+            pagedLocalFiles = storageDirectoryItems,
+            thumbnailPipeline = viewModel.thumbnailPipeline,
+            onOpenRoot = viewModel::openStorageRoot,
+            onOpenSubfolder = viewModel::openSubfolder,
+            onNavigateToBreadcrumb = viewModel::navigateToBreadcrumb,
+            onNavigateUp = viewModel::navigateUpDirectory,
+            onCreateFolderClick = viewModel::openCreateFolderDialog,
+            onOpenIndexedDocument = openIndexedDoc,
+            onOpenRawDocument = onOpenDocument,
+            onToggleSelection = toggleSelectionWithHaptics,
+            onToggleFavorite = viewModel::toggleFavorite,
+            onRenameDocument = viewModel::openRenameDialog,
+            onCopyDocument = {
+              viewModel.openDestinationPicker(TransferOperationType.COPY, listOf(it.id))
+            },
+            onMoveDocument = {
+              viewModel.openDestinationPicker(TransferOperationType.MOVE, listOf(it.id))
+            },
+            onShareDocument = { shareIds(listOf(it.id)) },
+            onTrashDocument = { viewModel.moveToRecycleBin(listOf(it.id)) },
+            onSortFieldSelected = viewModel::setSortField,
+            onToggleSortDirection = viewModel::toggleSortDirection,
+            onAddSafFolder = onAddSafFolder,
+            onRequestAllFilesAccess = onRequestAllFilesAccess,
+            hasFullAccess = storageAccessState.canBrowseFullDevice,
+            rootsListState = storageRootsListState,
+            directoryListState = storageDirListState,
+          )
 
-      FilesSection.RECYCLE_BIN ->
-        RecycleBinSection(
-          entries = uiState.recycleBinEntries,
-          totalBytes = uiState.recycleBinBytes,
-          onNavigateBack = { viewModel.setSection(FilesSection.LIBRARY) },
-          onRestoreEntry = { viewModel.restoreFromRecycleBin(listOf(it)) },
-          onDeleteEntryPermanently = { viewModel.permanentlyDeleteFromRecycleBin(listOf(it)) },
-          onRestoreAll = viewModel::restoreAllFromRecycleBin,
-          onEmptyRecycleBin = viewModel::emptyRecycleBin,
-          topContentPadding = animatedTopPadding,
-          listState = recycleBinListState,
-        )
+        FilesSection.RECYCLE_BIN ->
+          RecycleBinSection(
+            entries = uiState.recycleBinEntries,
+            totalBytes = uiState.recycleBinBytes,
+            onNavigateBack = { viewModel.setSection(FilesSection.LIBRARY) },
+            onRestoreEntry = { viewModel.restoreFromRecycleBin(listOf(it)) },
+            onDeleteEntryPermanently = { viewModel.permanentlyDeleteFromRecycleBin(listOf(it)) },
+            onRestoreAll = viewModel::restoreAllFromRecycleBin,
+            onEmptyRecycleBin = viewModel::emptyRecycleBin,
+            topContentPadding = animatedTopPadding,
+            listState = recycleBinListState,
+          )
+      }
     }
 
     if (uiState.section == FilesSection.LIBRARY) {
@@ -415,8 +470,44 @@ fun FilesHomeScreen(
             ),
         contentAlignment = Alignment.Center,
       ) {
+        val motion = LocalGlassMotion.current
         AnimatedContent(
           targetState = uiState.isSelectionMode,
+          contentAlignment = Alignment.TopCenter,
+          transitionSpec = {
+            if (motion) {
+              (fadeIn(animationSpec = tween(durationMillis = 180)) +
+                slideInVertically(
+                  animationSpec = spring(dampingRatio = 0.84f, stiffness = 420f),
+                  initialOffsetY = { -it / 4 },
+                ) +
+                expandVertically(
+                  animationSpec = spring(dampingRatio = 0.86f, stiffness = 420f),
+                  expandFrom = Alignment.Top,
+                ))
+                .togetherWith(
+                  fadeOut(animationSpec = tween(durationMillis = 130)) +
+                    slideOutVertically(
+                      animationSpec = tween(durationMillis = 140),
+                      targetOffsetY = { -it / 5 },
+                    ) +
+                    shrinkVertically(
+                      animationSpec = spring(dampingRatio = 0.88f, stiffness = 460f),
+                      shrinkTowards = Alignment.Top,
+                    )
+                )
+                .using(
+                  SizeTransform(
+                    clip = false,
+                    sizeAnimationSpec = { _, _ -> spring(dampingRatio = 0.86f, stiffness = 420f) },
+                  )
+                )
+            } else {
+              (EnterTransition.None togetherWith ExitTransition.None)
+                .using(SizeTransform(clip = false))
+            }
+          },
+          modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
           label = "library_top_bar_mode",
         ) { selectionActive ->
           if (selectionActive) {
@@ -425,7 +516,7 @@ fun FilesHomeScreen(
               selectedCount = uiState.selectedIds.size,
               onClearSelection = viewModel::clearSelection,
               onSelectAll = {
-                haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                haptics.segmentTick()
                 val loadedIds =
                   buildSet {
                     libraryItems.itemSnapshotList.items.forEach { add(it.id) }
@@ -439,7 +530,7 @@ fun FilesHomeScreen(
                 viewModel.openDestinationPicker(TransferOperationType.MOVE, selectedIdsList)
               },
               onDelete = { viewModel.moveToRecycleBin(selectedIdsList) },
-              modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
+              modifier = Modifier.fillMaxWidth(),
             )
           } else {
             LibraryCollapsingTopBar(
@@ -449,14 +540,14 @@ fun FilesHomeScreen(
               hasActiveFilters = hasActiveSecondaryFilters,
               scrollProgress = headerScrollProgress,
               onEnterSelectionMode = {
-                haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                haptics.segmentTick()
                 viewModel.enterSelectionMode()
               },
               onSettingsClick = {
                 optionsDetent = GlassSheetDetent.HALF
                 showOptionsSheet = true
               },
-              modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
+              modifier = Modifier.fillMaxWidth(),
             )
           }
         }
@@ -495,6 +586,7 @@ fun FilesHomeScreen(
         SectionSwitcherBar(
           section = uiState.section,
           recycleBinCount = uiState.recycleBinCount,
+          animateFromIndex = lastSectionIndex,
           onSelectSection = viewModel::setSection,
         )
       }
@@ -516,15 +608,33 @@ fun FilesHomeScreen(
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
     ) {
-      uiState.transferProgress?.let { progress ->
-        TransferProgressBanner(
-          progress = progress,
-          onCancel = viewModel::cancelActiveTransfer,
-          onDismiss = viewModel::dismissTransferProgress,
-        )
+      AnimatedVisibility(
+        visible = uiState.transferProgress != null,
+        enter =
+          slideInVertically(
+            animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f),
+            initialOffsetY = { it / 2 },
+          ) + fadeIn(tween(150)),
+        exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(tween(120)),
+      ) {
+        uiState.transferProgress?.let { progress ->
+          TransferProgressBanner(
+            progress = progress,
+            onCancel = viewModel::cancelActiveTransfer,
+            onDismiss = viewModel::dismissTransferProgress,
+          )
+        }
       }
 
-      if (uiState.isSelectionMode && uiState.section != FilesSection.LIBRARY) {
+      AnimatedVisibility(
+        visible = uiState.isSelectionMode && uiState.section != FilesSection.LIBRARY,
+        enter =
+          slideInVertically(
+            animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f),
+            initialOffsetY = { it / 2 },
+          ) + fadeIn(tween(150)),
+        exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(tween(120)),
+      ) {
         val ids = uiState.selectedIds.toList()
         MultiSelectBatchBar(
           selectedCount = ids.size,
@@ -537,22 +647,35 @@ fun FilesHomeScreen(
         )
       }
 
-      uiState.statusMessage?.let { msg ->
-        GlassSurface(
-          cornerRadius = PrismDimens.ToastCornerRadius,
-          elevation = GlassElevation.FLOATING,
-          modifier = Modifier.testTag("browser_status_toast"),
-        ) {
-          Text(
-            text = msg,
-            style = MaterialTheme.typography.labelLarge,
-            color = colorScheme.onSurface,
-            modifier =
-              Modifier.padding(
-                horizontal = PrismDimens.SpaceSection,
-                vertical = PrismDimens.SpaceMediumLarge,
-              ),
-          )
+      AnimatedVisibility(
+        visible = uiState.statusMessage != null,
+        enter =
+          slideInVertically(
+            animationSpec = spring(dampingRatio = 0.78f, stiffness = 460f),
+            initialOffsetY = { it / 2 },
+          ) + fadeIn(tween(140)) + scaleIn(initialScale = 0.92f),
+        exit =
+          slideOutVertically(targetOffsetY = { it / 3 }) +
+            fadeOut(tween(120)) +
+            scaleOut(targetScale = 0.94f),
+      ) {
+        uiState.statusMessage?.let { msg ->
+          GlassSurface(
+            cornerRadius = PrismDimens.ToastCornerRadius,
+            elevation = GlassElevation.FLOATING,
+            modifier = Modifier.testTag("browser_status_toast"),
+          ) {
+            Text(
+              text = msg,
+              style = MaterialTheme.typography.labelLarge,
+              color = colorScheme.onSurface,
+              modifier =
+                Modifier.padding(
+                  horizontal = PrismDimens.SpaceSection,
+                  vertical = PrismDimens.SpaceMediumLarge,
+                ),
+            )
+          }
         }
       }
     }
@@ -818,6 +941,7 @@ private fun LibrarySearchPill(
 private fun SectionSwitcherBar(
   section: FilesSection,
   recycleBinCount: Int,
+  animateFromIndex: Int? = null,
   onSelectSection: (FilesSection) -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -838,6 +962,7 @@ private fun SectionSwitcherBar(
         FilesSection.STORAGE -> 1
         FilesSection.RECYCLE_BIN -> 2
       },
+    animateFromIndex = animateFromIndex,
     onSelect = { idx ->
       onSelectSection(
         when (idx) {
@@ -870,6 +995,7 @@ private fun LibraryPagingSection(
   listState: LazyListState,
   gridState: LazyGridState,
   sectionTitle: String,
+  animateSwitcherFromIndex: Int,
   topBarHeightDp: Dp,
   topContentPadding: Dp,
   headerScrollProgress: androidx.compose.runtime.State<Float>,
@@ -921,7 +1047,21 @@ private fun LibraryPagingSection(
       boundaries = dateBoundaries,
     )
 
-  if (uiState.isGridMode) {
+  val motionEnabled = LocalGlassMotion.current
+  AnimatedContent(
+    targetState = uiState.isGridMode,
+    transitionSpec = {
+      if (motionEnabled) {
+        (fadeIn(tween(180)) + scaleIn(initialScale = 0.97f, animationSpec = spring(0.84f, 440f)))
+          .togetherWith(fadeOut(tween(120)))
+      } else {
+        EnterTransition.None togetherWith ExitTransition.None
+      }
+    },
+    modifier = Modifier.fillMaxSize(),
+    label = "library_layout_mode",
+  ) { isGrid ->
+  if (isGrid) {
     LazyVerticalGrid(
       state = gridState,
       columns = GridCells.Adaptive(minSize = PrismDimens.GridCardMinSize),
@@ -943,6 +1083,7 @@ private fun LibraryPagingSection(
         LibraryHeroStack(
           uiState = uiState,
           sectionTitle = sectionTitle,
+          animateSwitcherFromIndex = animateSwitcherFromIndex,
           headerScrollProgress = headerScrollProgress,
           isInitialLoading = isInitialLoading,
           hasActiveSecondaryFilters = hasActiveSecondaryFilters,
@@ -1136,6 +1277,7 @@ private fun LibraryPagingSection(
           LibraryHeroStack(
             uiState = uiState,
             sectionTitle = sectionTitle,
+            animateSwitcherFromIndex = animateSwitcherFromIndex,
             headerScrollProgress = headerScrollProgress,
             isInitialLoading = isInitialLoading,
             hasActiveSecondaryFilters = hasActiveSecondaryFilters,
@@ -1280,6 +1422,7 @@ private fun LibraryPagingSection(
       }
     }
   }
+  }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -1287,6 +1430,7 @@ private fun LibraryPagingSection(
 private fun LibraryHeroStack(
   uiState: FilesUiState,
   sectionTitle: String,
+  animateSwitcherFromIndex: Int,
   headerScrollProgress: androidx.compose.runtime.State<Float>,
   isInitialLoading: Boolean,
   hasActiveSecondaryFilters: Boolean,
@@ -1343,6 +1487,7 @@ private fun LibraryHeroStack(
     SectionSwitcherBar(
       section = uiState.section,
       recycleBinCount = uiState.recycleBinCount,
+      animateFromIndex = animateSwitcherFromIndex,
       onSelectSection = onSelectSection,
     )
 
@@ -1454,7 +1599,15 @@ private fun LibraryHeroStack(
       onManageTags = onOpenManageTagsCollections,
     )
 
-    if (hasActiveSecondaryFilters) {
+    AnimatedVisibility(
+      visible = hasActiveSecondaryFilters,
+      enter =
+        expandVertically(animationSpec = spring(dampingRatio = 0.84f, stiffness = 440f)) +
+          fadeIn(tween(150)),
+      exit =
+        shrinkVertically(animationSpec = spring(dampingRatio = 0.88f, stiffness = 480f)) +
+          fadeOut(tween(120)),
+    ) {
       ActiveFilterSummaryBar(
         uiState = uiState,
         onClearFilters = onClearFilters,
@@ -1687,6 +1840,12 @@ private fun TagFilterChipRow(
       val isSelected = selectedTagId == tag.id
       val tagAccent = parseHexColorOrDefault(tag.colorHex, colorScheme.primary)
       val cd = stringResource(R.string.library_tags_filter_cd, tag.name)
+      val haptics = rememberPrismHaptics()
+      val labelColor by
+        animateColorAsState(
+          targetValue = if (isSelected) colorScheme.primary else colorScheme.onSurface,
+          label = "tag_chip_color_${tag.id}",
+        )
 
       GlassSurface(
         cornerRadius = 18.dp,
@@ -1694,7 +1853,11 @@ private fun TagFilterChipRow(
         elevation = GlassElevation.SUBTLE,
         useBackdropBlur = false,
         accentTint = if (isSelected) tagAccent else null,
-        onClick = { onTagSelected(tag.id) },
+        onClick = {
+          haptics.segmentTick()
+          onTagSelected(tag.id)
+        },
+        hapticOnClick = false,
         clickRole = Role.Tab,
         modifier =
           Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
@@ -1706,7 +1869,10 @@ private fun TagFilterChipRow(
             .testTag("library_tag_chip_${tag.id}"),
       ) {
         Row(
-          modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+          modifier =
+            Modifier.align(Alignment.Center)
+              .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+              .padding(horizontal = 14.dp, vertical = 10.dp),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -1717,7 +1883,7 @@ private fun TagFilterChipRow(
               MaterialTheme.typography.labelLarge.copy(
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
               ),
-            color = if (isSelected) colorScheme.primary else colorScheme.onSurface,
+            color = labelColor,
             maxLines = 1,
           )
         }
@@ -1737,7 +1903,10 @@ private fun TagFilterChipRow(
             .testTag("library_manage_tags_chip"),
       ) {
         Box(
-          modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+          modifier =
+            Modifier.align(Alignment.Center)
+              .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+              .padding(horizontal = 14.dp, vertical = 10.dp),
           contentAlignment = Alignment.Center,
         ) {
           Text(
@@ -1820,39 +1989,66 @@ private fun CategoryGlassPill(
 ) {
   val colorScheme = MaterialTheme.colorScheme
   val tokens = LocalPrismVisualTokens.current
-  val gradientBrush = Brush.linearGradient(colors = tokens.brandGradient)
+  val motionEnabled = LocalGlassMotion.current
+  val haptics = rememberPrismHaptics()
+  val gradientBrush = remember(tokens.brandGradient) { Brush.linearGradient(colors = tokens.brandGradient) }
   val chipCd = stringResource(R.string.category_chip_cd, label)
   val stateDesc =
     stringResource(if (selected) R.string.state_selected else R.string.state_not_selected)
 
-  val semModifier =
-    Modifier.semantics {
-      role = Role.Tab
-      this.selected = selected
-      stateDescription = stateDesc
-      contentDescription = chipCd
-    }
+  val selectedProgress =
+    animateFloatAsState(
+      targetValue = if (selected) 1f else 0f,
+      animationSpec =
+        if (motionEnabled) spring(dampingRatio = 0.78f, stiffness = 460f) else snap(),
+      label = "category_pill_progress_$testTag",
+    )
+  val labelColor by
+    animateColorAsState(
+      targetValue = if (selected) PrismColors.OnAccent else colorScheme.onSurface,
+      label = "category_pill_label_$testTag",
+    )
 
-  if (selected) {
+  GlassSurface(
+    cornerRadius = PrismDimens.CategoryChipCornerRadius,
+    shape = CircleShape,
+    elevation = GlassElevation.SUBTLE,
+    enableRefraction = false,
+    onClick = {
+      haptics.segmentTick()
+      onClick()
+    },
+    hapticOnClick = false,
+    clickRole = Role.Tab,
+    modifier =
+      Modifier.height(PrismDimens.CategoryChipHeight)
+        .defaultMinSize(
+          minWidth = PrismDimens.CategoryChipMinWidth,
+          minHeight = PrismDimens.TouchTargetMin,
+        )
+        .graphicsLayer {
+          val s = 1f + 0.03f * selectedProgress.value
+          scaleX = s
+          scaleY = s
+        }
+        .semantics {
+          role = Role.Tab
+          this.selected = selected
+          stateDescription = stateDesc
+          contentDescription = chipCd
+        }
+        .testTag(testTag),
+  ) {
     Box(
       modifier =
-        Modifier.height(PrismDimens.CategoryChipHeight)
-          .defaultMinSize(
-            minWidth = PrismDimens.CategoryChipMinWidth,
-            minHeight = PrismDimens.TouchTargetMin,
-          )
-          .then(semModifier)
-          .glassClickable(role = Role.Tab, onClick = onClick)
-          .shadow(
-            elevation = PrismDimens.ShadowMedium,
-            shape = CircleShape,
-            ambientColor = PrismColors.IndigoBlue.copy(alpha = 0.34f),
-            spotColor = PrismColors.VioletAccent.copy(alpha = 0.42f),
-          )
-          .clip(CircleShape)
-          .background(gradientBrush)
-          .padding(horizontal = PrismDimens.CategoryChipHorizontalPadding)
-          .testTag(testTag),
+        Modifier.fillMaxSize()
+          .drawBehind {
+            val alpha = selectedProgress.value.coerceIn(0f, 1f)
+            if (alpha > 0.01f) {
+              drawRect(brush = gradientBrush, alpha = alpha)
+            }
+          }
+          .padding(horizontal = PrismDimens.CategoryChipHorizontalPadding),
       contentAlignment = Alignment.Center,
     ) {
       Text(
@@ -1860,40 +2056,9 @@ private fun CategoryGlassPill(
         fontFamily = FontFamily.SansSerif,
         fontSize = PrismDimens.FontSizeCategoryChip,
         fontWeight = FontWeight.SemiBold,
-        color = PrismColors.OnAccent,
+        color = labelColor,
         maxLines = 1,
       )
-    }
-  } else {
-    GlassSurface(
-      cornerRadius = PrismDimens.CategoryChipCornerRadius,
-      shape = CircleShape,
-      elevation = GlassElevation.SUBTLE,
-      enableRefraction = false,
-      onClick = onClick,
-      clickRole = Role.Tab,
-      modifier =
-        Modifier.height(PrismDimens.CategoryChipHeight)
-          .defaultMinSize(
-            minWidth = PrismDimens.CategoryChipMinWidth,
-            minHeight = PrismDimens.TouchTargetMin,
-          )
-          .then(semModifier)
-          .testTag(testTag),
-    ) {
-      Box(
-        modifier = Modifier.fillMaxSize().padding(horizontal = PrismDimens.CategoryChipHorizontalPadding),
-        contentAlignment = Alignment.Center,
-      ) {
-        Text(
-          text = label,
-          fontFamily = FontFamily.SansSerif,
-          fontSize = PrismDimens.FontSizeCategoryChip,
-          fontWeight = FontWeight.SemiBold,
-          color = colorScheme.onSurface,
-          maxLines = 1,
-        )
-      }
     }
   }
 }
@@ -1955,8 +2120,12 @@ private fun ActiveFilterSummaryBar(
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.weight(1f),
       )
+      val haptics = rememberPrismHaptics()
       TextButton(
-        onClick = onClearFilters,
+        onClick = {
+          haptics.tap()
+          onClearFilters()
+        },
         modifier =
           Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
             .testTag("active_filter_reset_button"),
@@ -1990,7 +2159,7 @@ private fun RecentDocumentsCarousel(
 ) {
   val tokens = LocalPrismVisualTokens.current
   val colorScheme = MaterialTheme.colorScheme
-  val haptic = LocalHapticFeedback.current
+  val haptics = rememberPrismHaptics()
   val rowState = rememberLazyListState()
   val canScrollForward by remember { derivedStateOf { rowState.canScrollForward } }
   val fadeAlpha by animateFloatAsState(
@@ -2023,7 +2192,7 @@ private fun RecentDocumentsCarousel(
               minHeight = PrismDimens.TouchTargetMin,
             )
             .clip(RoundedCornerShape(PrismDimens.SpaceMediumLarge))
-            .clickable(role = Role.Button, onClick = onSeeAllClick)
+            .glassClickable(role = Role.Button, onClick = onSeeAllClick)
             .padding(horizontal = PrismDimens.SpaceMedium)
             .testTag("recent_see_all_button"),
         contentAlignment = Alignment.Center,
@@ -2080,13 +2249,18 @@ private fun RecentDocumentsCarousel(
                   interactionSource = interactionSource,
                   indication = null,
                   onClick = {
-                    if (isSelectionMode) onToggleSelection(doc.id) else onOpenDocument(doc)
+                    if (isSelectionMode) {
+                      onToggleSelection(doc.id)
+                    } else {
+                      haptics.tap()
+                      onOpenDocument(doc)
+                    }
                   },
                   onLongClick = {
                     if (isSelectionMode) {
                       onToggleSelection(doc.id)
                     } else {
-                      haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                      haptics.longPress()
                       menuExpanded = true
                     }
                   },
@@ -2106,15 +2280,23 @@ private fun RecentDocumentsCarousel(
                   showCornerBadge = true,
                   modifier = Modifier.fillMaxWidth().height(PrismDimens.RecentThumbnailHeight),
                 )
-                if (isSelected) {
+                androidx.compose.animation.AnimatedVisibility(
+                  visible = isSelected,
+                  enter =
+                    scaleIn(
+                      initialScale = 0.45f,
+                      animationSpec = spring(dampingRatio = 0.56f, stiffness = 520f),
+                    ) + fadeIn(tween(120)),
+                  exit =
+                    scaleOut(targetScale = 0.45f, animationSpec = tween(110)) + fadeOut(tween(100)),
+                  modifier = Modifier.align(Alignment.TopStart).padding(PrismDimens.SpaceSmallMedium),
+                ) {
                   Icon(
                     imageVector = Icons.Rounded.CheckCircle,
                     contentDescription = null,
                     tint = colorScheme.primary,
                     modifier =
-                      Modifier.align(Alignment.TopStart)
-                        .padding(PrismDimens.SpaceSmallMedium)
-                        .size(22.dp)
+                      Modifier.size(22.dp)
                         .clip(CircleShape)
                         .background(colorScheme.surface),
                   )
@@ -2176,12 +2358,21 @@ fun SortControlRow(
   modifier: Modifier = Modifier,
 ) {
   val colorScheme = MaterialTheme.colorScheme
+  val motionEnabled = LocalGlassMotion.current
+  val haptics = rememberPrismHaptics()
   val rowState = rememberLazyListState()
   val canScrollForward by remember { derivedStateOf { rowState.canScrollForward } }
   val fadeAlpha by animateFloatAsState(
     targetValue = if (canScrollForward) 1f else 0f,
     label = "sort_chip_fade",
   )
+  val arrowRotation =
+    animateFloatAsState(
+      targetValue = if (sortDirection == SortDirection.ASC) 0f else 180f,
+      animationSpec =
+        if (motionEnabled) spring(dampingRatio = 0.68f, stiffness = 440f) else snap(),
+      label = "sort_arrow_rotation",
+    )
 
   val options = remember {
     listOf(
@@ -2210,23 +2401,35 @@ fun SortControlRow(
       val selectedState =
         stringResource(if (selected) R.string.state_selected else R.string.state_not_selected)
 
+      val chipBg by
+        animateColorAsState(
+          targetValue =
+            if (selected) colorScheme.primaryContainer
+            else colorScheme.surface.copy(alpha = 0.72f),
+          label = "sort_bg_${spec.field.name}",
+        )
+      val chipFg by
+        animateColorAsState(
+          targetValue =
+            if (selected) colorScheme.onPrimaryContainer else colorScheme.onSurfaceVariant,
+          label = "sort_fg_${spec.field.name}",
+        )
+
       Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmall),
         modifier =
           Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
             .clip(RoundedCornerShape(PrismDimens.SpaceSection))
-            .background(
-              if (selected) colorScheme.primaryContainer
-              else colorScheme.surface.copy(alpha = 0.72f)
-            )
+            .background(chipBg)
             .semantics {
               role = Role.Tab
               this.selected = selected
               stateDescription = if (selected) "$selectedState, $dirCd" else selectedState
               contentDescription = chipCd
             }
-            .clickable(role = Role.Tab) {
+            .glassClickable(role = Role.Tab, hapticOnClick = false) {
+              haptics.segmentTick()
               if (selected) onToggleSortDirection() else onSortFieldSelected(spec.field)
             }
             .padding(horizontal = 14.dp, vertical = PrismDimens.SpaceMedium)
@@ -2235,18 +2438,23 @@ fun SortControlRow(
         Text(
           text = label,
           style = MaterialTheme.typography.labelMedium,
-          color = if (selected) colorScheme.onPrimaryContainer else colorScheme.onSurfaceVariant,
+          color = chipFg,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
-        if (selected) {
+        AnimatedVisibility(
+          visible = selected,
+          enter = fadeIn(tween(120)) + scaleIn(initialScale = 0.6f),
+          exit = fadeOut(tween(100)) + scaleOut(targetScale = 0.6f),
+        ) {
           Icon(
-            imageVector =
-              if (sortDirection == SortDirection.ASC) Icons.Rounded.ArrowUpward
-              else Icons.Rounded.ArrowDownward,
+            imageVector = Icons.Rounded.ArrowUpward,
             contentDescription = null,
-            tint = colorScheme.onPrimaryContainer,
-            modifier = Modifier.size(14.dp),
+            tint = chipFg,
+            modifier =
+              Modifier.size(14.dp).graphicsLayer {
+                rotationZ = arrowRotation.value
+              },
           )
         }
       }

@@ -1,8 +1,14 @@
 package com.prism.docs.feature.files
 
 import android.graphics.Bitmap
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -199,14 +205,22 @@ fun FileTypeSquareBadge(
       )
     }
 
-    if (isSelected) {
+    AnimatedVisibility(
+      visible = isSelected,
+      enter =
+        scaleIn(
+          initialScale = 0.45f,
+          animationSpec = spring(dampingRatio = 0.56f, stiffness = 520f),
+        ) + fadeIn(animationSpec = tween(120)),
+      exit = scaleOut(targetScale = 0.45f, animationSpec = tween(110)) + fadeOut(tween(100)),
+      modifier = Modifier.align(Alignment.TopEnd),
+    ) {
       Icon(
         imageVector = Icons.Rounded.CheckCircle,
         contentDescription = null,
         tint = colorScheme.primary,
         modifier =
-          Modifier.align(Alignment.TopEnd)
-            .size(PrismDimens.SelectedOverlayBadgeSize)
+          Modifier.size(PrismDimens.SelectedOverlayBadgeSize)
             .clip(CircleShape)
             .background(colorScheme.surface),
       )

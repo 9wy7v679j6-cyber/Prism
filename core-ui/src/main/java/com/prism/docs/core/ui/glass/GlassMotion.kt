@@ -314,13 +314,15 @@ fun Modifier.glassPress(
     }
 }
 
-/** clickable() with glass press feedback and no default ripple. */
+/** clickable() with glass press feedback, optional tactile haptic tap, and no default ripple. */
 fun Modifier.glassClickable(
     enabled: Boolean = true,
     role: Role = Role.Button,
+    hapticOnClick: Boolean = true,
     onClick: () -> Unit,
 ): Modifier = composed {
     val source = remember { MutableInteractionSource() }
+    val haptics = rememberPrismHaptics()
     this
         .glassPress(source)
         .clickable(
@@ -328,7 +330,10 @@ fun Modifier.glassClickable(
             indication = null,
             enabled = enabled,
             role = role,
-            onClick = onClick,
+            onClick = {
+                if (hapticOnClick) haptics.tap()
+                onClick()
+            },
         )
 }
 
@@ -383,6 +388,7 @@ fun Modifier.glassSlidingPill(
     brush: Brush = SolidColor(Color.White),
     shadowColor: Color = Color(0x1E344E9E),
     borderColor: Color = Color.Transparent,
+    positionOverride: State<Float>? = null,
 ): Modifier = composed {
     if (count <= 0) return@composed this
     val motion = LocalGlassMotion.current
@@ -400,7 +406,9 @@ fun Modifier.glassSlidingPill(
         val segment = (size.width - 2f * i) / count
         val h = size.height - 2f * i
         if (segment <= 0f || h <= 0f) return@drawBehind
-        val x = i + position.value * segment
+        val activePosition = (positionOverride?.value ?: position.value)
+            .coerceIn(-0.08f, (count - 1).toFloat() + 0.08f)
+        val x = i + activePosition * segment
         val r = min(cornerRadius.toPx(), min(segment, h) / 2f)
         // Soft shadow under the pill.
         drawRoundRect(

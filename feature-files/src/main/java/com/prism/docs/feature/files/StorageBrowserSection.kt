@@ -1,13 +1,19 @@
 package com.prism.docs.feature.files
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -78,9 +84,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
@@ -115,6 +119,7 @@ import com.prism.docs.core.ui.glass.LocalGlassMotion
 import com.prism.docs.core.ui.glass.glassClickable
 import com.prism.docs.core.ui.glass.glassEntrance
 import com.prism.docs.core.ui.glass.glassPress
+import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.theme.LocalHazeState
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
@@ -1022,7 +1027,8 @@ fun DocumentListRow(
 ) {
   val colorScheme = MaterialTheme.colorScheme
   val tokens = LocalPrismVisualTokens.current
-  val haptic = LocalHapticFeedback.current
+  val motionEnabled = LocalGlassMotion.current
+  val haptics = rememberPrismHaptics()
   val request = document.toThumbnailRequest(targetSizePx = 224)
   val (badgeLabel, badgeColor) =
     remember(document.displayName, document.category) {
@@ -1030,6 +1036,21 @@ fun DocumentListRow(
     }
   var menuExpanded by remember { mutableStateOf(false) }
   val interactionSource = remember { MutableInteractionSource() }
+  val rowShape = remember { RoundedCornerShape(PrismDimens.BannerCornerRadius) }
+
+  val favTint by
+    animateColorAsState(
+      targetValue =
+        if (document.isFavorite) tokens.favoriteAccent else colorScheme.onSurfaceVariant,
+      label = "list_row_fav_tint_${document.id}",
+    )
+  val favScale =
+    animateFloatAsState(
+      targetValue = if (document.isFavorite) 1.14f else 1f,
+      animationSpec =
+        if (motionEnabled) spring(dampingRatio = 0.45f, stiffness = 500f) else snap(),
+      label = "list_row_fav_scale_${document.id}",
+    )
 
   val sizeLabel = rememberFormattedByteSize(document.sizeBytes)
   val modifiedLabel = rememberFormattedModifiedTimestamp(document.lastModifiedEpochMs)
@@ -1044,155 +1065,196 @@ fun DocumentListRow(
   val shareActionLabel = stringResource(R.string.action_share)
   val deleteActionLabel = stringResource(R.string.action_delete)
 
-  GlassSurface(
-    cornerRadius = PrismDimens.BannerCornerRadius,
-    elevation = GlassElevation.SUBTLE,
-    accentTint = if (isSelected) colorScheme.primary else null,
-    modifier =
-      modifier
-        .semantics(mergeDescendants = true) {
-          role = if (isSelectionMode) Role.Checkbox else Role.Button
-          selected = isSelected
-          stateDescription = selectedStateDesc
-          contentDescription = rowCd
-          customActions =
-            listOf(
-              CustomAccessibilityAction(favActionLabel) {
-                onToggleFavorite()
-                true
-              },
-              CustomAccessibilityAction(shareActionLabel) {
-                onShare()
-                true
-              },
-              CustomAccessibilityAction(deleteActionLabel) {
-                onTrash()
-                true
-              },
-            )
-        }
-        .glassPress(interactionSource)
-        .combinedClickable(
-          interactionSource = interactionSource,
-          indication = null,
-          onClick = onClick,
-          onLongClick = {
-            if (isSelectionMode) {
-              onLongClick()
-            } else {
-              haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-              menuExpanded = true
-            }
-          },
-        )
-        .testTag("doc_row_${document.id}"),
-  ) {
-    Row(
+  SwipeableDocumentRowContainer(
+    documentId = document.id,
+    documentName = document.displayName,
+    isFavorite = document.isFavorite,
+    isSelectionMode = isSelectionMode,
+    shape = rowShape,
+    onToggleFavorite = onToggleFavorite,
+    onShare = onShare,
+    onTrash = onTrash,
+    modifier = modifier,
+  ) { swipeController ->
+    GlassSurface(
+      cornerRadius = PrismDimens.BannerCornerRadius,
+      elevation = GlassElevation.SUBTLE,
+      accentTint = if (isSelected) colorScheme.primary else null,
       modifier =
         Modifier.fillMaxWidth()
-          .padding(
-            start = PrismDimens.SpaceRow,
-            top = PrismDimens.SpaceRow,
-            bottom = PrismDimens.SpaceRow,
-            end = PrismDimens.SpaceSmallMedium,
-          ),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceRow),
-    ) {
-      Box {
-        DocumentThumbnailView(
-          request = request,
-          pipeline = thumbnailPipeline,
-          cornerRadius = PrismDimens.SpaceSection,
-          compact = true,
-          modifier = Modifier.size(PrismDimens.HeaderBarHeight),
-        )
-        if (isSelected) {
-          Icon(
-            imageVector = Icons.Rounded.CheckCircle,
-            contentDescription = null,
-            tint = colorScheme.primary,
-            modifier =
-              Modifier.align(Alignment.TopEnd)
-                .size(22.dp)
-                .clip(CircleShape)
-                .background(colorScheme.surface),
+          .semantics(mergeDescendants = true) {
+            role = if (isSelectionMode) Role.Checkbox else Role.Button
+            selected = isSelected
+            stateDescription = selectedStateDesc
+            contentDescription = rowCd
+            customActions =
+              listOf(
+                CustomAccessibilityAction(favActionLabel) {
+                  onToggleFavorite()
+                  true
+                },
+                CustomAccessibilityAction(shareActionLabel) {
+                  onShare()
+                  true
+                },
+                CustomAccessibilityAction(deleteActionLabel) {
+                  onTrash()
+                  true
+                },
+              )
+          }
+          .glassPress(interactionSource)
+          .combinedClickable(
+            interactionSource = interactionSource,
+            indication = null,
+            onClick = {
+              if (swipeController.isOpen) {
+                haptics.tap()
+                swipeController.close()
+              } else {
+                if (!isSelectionMode) haptics.tap()
+                onClick()
+              }
+            },
+            onLongClick = {
+              if (swipeController.isOpen) {
+                swipeController.close()
+              } else if (isSelectionMode) {
+                onLongClick()
+              } else {
+                haptics.longPress()
+                menuExpanded = true
+              }
+            },
           )
-        }
-      }
-      Column(
-        modifier = Modifier.weight(1f),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
+          .testTag("doc_row_${document.id}"),
+    ) {
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .padding(
+              start = PrismDimens.SpaceRow,
+              top = PrismDimens.SpaceRow,
+              bottom = PrismDimens.SpaceRow,
+              end = PrismDimens.SpaceSmallMedium,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceRow),
       ) {
-        Text(
-          text = document.displayName,
-          style = MaterialTheme.typography.titleMedium,
-          color = colorScheme.onSurface,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-        )
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
+        Box {
+          DocumentThumbnailView(
+            request = request,
+            pipeline = thumbnailPipeline,
+            cornerRadius = PrismDimens.SpaceSection,
+            compact = true,
+            modifier = Modifier.size(PrismDimens.HeaderBarHeight),
+          )
+          androidx.compose.animation.AnimatedVisibility(
+            visible = isSelected,
+            enter =
+              scaleIn(
+                initialScale = 0.45f,
+                animationSpec = spring(dampingRatio = 0.56f, stiffness = 520f),
+              ) + fadeIn(tween(120)),
+            exit = scaleOut(targetScale = 0.45f, animationSpec = tween(110)) + fadeOut(tween(100)),
+            modifier = Modifier.align(Alignment.TopEnd),
+          ) {
+            Icon(
+              imageVector = Icons.Rounded.CheckCircle,
+              contentDescription = null,
+              tint = colorScheme.primary,
+              modifier =
+                Modifier.size(22.dp)
+                  .clip(CircleShape)
+                  .background(colorScheme.surface),
+            )
+          }
+        }
+        Column(
+          modifier = Modifier.weight(1f),
+          verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-          FileTypeBadgePill(label = badgeLabel, accent = badgeColor)
           Text(
-            text = subtitle,
-            style = MaterialTheme.typography.bodySmall,
-            color = colorScheme.onSurfaceVariant,
+            text = document.displayName,
+            style = MaterialTheme.typography.titleMedium,
+            color = colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
           )
-        }
-      }
-      IconButton(
-        onClick = onToggleFavorite,
-        modifier =
-          Modifier.defaultMinSize(
-              minWidth = PrismDimens.TouchTargetMin,
-              minHeight = PrismDimens.TouchTargetMin,
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
+          ) {
+            FileTypeBadgePill(label = badgeLabel, accent = badgeColor)
+            Text(
+              text = subtitle,
+              style = MaterialTheme.typography.bodySmall,
+              color = colorScheme.onSurfaceVariant,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
             )
-            .testTag("doc_fav_${document.id}"),
-      ) {
-        Icon(
-          imageVector = if (document.isFavorite) Icons.Rounded.Star else Icons.Rounded.StarOutline,
-          contentDescription = favActionLabel,
-          tint =
-            if (document.isFavorite) tokens.favoriteAccent else colorScheme.onSurfaceVariant,
-        )
-      }
-      Box {
+          }
+        }
         IconButton(
-          onClick = { menuExpanded = true },
+          onClick = {
+            haptics.confirm()
+            onToggleFavorite()
+          },
           modifier =
             Modifier.defaultMinSize(
                 minWidth = PrismDimens.TouchTargetMin,
                 minHeight = PrismDimens.TouchTargetMin,
               )
-              .testTag("doc_more_${document.id}"),
+              .testTag("doc_fav_${document.id}"),
         ) {
           Icon(
-            imageVector = Icons.Rounded.MoreVert,
-            contentDescription = stringResource(R.string.doc_actions_cd, document.displayName),
-            tint = colorScheme.onSurfaceVariant,
+            imageVector = if (document.isFavorite) Icons.Rounded.Star else Icons.Rounded.StarOutline,
+            contentDescription = favActionLabel,
+            tint = favTint,
+            modifier =
+              Modifier.graphicsLayer {
+                val s = favScale.value
+                scaleX = s
+                scaleY = s
+              },
           )
         }
-        DocumentItemContextMenu(
-          expanded = menuExpanded,
-          isFavorite = document.isFavorite,
-          showSelectOption = !isSelectionMode && onSelectItem != null,
-          onSelectItem = onSelectItem,
-          onToggleFavorite = onToggleFavorite,
-          onDismiss = { menuExpanded = false },
-          onRename = onRename,
-          onCopy = onCopy,
-          onMove = onMove,
-          onShare = onShare,
-          onTrash = onTrash,
-          onManageTagsCollections = onManageTagsCollections,
-          extraActionLabel = extraActionLabel,
-          onExtraAction = onExtraAction,
-        )
+        Box {
+          IconButton(
+            onClick = {
+              haptics.tap()
+              menuExpanded = true
+            },
+            modifier =
+              Modifier.defaultMinSize(
+                  minWidth = PrismDimens.TouchTargetMin,
+                  minHeight = PrismDimens.TouchTargetMin,
+                )
+                .testTag("doc_more_${document.id}"),
+          ) {
+            Icon(
+              imageVector = Icons.Rounded.MoreVert,
+              contentDescription = stringResource(R.string.doc_actions_cd, document.displayName),
+              tint = colorScheme.onSurfaceVariant,
+            )
+          }
+          DocumentItemContextMenu(
+            expanded = menuExpanded,
+            isFavorite = document.isFavorite,
+            showSelectOption = !isSelectionMode && onSelectItem != null,
+            onSelectItem = onSelectItem,
+            onToggleFavorite = onToggleFavorite,
+            onDismiss = { menuExpanded = false },
+            onRename = onRename,
+            onCopy = onCopy,
+            onMove = onMove,
+            onShare = onShare,
+            onTrash = onTrash,
+            onManageTagsCollections = onManageTagsCollections,
+            extraActionLabel = extraActionLabel,
+            onExtraAction = onExtraAction,
+          )
+        }
       }
     }
   }
@@ -1219,10 +1281,24 @@ fun DocumentGridCard(
 ) {
   val colorScheme = MaterialTheme.colorScheme
   val tokens = LocalPrismVisualTokens.current
-  val haptic = LocalHapticFeedback.current
+  val motionEnabled = LocalGlassMotion.current
+  val haptics = rememberPrismHaptics()
   val request = document.toThumbnailRequest(targetSizePx = 360)
   var menuExpanded by remember { mutableStateOf(false) }
   val interactionSource = remember { MutableInteractionSource() }
+
+  val favTint by
+    animateColorAsState(
+      targetValue = if (document.isFavorite) tokens.favoriteAccent else colorScheme.onSurface,
+      label = "grid_fav_tint_${document.id}",
+    )
+  val favScale =
+    animateFloatAsState(
+      targetValue = if (document.isFavorite) 1.14f else 1f,
+      animationSpec =
+        if (motionEnabled) spring(dampingRatio = 0.45f, stiffness = 500f) else snap(),
+      label = "grid_fav_scale_${document.id}",
+    )
 
   val sizeLabel = rememberFormattedByteSize(document.sizeBytes)
   val modifiedLabel = rememberFormattedModifiedTimestamp(document.lastModifiedEpochMs)
@@ -1252,12 +1328,15 @@ fun DocumentGridCard(
         .combinedClickable(
           interactionSource = interactionSource,
           indication = null,
-          onClick = onClick,
+          onClick = {
+            if (!isSelectionMode) haptics.tap()
+            onClick()
+          },
           onLongClick = {
             if (isSelectionMode) {
               onLongClick()
             } else {
-              haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+              haptics.longPress()
               menuExpanded = true
             }
           },
@@ -1286,15 +1365,22 @@ fun DocumentGridCard(
           accent = badgeColor,
           modifier = Modifier.align(Alignment.BottomStart).padding(PrismDimens.BadgeCornerInset),
         )
-        if (isSelected) {
+        androidx.compose.animation.AnimatedVisibility(
+          visible = isSelected,
+          enter =
+            scaleIn(
+              initialScale = 0.45f,
+              animationSpec = spring(dampingRatio = 0.56f, stiffness = 520f),
+            ) + fadeIn(tween(120)),
+          exit = scaleOut(targetScale = 0.45f, animationSpec = tween(110)) + fadeOut(tween(100)),
+          modifier = Modifier.align(Alignment.TopStart).padding(PrismDimens.SpaceSmallMedium),
+        ) {
           Icon(
             imageVector = Icons.Rounded.CheckCircle,
             contentDescription = null,
             tint = colorScheme.primary,
             modifier =
-              Modifier.align(Alignment.TopStart)
-                .padding(PrismDimens.SpaceSmallMedium)
-                .size(22.dp)
+              Modifier.size(22.dp)
                 .clip(CircleShape)
                 .background(colorScheme.surface),
           )
@@ -1308,7 +1394,10 @@ fun DocumentGridCard(
           verticalAlignment = Alignment.CenterVertically,
         ) {
           IconButton(
-            onClick = onToggleFavorite,
+            onClick = {
+              haptics.confirm()
+              onToggleFavorite()
+            },
             modifier =
               Modifier.size(PrismDimens.TouchTargetMin)
                 .testTag("doc_grid_fav_${document.id}"),
@@ -1316,14 +1405,21 @@ fun DocumentGridCard(
             Icon(
               imageVector = if (document.isFavorite) Icons.Rounded.Star else Icons.Rounded.StarOutline,
               contentDescription = favActionLabel,
-              tint =
-                if (document.isFavorite) tokens.favoriteAccent else colorScheme.onSurface,
-              modifier = Modifier.size(19.dp),
+              tint = favTint,
+              modifier =
+                Modifier.size(19.dp).graphicsLayer {
+                  val s = favScale.value
+                  scaleX = s
+                  scaleY = s
+                },
             )
           }
           Box {
             IconButton(
-              onClick = { menuExpanded = true },
+              onClick = {
+                haptics.tap()
+                menuExpanded = true
+              },
               modifier =
                 Modifier.size(PrismDimens.TouchTargetMin)
                   .testTag("doc_grid_more_${document.id}"),
@@ -1373,7 +1469,7 @@ fun DocumentGridCard(
 
 /**
  * Connected Library document row with:
- * - GPU-accelerated swipe gestures (right = Favorite toggle, left = Share / Delete action tray)
+ * - Non-translated GPU-accelerated swipe gestures (right = Favorite toggle, left = Share / Delete tray, deep left = Move to Bin)
  * - Long-press Liquid Glass context menu (with Select, Favorite, Rename, Copy, Move, Share, Delete)
  * - Full selection & TalkBack accessibility semantics (Role, selected, stateDescription, customActions)
  */
@@ -1400,10 +1496,7 @@ fun LibraryCardDocumentRow(
 ) {
   val colorScheme = MaterialTheme.colorScheme
   val tokens = LocalPrismVisualTokens.current
-  val motionEnabled = LocalGlassMotion.current
-  val haptic = LocalHapticFeedback.current
-  val density = LocalDensity.current
-  val scope = rememberCoroutineScope()
+  val haptics = rememberPrismHaptics()
 
   val (badgeLabel, badgeColor) =
     remember(document.displayName, document.category) {
@@ -1421,16 +1514,6 @@ fun LibraryCardDocumentRow(
     }
 
   val interactionSource = remember { MutableInteractionSource() }
-  val swipeOffset = remember(document.id) { Animatable(0f) }
-  var crossedFavoriteHaptic by remember(document.id) { mutableStateOf(false) }
-
-  val rightTriggerPx = with(density) { PrismDimens.SwipeFavoriteTrigger.toPx() }
-  val maxRightPx = with(density) { PrismDimens.SwipeMaxRight.toPx() }
-  val leftTrayPx = with(density) { PrismDimens.SwipeLeftTrayWidth.toPx() }
-  val maxLeftPx = with(density) { PrismDimens.SwipeMaxLeft.toPx() }
-  val springSpec = PrismMotion.tactileSpring<Float>(reduceMotion = !motionEnabled)
-
-  val showSwipeReveal by remember { derivedStateOf { abs(swipeOffset.value) > 1.5f } }
 
   val sliceShape =
     remember(isFirst, isLast) {
@@ -1453,105 +1536,18 @@ fun LibraryCardDocumentRow(
   val selectActionLabel = stringResource(R.string.action_select_item)
   val a11yDescription = stringResource(R.string.doc_row_a11y_cd, document.displayName, caption)
 
-  Box(
+  SwipeableDocumentRowContainer(
+    documentId = document.id,
+    documentName = document.displayName,
+    isFavorite = document.isFavorite,
+    isSelectionMode = isSelectionMode,
+    shape = sliceShape,
+    onToggleFavorite = onToggleFavorite,
+    onShare = onShare,
+    onTrash = onTrash,
     modifier =
-      modifier
-        .clip(sliceShape)
-        .then(if (entranceIndex != null) Modifier.glassEntrance(index = entranceIndex) else Modifier)
-  ) {
-    if (showSwipeReveal) {
-      Box(
-        modifier =
-          Modifier.matchParentSize()
-            .background(
-              if (swipeOffset.value > 0f) tokens.favoriteAccent.copy(alpha = 0.22f)
-              else colorScheme.surfaceVariant.copy(alpha = 0.85f)
-            )
-      ) {
-        if (swipeOffset.value > 0f) {
-          Row(
-            modifier =
-              Modifier.align(Alignment.CenterStart)
-                .padding(horizontal = PrismDimens.SpaceLarge),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
-          ) {
-            Icon(
-              imageVector = if (document.isFavorite) Icons.Rounded.StarOutline else Icons.Rounded.Star,
-              contentDescription = null,
-              tint = tokens.favoriteAccent,
-            )
-            Text(
-              text =
-                stringResource(
-                  if (document.isFavorite) R.string.action_unfavorite else R.string.action_favorite
-                ),
-              style = MaterialTheme.typography.labelLarge,
-              color = tokens.favoriteAccent,
-            )
-          }
-        } else {
-          Row(
-            modifier =
-              Modifier.align(Alignment.CenterEnd)
-                .fillMaxHeight()
-                .padding(end = PrismDimens.SpaceMedium),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmall),
-          ) {
-            IconButton(
-              onClick = {
-                scope.launch { swipeOffset.animateTo(0f, springSpec) }
-                onShare()
-              },
-              modifier =
-                Modifier.size(PrismDimens.SwipeActionButtonSize)
-                  .clip(CircleShape)
-                  .background(tokens.swipeShareAccent.copy(alpha = 0.16f))
-                  .testTag("doc_swipe_share_${document.id}"),
-            ) {
-              Icon(
-                imageVector = Icons.Rounded.Share,
-                contentDescription = stringResource(R.string.swipe_share_cd, document.displayName),
-                tint = tokens.swipeShareAccent,
-              )
-            }
-            IconButton(
-              onClick = {
-                scope.launch { swipeOffset.animateTo(0f, springSpec) }
-                onTrash()
-              },
-              modifier =
-                Modifier.size(PrismDimens.SwipeActionButtonSize)
-                  .clip(CircleShape)
-                  .background(tokens.swipeDeleteAccent.copy(alpha = 0.16f))
-                  .testTag("doc_swipe_delete_${document.id}"),
-            ) {
-              Icon(
-                imageVector = Icons.Rounded.DeleteOutline,
-                contentDescription = stringResource(R.string.swipe_delete_cd, document.displayName),
-                tint = tokens.swipeDeleteAccent,
-              )
-            }
-          }
-        }
-      }
-    }
-
-    val draggableState = rememberDraggableState { delta ->
-      scope.launch {
-        val next = (swipeOffset.value + delta).coerceIn(-maxLeftPx, maxRightPx)
-        swipeOffset.snapTo(next)
-        val nowPastFavorite = next >= rightTriggerPx
-        if (nowPastFavorite && !crossedFavoriteHaptic) {
-          crossedFavoriteHaptic = true
-          haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-        } else if (!nowPastFavorite) {
-          crossedFavoriteHaptic = false
-        }
-      }
-    }
-
+      modifier.then(if (entranceIndex != null) Modifier.glassEntrance(index = entranceIndex) else Modifier),
+  ) { swipeController ->
     ConnectedGlassCardSlice(
       isFirst = isFirst,
       isLast = isLast,
@@ -1559,7 +1555,6 @@ fun LibraryCardDocumentRow(
       accentTint = if (isSelected) colorScheme.primary else null,
       modifier =
         Modifier.fillMaxWidth()
-          .graphicsLayer { translationX = swipeOffset.value }
           .semantics(mergeDescendants = true) {
             role = if (isSelectionMode) Role.Checkbox else Role.Button
             selected = isSelected
@@ -1595,49 +1590,25 @@ fun LibraryCardDocumentRow(
                 )
               }
           }
-          .draggable(
-            state = draggableState,
-            orientation = Orientation.Horizontal,
-            enabled = !isSelectionMode,
-            onDragStopped = {
-              val current = swipeOffset.value
-              crossedFavoriteHaptic = false
-              when {
-                current >= rightTriggerPx -> {
-                  onToggleFavorite()
-                  swipeOffset.animateTo(0f, springSpec)
-                }
-                current <= -maxLeftPx * 0.88f -> {
-                  haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                  swipeOffset.animateTo(0f, springSpec)
-                  onTrash()
-                }
-                current <= -leftTrayPx * 0.45f -> {
-                  swipeOffset.animateTo(-leftTrayPx, springSpec)
-                }
-                else -> {
-                  swipeOffset.animateTo(0f, springSpec)
-                }
-              }
-            },
-          )
           .combinedClickable(
             interactionSource = interactionSource,
             indication = null,
             onClick = {
-              if (abs(swipeOffset.value) > 4f) {
-                scope.launch { swipeOffset.animateTo(0f, springSpec) }
+              if (swipeController.isOpen) {
+                haptics.tap()
+                swipeController.close()
               } else {
+                if (!isSelectionMode) haptics.tap()
                 onClick()
               }
             },
             onLongClick = {
-              if (abs(swipeOffset.value) > 4f) {
-                scope.launch { swipeOffset.animateTo(0f, springSpec) }
+              if (swipeController.isOpen) {
+                swipeController.close()
               } else if (isSelectionMode) {
                 onLongClick()
               } else {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptics.longPress()
                 menuExpanded = true
               }
             },
@@ -1686,7 +1657,10 @@ fun LibraryCardDocumentRow(
 
           Box {
             IconButton(
-              onClick = { menuExpanded = true },
+              onClick = {
+                haptics.tap()
+                menuExpanded = true
+              },
               modifier =
                 Modifier.defaultMinSize(
                     minWidth = PrismDimens.TouchTargetMin,
