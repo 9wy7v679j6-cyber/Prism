@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -201,6 +202,8 @@ private fun PrismRootShell(
   val hazeState = rememberHazeState()
 
   var isTabBarCollapsed by rememberSaveable { mutableStateOf(false) }
+  var isBottomSearchExpanded by rememberSaveable { mutableStateOf(false) }
+  var bottomSearchQuery by rememberSaveable { mutableStateOf("") }
   var showGlassSettings by rememberSaveable { mutableStateOf(false) }
   var settingsDetent by remember { mutableStateOf(GlassSheetDetent.HALF) }
 
@@ -296,6 +299,7 @@ private fun PrismRootShell(
 
   val selectTab: (String) -> Unit = { tabId ->
     isTabBarCollapsed = false
+    isBottomSearchExpanded = false
     val target: Any =
       when (tabId) {
         "scan" -> ScanRoute
@@ -309,6 +313,27 @@ private fun PrismRootShell(
     }
   }
 
+  val openBottomSearch: () -> Unit = {
+    isTabBarCollapsed = false
+    if (selectedTabId != "library") {
+      navController.navigate(LibraryRoute) {
+        popUpTo(LibraryRoute) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
+      }
+    }
+    isBottomSearchExpanded = true
+  }
+
+  val closeBottomSearch: () -> Unit = {
+    isBottomSearchExpanded = false
+    bottomSearchQuery = ""
+  }
+
+  BackHandler(enabled = isBottomSearchExpanded) {
+    closeBottomSearch()
+  }
+
   val useRailLayout = windowWidthSizeClass != WindowWidthSizeClass.Compact
   val startDestination: Any =
     if (uiState.preferences.onboardingCompleted) LibraryRoute else OnboardingRoute
@@ -316,6 +341,7 @@ private fun PrismRootShell(
   LaunchedEffect(isTopLevelDestination) {
     if (!isTopLevelDestination) {
       isTabBarCollapsed = false
+      isBottomSearchExpanded = false
     }
   }
 
@@ -387,10 +413,26 @@ private fun PrismRootShell(
 
               composable<LibraryRoute> { entry ->
                 val filesViewModel: FilesViewModel = hiltViewModel()
+                val filesUiState by filesViewModel.uiState.collectAsStateWithLifecycle()
                 val applyAnalyzerFilter by
                   entry.savedStateHandle
                     .getStateFlow("analyzer_filter_apply", false)
                     .collectAsStateWithLifecycle()
+
+                var lastPushedBottomQuery by remember { mutableStateOf<String?>(null) }
+                LaunchedEffect(bottomSearchQuery) {
+                  if (lastPushedBottomQuery != bottomSearchQuery) {
+                    lastPushedBottomQuery = bottomSearchQuery
+                    filesViewModel.setNamePrefix(bottomSearchQuery)
+                  }
+                }
+                LaunchedEffect(filesUiState.query.namePrefix) {
+                  val vmPrefix = filesUiState.query.namePrefix.orEmpty()
+                  if (vmPrefix.isEmpty() && bottomSearchQuery.isNotEmpty() && lastPushedBottomQuery == bottomSearchQuery) {
+                    bottomSearchQuery = ""
+                    lastPushedBottomQuery = ""
+                  }
+                }
 
                 LaunchedEffect(applyAnalyzerFilter) {
                   if (applyAnalyzerFilter) {
@@ -413,7 +455,9 @@ private fun PrismRootShell(
                     settingsDetent = GlassSheetDetent.HALF
                     showGlassSettings = true
                   },
-                  onOpenSearch = { navController.navigate(SearchRoute) },
+                  onOpenSearch = {
+                    if (useRailLayout) navController.navigate(SearchRoute) else openBottomSearch()
+                  },
                   onOpenDocument = { doc ->
                     navController.navigate(
                       ViewerRoute(
@@ -557,9 +601,16 @@ private fun PrismRootShell(
                 tabs = tabs,
                 selectedId = selectedTabId,
                 onSelectTab = selectTab,
-                onSearchClick = { navController.navigate(SearchRoute) },
+                onSearchClick = openBottomSearch,
                 isCollapsed = isTabBarCollapsed,
                 onCollapsedChange = { isTabBarCollapsed = it },
+                isSearchExpanded = isBottomSearchExpanded,
+                searchQuery = bottomSearchQuery,
+                onSearchQueryChange = { bottomSearchQuery = it },
+                onSearchExpandedChange = { expanded ->
+                  if (expanded) openBottomSearch() else closeBottomSearch()
+                },
+                onSearchSubmit = {},
                 modifier = Modifier.align(Alignment.BottomCenter),
               )
             }

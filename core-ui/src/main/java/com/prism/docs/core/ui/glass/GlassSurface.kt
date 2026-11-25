@@ -329,6 +329,9 @@ fun ConnectedGlassCardSlice(
   isLast: Boolean,
   modifier: Modifier = Modifier,
   cornerRadius: Dp = 28.dp,
+  topCornerRadius: Dp? = null,
+  bottomCornerRadius: Dp? = null,
+  fullBorderProgress: Float = 0f,
   hazeState: HazeState? = LocalHazeState.current,
   accentTint: Color? = null,
   content: @Composable BoxScope.() -> Unit,
@@ -338,13 +341,19 @@ fun ConnectedGlassCardSlice(
   val tier = env.capabilityTier
   val isDark = env.isDark
 
+  val resolvedTopRadius = topCornerRadius ?: if (isFirst) cornerRadius else 0.dp
+  val resolvedBottomRadius = bottomCornerRadius ?: if (isLast) cornerRadius else 0.dp
+  val topRounded = resolvedTopRadius > 0.5.dp
+  val bottomRounded = resolvedBottomRadius > 0.5.dp
+  val drawFullOutline = (isFirst && isLast) || fullBorderProgress > 0.08f || (topRounded && bottomRounded)
+
   val shape =
-    remember(isFirst, isLast, cornerRadius) {
+    remember(resolvedTopRadius, resolvedBottomRadius) {
       RoundedCornerShape(
-        topStart = if (isFirst) cornerRadius else 0.dp,
-        topEnd = if (isFirst) cornerRadius else 0.dp,
-        bottomStart = if (isLast) cornerRadius else 0.dp,
-        bottomEnd = if (isLast) cornerRadius else 0.dp,
+        topStart = resolvedTopRadius,
+        topEnd = resolvedTopRadius,
+        bottomStart = resolvedBottomRadius,
+        bottomEnd = resolvedBottomRadius,
       )
     }
 
@@ -376,7 +385,7 @@ fun ConnectedGlassCardSlice(
   val fillModifier =
     if (tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY) {
       Modifier.background(color = colorScheme.surface)
-    } else if (isFirst) {
+    } else if (isFirst || fullBorderProgress > 0.08f) {
       val topHighlight =
         remember(tintColor, isDark) {
           Brush.verticalGradient(
@@ -416,10 +425,39 @@ fun ConnectedGlassCardSlice(
       drawContent()
       val strokePx = PrismDimens.GlassTopEdgeWidth.toPx()
       val halfStroke = strokePx / 2f
-      val r = cornerRadius.toPx().coerceAtMost(minOf(size.width, size.height) / 2f)
+      val maxR = minOf(size.width, size.height) / 2f
+      val rTop = resolvedTopRadius.toPx().coerceAtMost(maxR)
+      val rBottom = resolvedBottomRadius.toPx().coerceAtMost(maxR)
 
-      if (isFirst && isLast) {
-        drawRoundRect(
+      if (drawFullOutline) {
+        val path =
+          Path().apply {
+            moveTo(halfStroke + rTop, halfStroke)
+            lineTo(size.width - halfStroke - rTop, halfStroke)
+            if (rTop > 0.5f) {
+              quadraticTo(size.width - halfStroke, halfStroke, size.width - halfStroke, halfStroke + rTop)
+            }
+            lineTo(size.width - halfStroke, size.height - halfStroke - rBottom)
+            if (rBottom > 0.5f) {
+              quadraticTo(
+                size.width - halfStroke,
+                size.height - halfStroke,
+                size.width - halfStroke - rBottom,
+                size.height - halfStroke,
+              )
+            }
+            lineTo(halfStroke + rBottom, size.height - halfStroke)
+            if (rBottom > 0.5f) {
+              quadraticTo(halfStroke, size.height - halfStroke, halfStroke, size.height - halfStroke - rBottom)
+            }
+            lineTo(halfStroke, halfStroke + rTop)
+            if (rTop > 0.5f) {
+              quadraticTo(halfStroke, halfStroke, halfStroke + rTop, halfStroke)
+            }
+            close()
+          }
+        drawPath(
+          path = path,
           brush =
             Brush.verticalGradient(
               colorStops =
@@ -429,19 +467,16 @@ fun ConnectedGlassCardSlice(
                   1.0f to borderSide.copy(alpha = borderSide.alpha * 0.90f),
                 )
             ),
-          topLeft = Offset(halfStroke, halfStroke),
-          size = Size(size.width - strokePx, size.height - strokePx),
-          cornerRadius = CornerRadius(r, r),
           style = Stroke(width = strokePx),
         )
-      } else if (isFirst) {
+      } else if (topRounded) {
         val path =
           Path().apply {
             moveTo(halfStroke, size.height)
-            lineTo(halfStroke, r)
-            quadraticTo(halfStroke, halfStroke, r, halfStroke)
-            lineTo(size.width - r, halfStroke)
-            quadraticTo(size.width - halfStroke, halfStroke, size.width - halfStroke, r)
+            lineTo(halfStroke, rTop)
+            quadraticTo(halfStroke, halfStroke, rTop, halfStroke)
+            lineTo(size.width - rTop, halfStroke)
+            quadraticTo(size.width - halfStroke, halfStroke, size.width - halfStroke, rTop)
             lineTo(size.width - halfStroke, size.height)
           }
         drawPath(
@@ -449,18 +484,18 @@ fun ConnectedGlassCardSlice(
           brush = Brush.verticalGradient(listOf(borderHighlight, borderSide)),
           style = Stroke(width = strokePx),
         )
-      } else if (isLast) {
+      } else if (bottomRounded) {
         val path =
           Path().apply {
             moveTo(halfStroke, 0f)
-            lineTo(halfStroke, size.height - r)
-            quadraticTo(halfStroke, size.height - halfStroke, r, size.height - halfStroke)
-            lineTo(size.width - r, size.height - halfStroke)
+            lineTo(halfStroke, size.height - rBottom)
+            quadraticTo(halfStroke, size.height - halfStroke, rBottom, size.height - halfStroke)
+            lineTo(size.width - rBottom, size.height - halfStroke)
             quadraticTo(
               size.width - halfStroke,
               size.height - halfStroke,
               size.width - halfStroke,
-              size.height - r,
+              size.height - rBottom,
             )
             lineTo(size.width - halfStroke, 0f)
           }

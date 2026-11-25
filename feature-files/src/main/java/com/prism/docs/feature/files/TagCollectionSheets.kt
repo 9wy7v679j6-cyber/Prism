@@ -62,6 +62,7 @@ import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSheetDetent
 import com.prism.docs.core.ui.glass.GlassSurface
 import com.prism.docs.core.ui.glass.glassClickable
+import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.theme.PrismDimens
 
 internal val PrismAccentHexPalette =
@@ -161,7 +162,10 @@ internal fun AssignTagsCollectionsSheet(
     Spacer(Modifier.height(PrismDimens.SpaceMediumLarge))
 
     Column(
-      modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+      modifier =
+        Modifier.fillMaxWidth()
+          .verticalScroll(rememberScrollState())
+          .padding(horizontal = 2.dp, vertical = 4.dp),
       verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSection),
     ) {
       // Collections section
@@ -311,7 +315,7 @@ internal fun AssignTagsCollectionsSheet(
           )
         } else {
           FlowRow(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
             horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
             verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
           ) {
@@ -432,7 +436,10 @@ internal fun ManageTagsCollectionsSheet(
     Spacer(Modifier.height(PrismDimens.SpaceMediumLarge))
 
     Column(
-      modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+      modifier =
+        Modifier.fillMaxWidth()
+          .verticalScroll(rememberScrollState())
+          .padding(horizontal = 2.dp, vertical = 4.dp),
       verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSection),
     ) {
       // Collections management
@@ -730,6 +737,7 @@ internal fun ManageTagsCollectionsSheet(
   }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun NameAndColorInputDialog(
   title: String,
@@ -744,6 +752,7 @@ internal fun NameAndColorInputDialog(
   var selectedHex by remember { mutableStateOf(PrismAccentHexPalette.first()) }
   val trimmed = name.trim()
   val colorScheme = MaterialTheme.colorScheme
+  val haptics = rememberPrismHaptics()
 
   AlertDialog(
     onDismissRequest = onDismiss,
@@ -759,9 +768,10 @@ internal fun NameAndColorInputDialog(
         )
         if (showColorPicker) {
           FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmall),
-            verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmall),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            maxItemsInEachRow = 4,
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
           ) {
             PrismAccentHexPalette.forEach { hex ->
               val swatchColor = parseHexColorOrDefault(hex, colorScheme.primary)
@@ -770,17 +780,20 @@ internal fun NameAndColorInputDialog(
                 modifier =
                   Modifier.size(PrismDimens.TouchTargetMin)
                     .clip(CircleShape)
-                    .clickable(role = Role.RadioButton) { selectedHex = hex },
+                    .clickable(role = Role.RadioButton) {
+                      haptics.segmentTick()
+                      selectedHex = hex
+                    },
                 contentAlignment = Alignment.Center,
               ) {
                 Box(
                   modifier =
-                    Modifier.size(32.dp)
+                    Modifier.size(if (isSelected) 36.dp else 32.dp)
                       .clip(CircleShape)
                       .background(swatchColor)
                       .then(
                         if (isSelected) Modifier.border(2.5.dp, colorScheme.onSurface, CircleShape)
-                        else Modifier
+                        else Modifier.border(1.dp, colorScheme.outlineVariant.copy(alpha = 0.4f), CircleShape)
                       ),
                   contentAlignment = Alignment.Center,
                 ) {

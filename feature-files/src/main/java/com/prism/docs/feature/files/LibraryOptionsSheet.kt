@@ -1,9 +1,12 @@
 package com.prism.docs.feature.files
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
@@ -11,13 +14,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Label
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CreateNewFolder
@@ -29,6 +31,7 @@ import androidx.compose.material.icons.rounded.Science
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -60,6 +63,7 @@ import com.prism.docs.core.ui.theme.PrismDimens
 /**
  * Glass options & filters sheet reachable from the top-right round sliders button on Library.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun LibraryOptionsGlassSheet(
   visible: Boolean,
@@ -223,54 +227,50 @@ internal fun LibraryOptionsGlassSheet(
             }
           }
         }
-        LazyRow(
+        FlowRow(
           horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
-          contentPadding = PaddingValues(end = PrismDimens.SpaceStandard),
-          modifier = Modifier.fillMaxWidth(),
+          verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmall),
+          modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         ) {
-          item {
-            FilterChip(
-              selected = uiState.query.favoritesOnly,
-              onClick = {
-                haptics.segmentTick()
-                onToggleFavoritesOnly()
-              },
-              shape = RoundedCornerShape(16.dp),
-              label = { Text(stringResource(R.string.options_favorites_chip, uiState.favoritesCount)) },
-              leadingIcon = {
-                Icon(Icons.Rounded.Star, contentDescription = null, modifier = Modifier.size(16.dp))
-              },
-              modifier =
-                Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
-                  .semantics {
-                    stateDescription =
-                      if (uiState.query.favoritesOnly) selectedStateLabel else notSelectedStateLabel
-                  }
-                  .testTag("filter_favorites_chip"),
-            )
-          }
-          item {
-            FilterChip(
-              selected = uiState.query.recentsOnly,
-              onClick = {
-                haptics.segmentTick()
-                onToggleRecentsOnly()
-              },
-              shape = RoundedCornerShape(16.dp),
-              label = { Text(stringResource(R.string.options_recents_chip, uiState.recentsCount)) },
-              leadingIcon = {
-                Icon(Icons.Rounded.History, contentDescription = null, modifier = Modifier.size(16.dp))
-              },
-              modifier =
-                Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
-                  .semantics {
-                    stateDescription =
-                      if (uiState.query.recentsOnly) selectedStateLabel else notSelectedStateLabel
-                  }
-                  .testTag("filter_recents_chip"),
-            )
-          }
-          items(uiState.collections, key = { "opt_col_${it.id}" }) { col ->
+          FilterChip(
+            selected = uiState.query.favoritesOnly,
+            onClick = {
+              haptics.segmentTick()
+              onToggleFavoritesOnly()
+            },
+            shape = RoundedCornerShape(16.dp),
+            label = { Text(stringResource(R.string.options_favorites_chip, uiState.favoritesCount)) },
+            leadingIcon = {
+              Icon(Icons.Rounded.Star, contentDescription = null, modifier = Modifier.size(16.dp))
+            },
+            modifier =
+              Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+                .semantics {
+                  stateDescription =
+                    if (uiState.query.favoritesOnly) selectedStateLabel else notSelectedStateLabel
+                }
+                .testTag("filter_favorites_chip"),
+          )
+          FilterChip(
+            selected = uiState.query.recentsOnly,
+            onClick = {
+              haptics.segmentTick()
+              onToggleRecentsOnly()
+            },
+            shape = RoundedCornerShape(16.dp),
+            label = { Text(stringResource(R.string.options_recents_chip, uiState.recentsCount)) },
+            leadingIcon = {
+              Icon(Icons.Rounded.History, contentDescription = null, modifier = Modifier.size(16.dp))
+            },
+            modifier =
+              Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+                .semantics {
+                  stateDescription =
+                    if (uiState.query.recentsOnly) selectedStateLabel else notSelectedStateLabel
+                }
+                .testTag("filter_recents_chip"),
+          )
+          uiState.collections.forEach { col ->
             val isColSelected = uiState.query.collectionId == col.id
             FilterChip(
               selected = isColSelected,
@@ -286,7 +286,7 @@ internal fun LibraryOptionsGlassSheet(
                 },
             )
           }
-          items(uiState.tags, key = { "opt_tag_${it.id}" }) { tag ->
+          uiState.tags.forEach { tag ->
             val isTagSelected = uiState.query.tagId == tag.id
             FilterChip(
               selected = isTagSelected,
@@ -420,29 +420,46 @@ private fun OptionsActionRow(
         .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
         .testTag(testTag),
   ) {
-    Row(
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceStandard),
-    ) {
-      Icon(
-        imageVector = icon,
-        contentDescription = null,
-        tint = colorScheme.primary,
-        modifier = Modifier.size(PrismDimens.HeaderIconSize),
-      )
-      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceXSmall)) {
-        Text(
-          text = title,
-          style = MaterialTheme.typography.titleSmall,
-          color = colorScheme.onSurface,
-        )
-        Text(
-          text = subtitle,
-          style = MaterialTheme.typography.bodySmall,
-          color = colorScheme.onSurfaceVariant,
+      Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceStandard),
+      ) {
+        Box(
+          modifier =
+            Modifier.size(38.dp)
+              .clip(RoundedCornerShape(12.dp))
+              .background(colorScheme.primary.copy(alpha = 0.14f)),
+          contentAlignment = Alignment.Center,
+        ) {
+          Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+          )
+        }
+        Column(
+          modifier = Modifier.weight(1f),
+          verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceXSmall),
+        ) {
+          Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = colorScheme.onSurface,
+          )
+          Text(
+            text = subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = colorScheme.onSurfaceVariant,
+          )
+        }
+        Icon(
+          imageVector = Icons.Rounded.ChevronRight,
+          contentDescription = null,
+          tint = colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+          modifier = Modifier.size(20.dp),
         )
       }
     }
-  }
 }

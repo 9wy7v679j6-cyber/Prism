@@ -87,6 +87,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -890,77 +891,6 @@ private fun SecondarySectionTitleRow(
 }
 
 @Composable
-private fun LibrarySearchPill(
-  totalIndexedCount: Int,
-  onClick: () -> Unit,
-  modifier: Modifier = Modifier,
-) {
-  val colorScheme = MaterialTheme.colorScheme
-  val tokens = LocalPrismVisualTokens.current
-  val placeholder =
-    if (totalIndexedCount > 0) {
-      stringResource(R.string.library_search_pill_count, formatFileCount(totalIndexedCount))
-    } else {
-      stringResource(R.string.library_search_pill_empty)
-    }
-  val boltGradient = Brush.linearGradient(colors = tokens.brandGradient)
-
-  GlassSurface(
-    cornerRadius = PrismDimens.SearchPillCornerRadius,
-    elevation = GlassElevation.FLOATING,
-    useBackdropBlur = false,
-    onClick = onClick,
-    clickRole = Role.Button,
-    modifier =
-      modifier
-        .fillMaxWidth()
-        .height(PrismDimens.SearchPillHeight)
-        .testTag("library_search_pill"),
-  ) {
-    Row(
-      modifier = Modifier.fillMaxSize().padding(start = 18.dp, end = PrismDimens.SpaceMedium),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceStandard),
-    ) {
-      Icon(
-        imageVector = Icons.Rounded.Search,
-        contentDescription = null,
-        tint = colorScheme.onSurfaceVariant,
-        modifier = Modifier.size(PrismDimens.SearchIconSize),
-      )
-      Text(
-        text = placeholder,
-        style = MaterialTheme.typography.bodyLarge,
-        color = colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.weight(1f),
-      )
-      Box(
-        modifier =
-          Modifier.size(PrismDimens.SearchBoltSize)
-            .shadow(
-              elevation = PrismDimens.ShadowSmall,
-              shape = CircleShape,
-              ambientColor = PrismColors.VioletAccent.copy(alpha = 0.36f),
-              spotColor = PrismColors.VioletAccent.copy(alpha = 0.42f),
-            )
-            .clip(CircleShape)
-            .background(boltGradient),
-        contentAlignment = Alignment.Center,
-      ) {
-        Icon(
-          imageVector = Icons.Rounded.Bolt,
-          contentDescription = null,
-          tint = PrismColors.OnAccent,
-          modifier = Modifier.size(PrismDimens.SearchIconSize),
-        )
-      }
-    }
-  }
-}
-
-@Composable
 private fun SectionSwitcherBar(
   section: FilesSection,
   recycleBinCount: Int,
@@ -1280,6 +1210,8 @@ private fun LibraryPagingSection(
         }
       }
 
+    val swipeCoordinator = remember { ListRowSwipeCoordinator() }
+    CompositionLocalProvider(LocalListRowSwipeCoordinator provides swipeCoordinator) {
     Box(modifier = Modifier.fillMaxSize()) {
       LazyColumn(
         state = listState,
@@ -1373,6 +1305,8 @@ private fun LibraryPagingSection(
                 isSelected = doc.id in uiState.selectedIds,
                 isSelectionMode = uiState.isSelectionMode,
                 entranceIndex = if (globalIdx < 8) globalIdx else null,
+                sectionKey = "sec_$sectionIndex",
+                itemIndex = localIdx,
                 onClick = {
                   if (uiState.isSelectionMode) onToggleSelection(doc.id) else onOpenDocument(doc)
                 },
@@ -1445,6 +1379,7 @@ private fun LibraryPagingSection(
         }
       }
     }
+    }
   }
   }
 }
@@ -1501,11 +1436,6 @@ private fun LibraryHeroStack(
             translationY = -p * 8.dp.toPx()
           }
           .testTag("library_expanded_title"),
-    )
-
-    LibrarySearchPill(
-      totalIndexedCount = uiState.totalIndexedCount,
-      onClick = onOpenSearch,
     )
 
     SectionSwitcherBar(
@@ -1781,7 +1711,13 @@ private fun CollectionsGlassSection(
     if (collections.isNotEmpty()) {
       LazyRow(
         horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge),
-        contentPadding = PaddingValues(end = PrismDimens.SpaceStandard),
+        contentPadding =
+          PaddingValues(
+            start = 2.dp,
+            end = PrismDimens.SpaceStandard,
+            top = 6.dp,
+            bottom = 10.dp,
+          ),
         modifier = Modifier.fillMaxWidth().testTag("library_collections_row"),
       ) {
         items(collections, key = { "lib_col_${it.id}" }) { col ->
@@ -1794,18 +1730,19 @@ private fun CollectionsGlassSection(
             onClick = { onOpenCollection(col.id) },
             clickRole = Role.Button,
             modifier =
-              Modifier.defaultMinSize(minWidth = 138.dp, minHeight = PrismDimens.TouchTargetMin)
+              Modifier.widthIn(min = 144.dp, max = 224.dp)
+                .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
                 .testTag("library_collection_card_${col.id}"),
           ) {
             Row(
-              modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+              modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
             ) {
               Box(
                 modifier =
-                  Modifier.size(32.dp)
-                    .clip(RoundedCornerShape(10.dp))
+                  Modifier.size(34.dp)
+                    .clip(RoundedCornerShape(11.dp))
                     .background(accent.copy(alpha = 0.18f)),
                 contentAlignment = Alignment.Center,
               ) {
@@ -1813,10 +1750,10 @@ private fun CollectionsGlassSection(
                   imageVector = Icons.Rounded.CollectionsBookmark,
                   contentDescription = null,
                   tint = accent,
-                  modifier = Modifier.size(16.dp),
+                  modifier = Modifier.size(17.dp),
                 )
               }
-              Column {
+              Column(modifier = Modifier.weight(1f, fill = false)) {
                 Text(
                   text = col.name,
                   style = MaterialTheme.typography.titleSmall,
@@ -1833,6 +1770,8 @@ private fun CollectionsGlassSection(
                     ),
                   style = MaterialTheme.typography.labelSmall,
                   color = colorScheme.onSurfaceVariant,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
                 )
               }
             }
@@ -1857,7 +1796,13 @@ private fun TagFilterChipRow(
 
   LazyRow(
     horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
-    contentPadding = PaddingValues(end = PrismDimens.SpaceStandard),
+    contentPadding =
+      PaddingValues(
+        start = 2.dp,
+        end = PrismDimens.SpaceStandard,
+        top = 6.dp,
+        bottom = 10.dp,
+      ),
     modifier = modifier.fillMaxWidth().testTag("library_tag_filter_row"),
   ) {
     items(tags, key = { "lib_tag_${it.id}" }) { tag ->

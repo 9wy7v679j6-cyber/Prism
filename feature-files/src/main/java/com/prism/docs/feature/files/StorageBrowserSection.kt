@@ -99,6 +99,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import com.prism.docs.core.data.db.IndexedDocumentEntity
@@ -1024,11 +1025,14 @@ fun DocumentListRow(
   onManageTagsCollections: (() -> Unit)? = null,
   extraActionLabel: String? = null,
   onExtraAction: (() -> Unit)? = null,
+  sectionKey: String = "",
+  itemIndex: Int = -1,
 ) {
   val colorScheme = MaterialTheme.colorScheme
   val tokens = LocalPrismVisualTokens.current
   val motionEnabled = LocalGlassMotion.current
   val haptics = rememberPrismHaptics()
+  val coordinator = LocalListRowSwipeCoordinator.current
   val request = document.toThumbnailRequest(targetSizePx = 224)
   val (badgeLabel, badgeColor) =
     remember(document.displayName, document.category) {
@@ -1036,7 +1040,31 @@ fun DocumentListRow(
     }
   var menuExpanded by remember { mutableStateOf(false) }
   val interactionSource = remember { MutableInteractionSource() }
-  val rowShape = remember { RoundedCornerShape(PrismDimens.BannerCornerRadius) }
+
+  val neighborDelta by
+    remember(coordinator, sectionKey, itemIndex) {
+      derivedStateOf {
+        if (coordinator == null || sectionKey.isEmpty() || itemIndex < 0) 0
+        else if (coordinator.activeSectionKey == sectionKey) itemIndex - coordinator.activeIndex
+        else 0
+      }
+    }
+  val neighborProgress by
+    remember(coordinator, sectionKey, itemIndex) {
+      derivedStateOf {
+        if (
+          coordinator != null &&
+            sectionKey.isNotEmpty() &&
+            itemIndex >= 0 &&
+            coordinator.activeSectionKey == sectionKey &&
+            coordinator.activeIndex != itemIndex
+        ) {
+          coordinator.swipeProgress
+        } else {
+          0f
+        }
+      }
+    }
 
   val favTint by
     animateColorAsState(
@@ -1070,11 +1098,34 @@ fun DocumentListRow(
     documentName = document.displayName,
     isFavorite = document.isFavorite,
     isSelectionMode = isSelectionMode,
-    shape = rowShape,
+    restingTopRadius = PrismDimens.BannerCornerRadius,
+    restingBottomRadius = PrismDimens.BannerCornerRadius,
+    sectionKey = sectionKey,
+    itemIndex = itemIndex,
     onToggleFavorite = onToggleFavorite,
     onShare = onShare,
     onTrash = onTrash,
-    modifier = modifier,
+    modifier =
+      modifier.graphicsLayer {
+        if (motionEnabled && neighborProgress > 0.004f) {
+          when (neighborDelta) {
+            -1 -> {
+              translationY = -3.5.dp.toPx() * neighborProgress
+              val s = 1f - 0.012f * neighborProgress
+              scaleX = s
+              scaleY = s
+            }
+            1 -> {
+              translationY = 3.5.dp.toPx() * neighborProgress
+              val s = 1f - 0.012f * neighborProgress
+              scaleX = s
+              scaleY = s
+            }
+            -2 -> translationY = -1.2.dp.toPx() * neighborProgress
+            2 -> translationY = 1.2.dp.toPx() * neighborProgress
+          }
+        }
+      },
   ) { swipeController ->
     GlassSurface(
       cornerRadius = PrismDimens.BannerCornerRadius,
@@ -1493,10 +1544,14 @@ fun LibraryCardDocumentRow(
   modifier: Modifier = Modifier,
   entranceIndex: Int? = null,
   onManageTagsCollections: (() -> Unit)? = null,
+  sectionKey: String = "",
+  itemIndex: Int = -1,
 ) {
   val colorScheme = MaterialTheme.colorScheme
   val tokens = LocalPrismVisualTokens.current
+  val motionEnabled = LocalGlassMotion.current
   val haptics = rememberPrismHaptics()
+  val coordinator = LocalListRowSwipeCoordinator.current
 
   val (badgeLabel, badgeColor) =
     remember(document.displayName, document.category) {
@@ -1515,15 +1570,43 @@ fun LibraryCardDocumentRow(
 
   val interactionSource = remember { MutableInteractionSource() }
 
-  val sliceShape =
-    remember(isFirst, isLast) {
-      RoundedCornerShape(
-        topStart = if (isFirst) PrismDimens.ListCardCornerRadius else 0.dp,
-        topEnd = if (isFirst) PrismDimens.ListCardCornerRadius else 0.dp,
-        bottomStart = if (isLast) PrismDimens.ListCardCornerRadius else 0.dp,
-        bottomEnd = if (isLast) PrismDimens.ListCardCornerRadius else 0.dp,
-      )
+  // Neighbor reaction when a nearby filename bar in the same section is being swiped
+  val neighborDelta by
+    remember(coordinator, sectionKey, itemIndex) {
+      derivedStateOf {
+        if (coordinator == null || sectionKey.isEmpty() || itemIndex < 0) 0
+        else if (coordinator.activeSectionKey == sectionKey) itemIndex - coordinator.activeIndex
+        else 0
+      }
     }
+  val neighborSwipeProgress by
+    remember(coordinator, sectionKey, itemIndex) {
+      derivedStateOf {
+        if (
+          coordinator != null &&
+            sectionKey.isNotEmpty() &&
+            itemIndex >= 0 &&
+            coordinator.activeSectionKey == sectionKey &&
+            coordinator.activeIndex != itemIndex
+        ) {
+          coordinator.swipeProgress
+        } else {
+          0f
+        }
+      }
+    }
+
+  val baseTopRadius = if (isFirst) PrismDimens.ListCardCornerRadius else 0.dp
+  val baseBottomRadius = if (isLast) PrismDimens.ListCardCornerRadius else 0.dp
+  val neighborTopProgress = if (neighborDelta == 1) neighborSwipeProgress else 0f
+  val neighborBottomProgress = if (neighborDelta == -1) neighborSwipeProgress else 0f
+
+  val restingTopRadius =
+    if (neighborTopProgress > 0.004f) lerp(baseTopRadius, 18.dp, neighborTopProgress)
+    else baseTopRadius
+  val restingBottomRadius =
+    if (neighborBottomProgress > 0.004f) lerp(baseBottomRadius, 18.dp, neighborBottomProgress)
+    else baseBottomRadius
 
   val selectedStateText =
     stringResource(if (isSelected) R.string.state_selected else R.string.state_not_selected)
@@ -1541,17 +1624,54 @@ fun LibraryCardDocumentRow(
     documentName = document.displayName,
     isFavorite = document.isFavorite,
     isSelectionMode = isSelectionMode,
-    shape = sliceShape,
+    restingTopRadius = restingTopRadius,
+    restingBottomRadius = restingBottomRadius,
+    sectionKey = sectionKey,
+    itemIndex = itemIndex,
     onToggleFavorite = onToggleFavorite,
     onShare = onShare,
     onTrash = onTrash,
     modifier =
-      modifier.then(if (entranceIndex != null) Modifier.glassEntrance(index = entranceIndex) else Modifier),
+      modifier
+        .then(if (entranceIndex != null) Modifier.glassEntrance(index = entranceIndex) else Modifier)
+        .graphicsLayer {
+          if (motionEnabled && neighborSwipeProgress > 0.004f) {
+            when (neighborDelta) {
+              -1 -> {
+                translationY = -4.dp.toPx() * neighborSwipeProgress
+                val s = 1f - 0.012f * neighborSwipeProgress
+                scaleX = s
+                scaleY = s
+              }
+              1 -> {
+                translationY = 4.dp.toPx() * neighborSwipeProgress
+                val s = 1f - 0.012f * neighborSwipeProgress
+                scaleX = s
+                scaleY = s
+              }
+              -2 -> translationY = -1.4.dp.toPx() * neighborSwipeProgress
+              2 -> translationY = 1.4.dp.toPx() * neighborSwipeProgress
+            }
+          }
+        },
   ) { swipeController ->
+    val selfSwipeProgress = swipeController.swipeProgress
+    val morphedTopRadius =
+      if (selfSwipeProgress > 0.004f) lerp(restingTopRadius, 22.dp, selfSwipeProgress)
+      else restingTopRadius
+    val morphedBottomRadius =
+      if (selfSwipeProgress > 0.004f) lerp(restingBottomRadius, 22.dp, selfSwipeProgress)
+      else restingBottomRadius
+    val dividerAlpha =
+      (1f - maxOf(selfSwipeProgress, neighborBottomProgress)).coerceIn(0f, 1f)
+
     ConnectedGlassCardSlice(
       isFirst = isFirst,
       isLast = isLast,
       cornerRadius = PrismDimens.ListCardCornerRadius,
+      topCornerRadius = morphedTopRadius,
+      bottomCornerRadius = morphedBottomRadius,
+      fullBorderProgress = selfSwipeProgress,
       accentTint = if (isSelected) colorScheme.primary else null,
       modifier =
         Modifier.fillMaxWidth()
@@ -1697,6 +1817,7 @@ fun LibraryCardDocumentRow(
               Modifier.fillMaxWidth()
                 .padding(horizontal = PrismDimens.SpaceSection)
                 .height(PrismDimens.HairlineWidth)
+                .graphicsLayer { alpha = dividerAlpha }
                 .background(tokens.rowDivider)
           )
         }

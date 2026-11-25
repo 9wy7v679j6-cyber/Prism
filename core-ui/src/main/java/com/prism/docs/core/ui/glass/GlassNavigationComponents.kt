@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -65,6 +66,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -72,6 +75,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -92,6 +97,7 @@ import com.prism.docs.core.ui.theme.PrismDimens
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 data class GlassTabItem(
@@ -106,24 +112,19 @@ private val DockExpandedHeight = 68.dp
 private val DockMinimizedHeight = 48.dp
 private val SearchOrbExpandedSize = 62.dp
 private val SearchOrbMinimizedSize = 48.dp
+private val SearchExpandedBarHeight = 56.dp
+private val SearchCloseOrbSize = 56.dp
 private val DockMinimizedWidth = 154.dp
 private val DockHorizontalGap = 12.dp
 
 /**
- * Redesigned Liquid Glass Floating Navigation Bar with scroll-driven minimize/maximize morphing,
- * bouncy spring physics, optical AGSL edge refraction, mercury-stretch lens pill, and rich
- * multi-directional swipe gestures:
- *
- * - **Scroll down -> Minimizes** into a sleek corner active-tab pill + compact Search orb, leaving
- *   the bottom-center open with touch pass-through so users get maximum space to view files.
- * - **Scroll up -> Maximizes** smoothly back into the full 3-tab Liquid Glass dock with bouncy
- *   spring overshoot and staggered Search orb follow-through.
- * - **Horizontal swipe / scrub (Expanded)**: Grabs and magnifies the Liquid Glass lens pill,
- *   tracking 1:1 with elastic velocity stretch, edge rubber-banding, fling switching, and haptics.
- * - **Horizontal swipe (Minimized)**: Swipes left/right directly on the compact pill to cycle tabs.
- * - **Vertical swipe (Down on Expanded / Up on Minimized)**: Interactively minimizes or maximizes
- *   the navigation bar on demand with live finger follow and velocity handoff.
- * - **Tap (Minimized)**: Immediately springs open the full navigation bar.
+ * Floating Liquid Glass bottom navigation bar with:
+ * - Scroll-driven minimize (split corner pill + mini Search orb) and maximize (full 3-tab dock).
+ * - Beautiful bottom Search Bar morph: tapping or swiping up on the Search orb expands it into
+ *   a full-width Liquid Glass Search Bar right at the bottom (lifting above the keyboard with
+ *   `imePadding()`) while the dock smoothly morphs into a circular Close orb on the left.
+ * - Deliberate, high-threshold swipe gestures so accidental swipes never trigger during taps or
+ *   vertical list scrolling.
  */
 @Composable
 fun GlassFloatingTabBar(
@@ -134,6 +135,11 @@ fun GlassFloatingTabBar(
   isCollapsed: Boolean,
   modifier: Modifier = Modifier,
   onCollapsedChange: (Boolean) -> Unit = {},
+  isSearchExpanded: Boolean = false,
+  searchQuery: String = "",
+  onSearchQueryChange: (String) -> Unit = {},
+  onSearchExpandedChange: ((Boolean) -> Unit)? = null,
+  onSearchSubmit: () -> Unit = {},
 ) {
   if (tabs.isEmpty()) return
 
@@ -143,6 +149,29 @@ fun GlassFloatingTabBar(
   val haptics = rememberPrismHaptics()
   val scope = rememberCoroutineScope()
   val colorScheme = MaterialTheme.colorScheme
+  val focusManager = LocalFocusManager.current
+  val keyboardController = LocalSoftwareKeyboardController.current
+  val searchFocusRequester = remember { FocusRequester() }
+
+  val closeSearchBar: () -> Unit = {
+    haptics.tap()
+    focusManager.clearFocus()
+    keyboardController?.hide()
+    if (searchQuery.isNotEmpty()) {
+      onSearchQueryChange("")
+    }
+    onSearchExpandedChange?.invoke(false)
+  }
+
+  LaunchedEffect(isSearchExpanded) {
+    if (isSearchExpanded) {
+      delay(120L)
+      runCatching { searchFocusRequester.requestFocus() }
+      keyboardController?.show()
+    } else {
+      focusManager.clearFocus()
+    }
+  }
 
   val selectedIndex = tabs.indexOfFirst { it.id == selectedId }.coerceAtLeast(0)
   val selectedTab = tabs[selectedIndex]
@@ -152,18 +181,29 @@ fun GlassFloatingTabBar(
   val openSearchCd = stringResource(R.string.glass_open_search_cd)
   val expandNavCd = stringResource(R.string.glass_expand_nav_cd)
   val minimizedNavState = stringResource(R.string.glass_minimized_nav_state)
+  val bottomSearchPlaceholder = stringResource(R.string.glass_bottom_search_placeholder)
+  val closeSearchCd = stringResource(R.string.glass_close_search_cd)
+  val clearSearchCd = stringResource(R.string.glass_clear_search_cd)
 
   val latestTabs by rememberUpdatedState(tabs)
   val latestSelectedIndex by rememberUpdatedState(selectedIndex)
   val latestOnSelectTab by rememberUpdatedState(onSelectTab)
   val latestIsCollapsed by rememberUpdatedState(isCollapsed)
   val latestOnCollapsedChange by rememberUpdatedState(onCollapsedChange)
-  val latestOnSearchClick by rememberUpdatedState(onSearchClick)
+  val latestIsSearchExpanded by rememberUpdatedState(isSearchExpanded)
+  val latestTriggerSearch by rememberUpdatedState {
+    if (onSearchExpandedChange != null) {
+      onSearchExpandedChange(true)
+    } else {
+      onSearchClick()
+    }
+  }
 
   // Master bouncy morph progress: 0f = maximized full dock, 1f = minimized compact corner pill
   val collapseAnim = remember { Animatable(if (isCollapsed) 1f else 0f) }
-  // Slightly more playful staggered spring for the detached Search orb
   val searchCollapseAnim = remember { Animatable(if (isCollapsed) 1f else 0f) }
+  // Search bar expansion morph: 0f = normal nav dock + orb, 1f = close orb + expanded bottom search bar
+  val searchExpandAnim = remember { Animatable(if (isSearchExpanded) 1f else 0f) }
 
   var isVerticalDragging by remember { mutableStateOf(false) }
   var liveVerticalProgress by remember { mutableFloatStateOf(if (isCollapsed) 1f else 0f) }
@@ -185,24 +225,31 @@ fun GlassFloatingTabBar(
   var isSearchSwiping by remember { mutableStateOf(false) }
   var liveSearchLiftPx by remember { mutableFloatStateOf(0f) }
 
-  LaunchedEffect(isCollapsed, motion) {
+  LaunchedEffect(isCollapsed, isSearchExpanded, motion) {
     if (!isVerticalDragging) {
-      val target = if (isCollapsed) 1f else 0f
+      val target = if (isCollapsed && !isSearchExpanded) 1f else 0f
       launch {
         collapseAnim.animateTo(
           targetValue = target,
           animationSpec =
-            if (motion) spring(dampingRatio = 0.64f, stiffness = 360f) else snap(),
+            if (motion) spring(dampingRatio = 0.66f, stiffness = 360f) else snap(),
         )
       }
       launch {
         searchCollapseAnim.animateTo(
           targetValue = target,
           animationSpec =
-            if (motion) spring(dampingRatio = 0.56f, stiffness = 300f) else snap(),
+            if (motion) spring(dampingRatio = 0.58f, stiffness = 300f) else snap(),
         )
       }
     }
+  }
+
+  LaunchedEffect(isSearchExpanded, motion) {
+    searchExpandAnim.animateTo(
+      targetValue = if (isSearchExpanded) 1f else 0f,
+      animationSpec = if (motion) spring(dampingRatio = 0.68f, stiffness = 360f) else snap(),
+    )
   }
 
   LaunchedEffect(selectedIndex, motion) {
@@ -235,16 +282,19 @@ fun GlassFloatingTabBar(
 
   val activeVisualIndex = hoveredSlot ?: selectedIndex
 
-  // Raw progress may gently overshoot 0f..1f on bouncy spring arrival -> drives elastic GPU squash
   val rawDockProgress = if (isVerticalDragging) liveVerticalProgress else collapseAnim.value
   val clampedDockProgress = rawDockProgress.coerceIn(0f, 1f)
-  val dockOvershoot = (rawDockProgress - clampedDockProgress).coerceIn(-0.18f, 0.18f)
+  val dockOvershoot = (rawDockProgress - clampedDockProgress).coerceIn(-0.16f, 0.16f)
 
   val rawSearchProgress = if (isVerticalDragging) liveVerticalProgress else searchCollapseAnim.value
   val clampedSearchProgress = rawSearchProgress.coerceIn(0f, 1f)
-  val searchOvershoot = (rawSearchProgress - clampedSearchProgress).coerceIn(-0.22f, 0.22f)
+  val searchOvershoot = (rawSearchProgress - clampedSearchProgress).coerceIn(-0.18f, 0.18f)
 
-  val bottomPad = lerp(12.dp, 6.dp, clampedDockProgress)
+  val rawSearchExpand = searchExpandAnim.value
+  val searchExpandProgress = rawSearchExpand.coerceIn(0f, 1f)
+  val searchExpandOvershoot = (rawSearchExpand - searchExpandProgress).coerceIn(-0.14f, 0.14f)
+
+  val bottomPad = lerp(lerp(12.dp, 6.dp, clampedDockProgress), 10.dp, searchExpandProgress)
 
   BoxWithConstraints(
     modifier =
@@ -252,36 +302,45 @@ fun GlassFloatingTabBar(
         .widthIn(max = 540.dp)
         .fillMaxWidth()
         .navigationBarsPadding()
+        .imePadding()
         .padding(start = 18.dp, end = 18.dp, top = 4.dp, bottom = bottomPad),
   ) {
     val expandedDockWidth =
       (maxWidth - SearchOrbExpandedSize - DockHorizontalGap).coerceAtLeast(184.dp)
     val minimizedDockWidth = DockMinimizedWidth.coerceAtMost(expandedDockWidth)
+    val expandedSearchBarWidth =
+      (maxWidth - SearchCloseOrbSize - DockHorizontalGap).coerceAtLeast(200.dp)
 
-    val dockWidth = lerp(expandedDockWidth, minimizedDockWidth, clampedDockProgress)
-    val dockHeight = lerp(DockExpandedHeight, DockMinimizedHeight, clampedDockProgress)
-    val searchOrbSize = lerp(SearchOrbExpandedSize, SearchOrbMinimizedSize, clampedSearchProgress)
+    // Left slot morphs: Expanded Dock <-> Minimized Pill, and shrinks smoothly into Close Orb when searching
+    val navDockWidth = lerp(expandedDockWidth, minimizedDockWidth, clampedDockProgress)
+    val navDockHeight = lerp(DockExpandedHeight, DockMinimizedHeight, clampedDockProgress)
+    val leftSlotWidth = lerp(navDockWidth, SearchCloseOrbSize, searchExpandProgress)
+    val leftSlotHeight = lerp(navDockHeight, SearchCloseOrbSize, searchExpandProgress)
 
-    // Arrangement.SpaceBetween smoothly parts the compact pill (left) and Search orb (right)
-    // when minimized, leaving the middle completely open with touch pass-through to files!
+    // Right slot morphs: Search Orb (62dp <-> 48dp), and expands smoothly into Full Bottom Search Bar
+    val orbSize = lerp(SearchOrbExpandedSize, SearchOrbMinimizedSize, clampedSearchProgress)
+    val rightSlotWidth = lerp(orbSize, expandedSearchBarWidth, searchExpandProgress)
+    val rightSlotHeight = lerp(orbSize, SearchExpandedBarHeight, searchExpandProgress)
+
     Row(
       modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.SpaceBetween,
       verticalAlignment = Alignment.Bottom,
     ) {
-      // Non-translated outer gesture host prevents pointer coordinate jitter during animated motion
+      // LEFT CAPSULE: Navigation Dock (Expanded/Minimized) <-> Circular Search Close Orb
       Box(
         modifier =
-          Modifier.width(dockWidth)
-            .height(dockHeight)
+          Modifier.width(leftSlotWidth)
+            .height(leftSlotHeight)
             .pointerInput(tabs.size, motion) {
-              val touchSlop = viewConfiguration.touchSlop
+              // Deliberately higher thresholds + directional dominance to prevent accidental swipes
+              val activationSlop = maxOf(viewConfiguration.touchSlop * 2.1f, 18.dp.toPx())
               val insetPx = 5.dp.toPx()
               val maxIdx = (tabs.size - 1).coerceAtLeast(0).toFloat()
-              val verticalDragRangePx = 76.dp.toPx()
-              val verticalCommitPx = 26.dp.toPx()
-              val miniSwipeCommitPx = 34.dp.toPx()
-              val miniMaxTravelPx = 30.dp.toPx()
+              val verticalDragRangePx = 92.dp.toPx()
+              val verticalCommitPx = 40.dp.toPx()
+              val miniSwipeCommitPx = 48.dp.toPx()
+              val miniMaxTravelPx = 32.dp.toPx()
 
               fun xToSlot(x: Float): Float {
                 val segW = ((size.width - 2f * insetPx) / tabs.size).coerceAtLeast(1f)
@@ -295,6 +354,7 @@ fun GlassFloatingTabBar(
 
               awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
+                if (latestIsSearchExpanded) return@awaitEachGesture
                 val pointerId = down.id
                 var totalDx = 0f
                 var totalDy = 0f
@@ -311,18 +371,16 @@ fun GlassFloatingTabBar(
                   val event = awaitPointerEvent()
                   val change = event.changes.firstOrNull { it.id == pointerId } ?: break
                   if (!change.pressed) {
-                    // Pointer lifted -> commit gesture if axis was locked
                     if (lockedAxis == 1) {
                       val velocityX = velocityTracker.calculateVelocity().x
                       if (!collapsedAtStart) {
                         val releasePos = liveScrubSlot
                         var finalSlot = currentSnappedSlot
-                        // Quick horizontal flick switches tab even on a short swipe
                         if (finalSlot == startSelectedIdx) {
-                          if (velocityX > 650f && startSelectedIdx < latestTabs.lastIndex) {
+                          if (velocityX > 880f && startSelectedIdx < latestTabs.lastIndex) {
                             finalSlot = startSelectedIdx + 1
                             haptics.segmentTick()
-                          } else if (velocityX < -650f && startSelectedIdx > 0) {
+                          } else if (velocityX < -880f && startSelectedIdx > 0) {
                             finalSlot = startSelectedIdx - 1
                             haptics.segmentTick()
                           }
@@ -342,13 +400,14 @@ fun GlassFloatingTabBar(
                           )
                         }
                       } else {
-                        // Minimized pill horizontal swipe -> cycle adjacent tab
                         val currentIdx = latestSelectedIndex
                         val targetIdx =
                           when {
-                            (totalDx >= miniSwipeCommitPx || velocityX > 500f) &&
+                            (totalDx >= miniSwipeCommitPx ||
+                              (velocityX > 720f && totalDx > miniSwipeCommitPx * 0.55f)) &&
                               currentIdx < latestTabs.lastIndex -> currentIdx + 1
-                            (totalDx <= -miniSwipeCommitPx || velocityX < -500f) &&
+                            (totalDx <= -miniSwipeCommitPx ||
+                              (velocityX < -720f && totalDx < -miniSwipeCommitPx * 0.55f)) &&
                               currentIdx > 0 -> currentIdx - 1
                             else -> currentIdx
                           }
@@ -357,7 +416,7 @@ fun GlassFloatingTabBar(
                           lastTabSlideDirection = if (targetIdx > currentIdx) 1 else -1
                           haptics.segmentTick()
                           latestTabs.getOrNull(targetIdx)?.let { latestOnSelectTab(it.id) }
-                        } else if (abs(totalDx) >= miniSwipeCommitPx * 0.8f) {
+                        } else if (abs(totalDx) >= miniSwipeCommitPx * 0.85f) {
                           haptics.tap()
                         }
                         scope.launch {
@@ -374,9 +433,9 @@ fun GlassFloatingTabBar(
                       val velocityY = velocityTracker.calculateVelocity().y
                       val shouldCollapse =
                         if (!collapsedAtStart) {
-                          totalDy >= verticalCommitPx || velocityY > 460f
+                          totalDy >= verticalCommitPx || (velocityY > 680f && totalDy > verticalCommitPx * 0.5f)
                         } else {
-                          !(totalDy <= -verticalCommitPx || velocityY < -460f)
+                          !(totalDy <= -verticalCommitPx || (velocityY < -680f && totalDy < -verticalCommitPx * 0.5f))
                         }
                       val releaseProgress = liveVerticalProgress
                       val targetProgress = if (shouldCollapse) 1f else 0f
@@ -388,13 +447,13 @@ fun GlassFloatingTabBar(
                         collapseAnim.snapTo(releaseProgress)
                         searchCollapseAnim.snapTo(releaseProgress)
                         isVerticalDragging = false
-                        val initialVel = (velocityY / verticalDragRangePx).coerceIn(-6f, 6f)
+                        val initialVel = (velocityY / verticalDragRangePx).coerceIn(-5f, 5f)
                         launch {
                           collapseAnim.animateTo(
                             targetValue = targetProgress,
                             initialVelocity = initialVel,
                             animationSpec =
-                              if (motion) spring(dampingRatio = 0.62f, stiffness = 360f) else snap(),
+                              if (motion) spring(dampingRatio = 0.64f, stiffness = 360f) else snap(),
                           )
                         }
                         launch {
@@ -402,7 +461,7 @@ fun GlassFloatingTabBar(
                             targetValue = targetProgress,
                             initialVelocity = initialVel * 0.85f,
                             animationSpec =
-                              if (motion) spring(dampingRatio = 0.56f, stiffness = 300f) else snap(),
+                              if (motion) spring(dampingRatio = 0.58f, stiffness = 300f) else snap(),
                           )
                         }
                       }
@@ -416,31 +475,41 @@ fun GlassFloatingTabBar(
                   velocityTracker.addPosition(change.uptimeMillis, change.position)
 
                   if (lockedAxis == 0) {
-                    if (hypot(totalDx, totalDy) > touchSlop) {
-                      lockedAxis = if (abs(totalDx) >= abs(totalDy)) 1 else 2
-                      change.consume()
-                      haptics.dragStart()
-                      if (lockedAxis == 1) {
-                        if (!collapsedAtStart) {
-                          val startRaw = xToSlot(change.position.x)
-                          currentSnappedSlot = startRaw.roundToInt().coerceIn(0, latestTabs.lastIndex)
-                          liveScrubSlot = startRaw
-                          hoveredSlot = currentSnappedSlot
-                          isScrubbing = true
-                        } else {
-                          liveMiniSwipePx = liquidRubberBand(totalDx, miniMaxTravelPx)
-                          isMiniSwiping = true
+                    if (hypot(totalDx, totalDy) > activationSlop) {
+                      val absX = abs(totalDx)
+                      val absY = abs(totalDy)
+                      // Require clear axis intent before committing to horizontal vs vertical gesture
+                      lockedAxis =
+                        when {
+                          absX > absY * 1.35f -> 1
+                          absY > absX * 1.35f -> 2
+                          else -> 0
                         }
-                      } else {
-                        val base = if (collapsedAtStart) 1f else 0f
-                        val rawP = base + totalDy / verticalDragRangePx
-                        liveVerticalProgress =
-                          when {
-                            rawP < 0f -> rawP * 0.18f
-                            rawP > 1f -> 1f + (rawP - 1f) * 0.18f
-                            else -> rawP
+                      if (lockedAxis != 0) {
+                        change.consume()
+                        haptics.dragStart()
+                        if (lockedAxis == 1) {
+                          if (!collapsedAtStart) {
+                            val startRaw = xToSlot(change.position.x)
+                            currentSnappedSlot = startRaw.roundToInt().coerceIn(0, latestTabs.lastIndex)
+                            liveScrubSlot = startRaw
+                            hoveredSlot = currentSnappedSlot
+                            isScrubbing = true
+                          } else {
+                            liveMiniSwipePx = liquidRubberBand(totalDx, miniMaxTravelPx)
+                            isMiniSwiping = true
                           }
-                        isVerticalDragging = true
+                        } else {
+                          val base = if (collapsedAtStart) 1f else 0f
+                          val rawP = base + totalDy / verticalDragRangePx
+                          liveVerticalProgress =
+                            when {
+                              rawP < 0f -> rawP * 0.18f
+                              rawP > 1f -> 1f + (rawP - 1f) * 0.18f
+                              else -> rawP
+                            }
+                          isVerticalDragging = true
+                        }
                       }
                     }
                   } else if (lockedAxis == 1) {
@@ -498,7 +567,7 @@ fun GlassFloatingTabBar(
         val dragLift = dragLiftState.value
 
         GlassSurface(
-          cornerRadius = dockHeight / 2f,
+          cornerRadius = leftSlotHeight / 2f,
           elevation = GlassElevation.FLOATING,
           useBackdropBlur = true,
           enableRefraction = true,
@@ -507,20 +576,24 @@ fun GlassFloatingTabBar(
           modifier =
             Modifier.fillMaxSize()
               .graphicsLayer {
-                // Volume-preserving elastic squash-and-stretch on minimize/maximize bounce & scrub
                 val liftScale = 1f + dragLift * 0.018f
-                scaleX = (1f - dockOvershoot * 0.15f) * liftScale
-                scaleY = (1f + dockOvershoot * 0.17f) * liftScale
-                translationY = dockOvershoot * 10.dp.toPx()
+                val bounceX = 1f - dockOvershoot * 0.14f - searchExpandOvershoot * 0.12f
+                val bounceY = 1f + dockOvershoot * 0.16f + searchExpandOvershoot * 0.14f
+                scaleX = bounceX * liftScale
+                scaleY = bounceY * liftScale
+                translationY = dockOvershoot * 9.dp.toPx()
                 translationX = currentMiniSwipePx
               }
               .testTag("glass_floating_tab_bar"),
         ) {
-          val expandedAlpha = (1f - clampedDockProgress * 2.1f).coerceIn(0f, 1f)
-          val minimizedAlpha = ((clampedDockProgress - 0.42f) * 2.1f).coerceIn(0f, 1f)
+          val navContentAlpha = (1f - searchExpandProgress * 2.2f).coerceIn(0f, 1f)
+          val closeOrbAlpha = ((searchExpandProgress - 0.45f) * 2.2f).coerceIn(0f, 1f)
+
+          val expandedAlpha = ((1f - clampedDockProgress * 2.1f).coerceIn(0f, 1f)) * navContentAlpha
+          val minimizedAlpha = (((clampedDockProgress - 0.42f) * 2.1f).coerceIn(0f, 1f)) * navContentAlpha
 
           // Expanded 3-tab Liquid Glass dock row
-          if (clampedDockProgress < 0.78f) {
+          if (clampedDockProgress < 0.78f && searchExpandProgress < 0.62f) {
             Row(
               modifier =
                 Modifier.fillMaxSize()
@@ -576,7 +649,7 @@ fun GlassFloatingTabBar(
                       .fillMaxHeight()
                       .clip(RoundedCornerShape(29.dp))
                       .glassClickable(
-                        enabled = clampedDockProgress < 0.35f,
+                        enabled = clampedDockProgress < 0.35f && searchExpandProgress < 0.25f,
                         role = Role.Tab,
                         hapticOnClick = false,
                       ) {
@@ -631,8 +704,8 @@ fun GlassFloatingTabBar(
             }
           }
 
-          // Minimized sleek Liquid Glass active-tab pill (tap or swipe up to expand; swipe L/R to switch tabs)
-          if (clampedDockProgress > 0.24f) {
+          // Minimized sleek Liquid Glass active-tab pill
+          if (clampedDockProgress > 0.24f && searchExpandProgress < 0.62f) {
             Box(
               modifier =
                 Modifier.fillMaxSize()
@@ -644,7 +717,7 @@ fun GlassFloatingTabBar(
                   }
                   .clip(CircleShape)
                   .glassClickable(
-                    enabled = clampedDockProgress >= 0.45f,
+                    enabled = clampedDockProgress >= 0.45f && searchExpandProgress < 0.25f,
                     role = Role.Button,
                     hapticOnClick = false,
                   ) {
@@ -664,7 +737,6 @@ fun GlassFloatingTabBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(9.dp),
               ) {
-                // Luminous translucent bubble housing the active tab icon
                 Box(
                   modifier =
                     Modifier.size(32.dp)
@@ -741,7 +813,6 @@ fun GlassFloatingTabBar(
                     )
                   }
 
-                  // Elastic 3-dot liquid pager indicator showing active tab & swipe affordance
                   Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -775,24 +846,59 @@ fun GlassFloatingTabBar(
               }
             }
           }
+
+          // Search-mode Close orb button (rotates gently into place as dock shrinks into a circle)
+          if (searchExpandProgress > 0.35f) {
+            Box(
+              modifier =
+                Modifier.fillMaxSize()
+                  .clip(CircleShape)
+                  .glassClickable(
+                    enabled = searchExpandProgress > 0.65f,
+                    role = Role.Button,
+                    hapticOnClick = false,
+                    onClick = closeSearchBar,
+                  )
+                  .semantics { contentDescription = closeSearchCd }
+                  .testTag("glass_bottom_search_close_button"),
+              contentAlignment = Alignment.Center,
+            ) {
+              Icon(
+                imageVector = Icons.Rounded.Close,
+                contentDescription = null,
+                tint = colorScheme.onSurface,
+                modifier =
+                  Modifier.size(22.dp).graphicsLayer {
+                    alpha = closeOrbAlpha
+                    val s = 0.65f + 0.35f * closeOrbAlpha
+                    scaleX = s
+                    scaleY = s
+                    rotationZ = (1f - closeOrbAlpha) * -90f
+                  },
+              )
+            }
+          }
         }
       }
 
-      // Detached circular Liquid Glass Search Orb (morphs 62dp <-> 48dp, tap or swipe up to open)
+      // RIGHT CAPSULE: Circular Search Orb <-> Expanded Bottom Liquid Glass Search Bar
       Box(
         modifier =
-          Modifier.size(searchOrbSize)
+          Modifier.width(rightSlotWidth)
+            .height(rightSlotHeight)
             .defaultMinSize(
               minWidth = PrismDimens.TouchTargetMin,
               minHeight = PrismDimens.TouchTargetMin,
             )
             .pointerInput(motion) {
-              val touchSlop = viewConfiguration.touchSlop
-              val commitUpPx = 22.dp.toPx()
-              val maxLiftPx = 24.dp.toPx()
+              val activationSlop = maxOf(viewConfiguration.touchSlop * 2.1f, 18.dp.toPx())
+              val commitUpPx = 36.dp.toPx()
+              val maxLiftPx = 26.dp.toPx()
               awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
+                if (latestIsSearchExpanded) return@awaitEachGesture
                 val pointerId = down.id
+                var totalDx = 0f
                 var totalDy = 0f
                 var swipingUp = false
                 var armed = false
@@ -806,10 +912,11 @@ fun GlassFloatingTabBar(
                     if (swipingUp) {
                       val vy = velocityTracker.calculateVelocity().y
                       val releaseLift = liveSearchLiftPx
-                      val trigger = totalDy <= -commitUpPx || vy < -450f
+                      val trigger =
+                        totalDy <= -commitUpPx || (vy < -680f && totalDy < -commitUpPx * 0.55f)
                       if (trigger) {
                         haptics.confirm()
-                        latestOnSearchClick()
+                        latestTriggerSearch()
                       }
                       scope.launch {
                         searchLiftAnim.snapTo(releaseLift)
@@ -824,9 +931,10 @@ fun GlassFloatingTabBar(
                     break
                   }
                   val delta = change.positionChange()
+                  totalDx += delta.x
                   totalDy += delta.y
                   velocityTracker.addPosition(change.uptimeMillis, change.position)
-                  if (!swipingUp && totalDy < -touchSlop) {
+                  if (!swipingUp && totalDy < -activationSlop && abs(totalDy) > abs(totalDx) * 1.35f) {
                     swipingUp = true
                     change.consume()
                     haptics.dragStart()
@@ -851,41 +959,142 @@ fun GlassFloatingTabBar(
       ) {
         val currentSearchLiftPx = if (isSearchSwiping) liveSearchLiftPx else searchLiftAnim.value
         val iconSize = lerp(25.dp, 21.dp, clampedSearchProgress)
+        val orbAlpha = (1f - searchExpandProgress * 2.4f).coerceIn(0f, 1f)
+        val searchInputAlpha = ((searchExpandProgress - 0.35f) * 1.85f).coerceIn(0f, 1f)
 
         GlassSurface(
-          cornerRadius = searchOrbSize / 2f,
-          shape = CircleShape,
+          cornerRadius = rightSlotHeight / 2f,
           elevation = GlassElevation.FLOATING,
           useBackdropBlur = true,
           enableRefraction = true,
           enableTopSheen = true,
           enableAnimatedSheen = true,
-          onClick = {
-            haptics.tap()
-            onSearchClick()
-          },
+          accentTint = if (searchExpandProgress > 0.3f) colorScheme.primary.copy(alpha = 0.10f) else null,
+          onClick =
+            if (!isSearchExpanded) {
+              {
+                haptics.tap()
+                latestTriggerSearch()
+              }
+            } else {
+              null
+            },
           hapticOnClick = false,
           clickRole = Role.Button,
           modifier =
             Modifier.fillMaxSize()
               .graphicsLayer {
-                val liftProgress = (-currentSearchLiftPx / 24.dp.toPx()).coerceIn(0f, 1f)
-                val stretchX = 1f - searchOvershoot * 0.18f - liftProgress * 0.05f
-                val stretchY = 1f + searchOvershoot * 0.20f + liftProgress * 0.08f
+                val liftProgress = (-currentSearchLiftPx / 26.dp.toPx()).coerceIn(0f, 1f)
+                val stretchX =
+                  1f - searchOvershoot * 0.16f + searchExpandOvershoot * 0.10f - liftProgress * 0.05f
+                val stretchY =
+                  1f + searchOvershoot * 0.18f - searchExpandOvershoot * 0.08f + liftProgress * 0.08f
                 scaleX = stretchX
                 scaleY = stretchY
-                translationY = searchOvershoot * 12.dp.toPx() + currentSearchLiftPx
-                rotationZ = searchOvershoot * -14f
+                translationY = searchOvershoot * 10.dp.toPx() + currentSearchLiftPx
+                rotationZ = if (searchExpandProgress < 0.05f) searchOvershoot * -14f else 0f
               }
-              .semantics { contentDescription = openSearchCd }
-              .testTag("glass_search_orb_button"),
+              .semantics {
+                if (!isSearchExpanded) {
+                  contentDescription = openSearchCd
+                }
+              }
+              .testTag(if (isSearchExpanded) "glass_bottom_search_bar" else "glass_search_orb_button"),
         ) {
-          Icon(
-            imageVector = Icons.Rounded.Search,
-            contentDescription = null,
-            tint = colorScheme.onSurface,
-            modifier = Modifier.align(Alignment.Center).size(iconSize),
-          )
+          // Resting Search Orb icon
+          if (searchExpandProgress < 0.55f) {
+            Icon(
+              imageVector = Icons.Rounded.Search,
+              contentDescription = null,
+              tint = colorScheme.onSurface,
+              modifier =
+                Modifier.align(Alignment.Center)
+                  .size(iconSize)
+                  .graphicsLayer {
+                    alpha = orbAlpha
+                    val s = 0.80f + 0.20f * orbAlpha
+                    scaleX = s
+                    scaleY = s
+                  },
+            )
+          }
+
+          // Expanded Bottom Liquid Glass Search Input Row
+          if (searchExpandProgress > 0.28f) {
+            Row(
+              modifier =
+                Modifier.fillMaxSize()
+                  .graphicsLayer {
+                    alpha = searchInputAlpha
+                    translationX = (1f - searchInputAlpha) * 14.dp.toPx()
+                  }
+                  .padding(start = 16.dp, end = 6.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Rounded.Search,
+                contentDescription = null,
+                tint = colorScheme.primary,
+                modifier = Modifier.size(21.dp),
+              )
+              Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                if (searchQuery.isEmpty()) {
+                  Text(
+                    text = bottomSearchPlaceholder,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                  )
+                }
+                BasicTextField(
+                  value = searchQuery,
+                  onValueChange = onSearchQueryChange,
+                  singleLine = true,
+                  textStyle = MaterialTheme.typography.bodyLarge.copy(color = colorScheme.onSurface),
+                  cursorBrush = SolidColor(colorScheme.primary),
+                  keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                  keyboardActions =
+                    KeyboardActions(
+                      onSearch = {
+                        haptics.tap()
+                        keyboardController?.hide()
+                        focusManager.clearFocus()
+                        onSearchSubmit()
+                      }
+                    ),
+                  modifier =
+                    Modifier.fillMaxWidth()
+                      .focusRequester(searchFocusRequester)
+                      .testTag("glass_bottom_search_input"),
+                )
+              }
+              AnimatedVisibility(
+                visible = searchQuery.isNotEmpty(),
+                enter = fadeIn(tween(120)) + scaleIn(initialScale = 0.72f),
+                exit = fadeOut(tween(100)) + scaleOut(targetScale = 0.72f),
+              ) {
+                IconButton(
+                  onClick = {
+                    haptics.tap()
+                    onSearchQueryChange("")
+                  },
+                  modifier =
+                    Modifier.size(PrismDimens.TouchTargetMin)
+                      .defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
+                      .testTag("glass_bottom_search_clear_button"),
+                ) {
+                  Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = clearSearchCd,
+                    tint = colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                  )
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -992,7 +1201,7 @@ fun GlassNavigationRail(
       Column(
         modifier =
           Modifier.pointerInput(tabs.size, motion) {
-              val touchSlop = viewConfiguration.touchSlop
+              val activationSlop = maxOf(viewConfiguration.touchSlop * 2.0f, 16.dp.toPx())
               val vInsetPx = 10.dp.toPx()
               val maxIdx = (tabs.size - 1).coerceAtLeast(0).toFloat()
 
@@ -1038,7 +1247,7 @@ fun GlassNavigationRail(
                   }
                   val delta = change.positionChange()
                   totalDy += delta.y
-                  if (!scrubbing && abs(totalDy) > touchSlop) {
+                  if (!scrubbing && abs(totalDy) > activationSlop) {
                     scrubbing = true
                     change.consume()
                     haptics.dragStart()

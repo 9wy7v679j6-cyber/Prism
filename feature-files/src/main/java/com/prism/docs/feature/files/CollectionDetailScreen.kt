@@ -35,6 +35,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -63,6 +64,7 @@ import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSurface
 import com.prism.docs.core.ui.glass.ScrollEdgeFade
 import com.prism.docs.core.ui.glass.rememberHeaderScrollProgress
+import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.theme.LocalHazeState
 import com.prism.docs.core.ui.theme.PrismDimens
 import dev.chrisbanes.haze.hazeSource
@@ -108,7 +110,10 @@ fun CollectionDetailScreen(
     remember(collection?.accentHex, colorScheme.primary) {
       parseHexColorOrDefault(collection?.accentHex, colorScheme.primary)
     }
+  val haptics = rememberPrismHaptics()
+  val swipeCoordinator = remember { ListRowSwipeCoordinator() }
 
+  CompositionLocalProvider(LocalListRowSwipeCoordinator provides swipeCoordinator) {
   Box(modifier = modifier.fillMaxSize()) {
     LazyColumn(
       state = listState,
@@ -249,12 +254,14 @@ fun CollectionDetailScreen(
             }
           }
         } else {
-          itemsIndexed(uiState.documents, key = { _, doc -> doc.id }) { _, doc ->
+          itemsIndexed(uiState.documents, key = { _, doc -> doc.id }) { idx, doc ->
             DocumentListRow(
               document = doc,
               thumbnailPipeline = viewModel.thumbnailPipeline,
               isSelected = false,
               isSelectionMode = false,
+              sectionKey = "collection_detail",
+              itemIndex = idx,
               onClick = {
                 viewModel.recordDocumentOpened(doc.id)
                 onOpenDocument(
@@ -317,21 +324,26 @@ fun CollectionDetailScreen(
       contentAlignment = Alignment.Center,
     ) {
       GlassSurface(
-        cornerRadius = PrismDimens.HeaderBarHeight / 2,
-        shape = CircleShape,
+        cornerRadius = 28.dp,
+        shape = RoundedCornerShape(28.dp),
         elevation = GlassElevation.FLOATING,
         useBackdropBlur = isScrolledUnder,
+        enableRefraction = true,
         modifier =
           Modifier.widthIn(max = PrismDimens.ContentMaxWidth)
             .fillMaxWidth()
             .height(PrismDimens.HeaderBarHeight),
       ) {
         Row(
-          modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
+          modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
           verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
           IconButton(
-            onClick = onNavigateBack,
+            onClick = {
+              haptics.tap()
+              onNavigateBack()
+            },
             modifier =
               Modifier.size(PrismDimens.TouchTargetMin).testTag("collection_back_button"),
           ) {
@@ -347,11 +359,14 @@ fun CollectionDetailScreen(
             color = colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).semantics { heading() },
+            modifier = Modifier.weight(1f).padding(horizontal = 4.dp).semantics { heading() },
           )
           if (collection != null) {
             IconButton(
-              onClick = { showRenameDialog = true },
+              onClick = {
+                haptics.tap()
+                showRenameDialog = true
+              },
               modifier =
                 Modifier.size(PrismDimens.TouchTargetMin).testTag("collection_rename_button"),
             ) {
@@ -362,7 +377,10 @@ fun CollectionDetailScreen(
               )
             }
             IconButton(
-              onClick = { showDeleteDialog = true },
+              onClick = {
+                haptics.tap()
+                showDeleteDialog = true
+              },
               modifier =
                 Modifier.size(PrismDimens.TouchTargetMin).testTag("collection_delete_button"),
             ) {
@@ -404,6 +422,7 @@ fun CollectionDetailScreen(
         )
       }
     }
+  }
   }
 
   uiState.renameTarget?.let { doc ->
