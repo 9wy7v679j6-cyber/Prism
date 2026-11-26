@@ -43,16 +43,13 @@ import com.prism.docs.core.ui.glass.GlassToolbarAction
 import com.prism.docs.core.ui.glass.GlassToolbarGroup
 import com.prism.docs.core.ui.glass.ScrollEdgeFade
 import com.prism.docs.core.ui.glass.rememberHeaderScrollProgress
-import com.prism.docs.core.ui.theme.LocalHazeState
 import com.prism.docs.core.ui.theme.PrismDimens
-import dev.chrisbanes.haze.hazeSource
 
 @Composable
 fun SearchScreen(
   onNavigateBack: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val hazeState = LocalHazeState.current
   val colorScheme = MaterialTheme.colorScheme
   val density = LocalDensity.current
   val listState = rememberLazyListState()
@@ -81,7 +78,6 @@ fun SearchScreen(
       horizontalAlignment = Alignment.CenterHorizontally,
       modifier =
         Modifier.fillMaxSize()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
           .testTag("search_results_list"),
     ) {
       item {

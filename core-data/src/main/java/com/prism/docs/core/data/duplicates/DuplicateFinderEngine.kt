@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import com.prism.docs.core.data.db.DocumentIndexDao
 import com.prism.docs.core.data.db.IndexedDocumentEntity
+import com.prism.docs.core.data.storage.DocumentCategoryClassifier
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.FileInputStream
@@ -13,6 +14,7 @@ import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -39,21 +41,41 @@ constructor(
 
   override suspend fun computePartialHash(uriString: String, windowBytes: Int): String? =
     withContext(Dispatchers.IO) {
+      val activeCheck = { coroutineContext.ensureActive() }
       val local = resolveLocalFile(uriString)
       if (local != null && local.exists() && local.isFile && local.canRead()) {
-        return@withContext runCatching { computeLocalPartialSha256(local, windowBytes) }.getOrNull()
+        return@withContext try {
+          computeLocalPartialSha256(local, windowBytes, activeCheck)
+        } catch (ce: CancellationException) {
+          throw ce
+        } catch (_: Throwable) {
+          null
+        }
       }
       val stream = openInputStream(uriString) ?: return@withContext null
       return@withContext stream.use { input ->
-        runCatching { computeStreamPartialSha256(input, windowBytes) }.getOrNull()
+        try {
+          computeStreamPartialSha256(input, windowBytes, activeCheck)
+        } catch (ce: CancellationException) {
+          throw ce
+        } catch (_: Throwable) {
+          null
+        }
       }
     }
 
   override suspend fun computeFullHash(uriString: String): String? =
     withContext(Dispatchers.IO) {
+      val activeCheck = { coroutineContext.ensureActive() }
       val stream = openInputStream(uriString) ?: return@withContext null
       stream.use { input ->
-        runCatching { computeStreamFullSha256(input) }.getOrNull()
+        try {
+          computeStreamFullSha256(input, activeCheck)
+        } catch (ce: CancellationException) {
+          throw ce
+        } catch (_: Throwable) {
+          null
+        }
       }
     }
 
@@ -93,7 +115,12 @@ constructor(
     fun groupConfirmedDuplicates(documents: List<IndexedDocumentEntity>): List<DuplicateFileGroup> {
       return documents
         .asSequence()
-        .filter { !it.isTrashed && it.sizeBytes > 0L && !it.contentHash.isNullOrBlank() }
+        .filter {
+          !it.isTrashed &&
+            it.sizeBytes > 0L &&
+            !it.contentHash.isNullOrBlank() &&
+            DocumentCategoryClassifier.isPrimaryDocument(it.category, it.extension, it.mimeType)
+        }
         .groupBy { "${it.sizeBytes}:${it.contentHash}" }
         .values
         .filter { it.size >= 2 }
@@ -139,11 +166,16 @@ constructor(
   ): DuplicateScanResult {
     coroutineContext.ensureActive()
 
-    // Stage 1: Group by exact file size (> 0)
+    // Stage 1: Group active primary documents by exact file size (> 0),
+    // excluding images, video, audio, APK, ZIP, and other archives.
     val sizeBuckets =
       documents
         .asSequence()
-        .filter { !it.isTrashed && it.sizeBytes > 0L }
+        .filter {
+          !it.isTrashed &&
+            it.sizeBytes > 0L &&
+            DocumentCategoryClassifier.isPrimaryDocument(it.category, it.extension, it.mimeType)
+        }
         .groupBy { it.sizeBytes }
         .filterValues { it.size >= 2 }
 
@@ -182,13 +214,16 @@ constructor(
     // Stage 2: Compute partial hash (first 64 KB + last 64 KB) for size-collision candidates
     val partialBuckets = LinkedHashMap<Pair<Long, String>, MutableList<IndexedDocumentEntity>>()
     val resolvedPartialById = HashMap<Long, String>(sizeCandidates.size)
+    var partialMatchGroupCount = 0
 
     for ((idx, doc) in sizeCandidates.withIndex()) {
       coroutineContext.ensureActive()
       val partial = byteReader.computePartialHash(doc.uriString, PARTIAL_HASH_WINDOW_BYTES)
       if (!partial.isNullOrBlank()) {
         resolvedPartialById[doc.id] = partial
-        partialBuckets.getOrPut(doc.sizeBytes to partial) { mutableListOf() }.add(doc)
+        val bucket = partialBuckets.getOrPut(doc.sizeBytes to partial) { mutableListOf() }
+        bucket.add(doc)
+        if (bucket.size == 2) partialMatchGroupCount++
       }
       onProgress(
         DuplicateScanProgress(
@@ -196,7 +231,7 @@ constructor(
           totalCandidates = sizeCandidates.size,
           processedCount = idx + 1,
           sizeGroupCount = sizeGroupCount,
-          partialMatchCount = partialBuckets.count { it.value.size >= 2 },
+          partialMatchCount = partialMatchGroupCount,
         )
       )
     }
@@ -230,6 +265,7 @@ constructor(
     // Stage 3: Full SHA-256 only for remaining partial-hash-collision candidates
     val fullBuckets = LinkedHashMap<Pair<Long, String>, MutableList<IndexedDocumentEntity>>()
     val resolvedFullById = HashMap<Long, String>(partialCandidates.size)
+    var confirmedMatchGroupCount = 0
 
     for ((idx, doc) in partialCandidates.withIndex()) {
       coroutineContext.ensureActive()
@@ -237,7 +273,9 @@ constructor(
       if (!fullHash.isNullOrBlank()) {
         resolvedFullById[doc.id] = fullHash
         val updatedDoc = doc.copy(partialHash = resolvedPartialById[doc.id], contentHash = fullHash)
-        fullBuckets.getOrPut(doc.sizeBytes to fullHash) { mutableListOf() }.add(updatedDoc)
+        val bucket = fullBuckets.getOrPut(doc.sizeBytes to fullHash) { mutableListOf() }
+        bucket.add(updatedDoc)
+        if (bucket.size == 2) confirmedMatchGroupCount++
       }
       onProgress(
         DuplicateScanProgress(
@@ -246,7 +284,7 @@ constructor(
           processedCount = idx + 1,
           sizeGroupCount = sizeGroupCount,
           partialMatchCount = partialCollisionGroups.size,
-          confirmedGroupCount = fullBuckets.count { it.value.size >= 2 },
+          confirmedGroupCount = confirmedMatchGroupCount,
         )
       )
     }
@@ -257,16 +295,19 @@ constructor(
       )
 
     if (persistHashes) {
-      documentIndexDao.clearActiveHashes()
+      val confirmedPartialById = HashMap<Long, String>()
+      val confirmedFullById = HashMap<Long, String>()
       for (group in confirmedGroups) {
         for (doc in group.documents) {
-          documentIndexDao.updateDocumentHashes(
-            id = doc.id,
-            partialHash = doc.partialHash ?: resolvedPartialById[doc.id],
-            contentHash = group.contentHash,
-          )
+          val partial = doc.partialHash ?: resolvedPartialById[doc.id]
+          if (partial != null) confirmedPartialById[doc.id] = partial
+          confirmedFullById[doc.id] = group.contentHash
         }
       }
+      documentIndexDao.replaceActiveHashes(
+        partialById = confirmedPartialById,
+        fullById = confirmedFullById,
+      )
     }
 
     val reclaimable = confirmedGroups.sumOf { it.reclaimableBytes }
@@ -291,7 +332,11 @@ constructor(
   }
 }
 
-internal fun computeLocalPartialSha256(file: File, windowBytes: Int): String {
+internal fun computeLocalPartialSha256(
+  file: File,
+  windowBytes: Int,
+  checkActive: () -> Unit = {},
+): String {
   val digest = MessageDigest.getInstance("SHA-256")
   RandomAccessFile(file, "r").use { raf ->
     val length = raf.length()
@@ -301,6 +346,7 @@ internal fun computeLocalPartialSha256(file: File, windowBytes: Int): String {
       raf.seek(0L)
       var totalRead = 0
       while (totalRead < headSize) {
+        checkActive()
         val read = raf.read(buffer, totalRead, headSize - totalRead)
         if (read <= 0) break
         totalRead += read
@@ -315,6 +361,7 @@ internal fun computeLocalPartialSha256(file: File, windowBytes: Int): String {
       raf.seek(tailOffset)
       var totalRead = 0
       while (totalRead < tailSize) {
+        checkActive()
         val read = raf.read(tailBuffer, totalRead, tailSize - totalRead)
         if (read <= 0) break
         totalRead += read
@@ -325,7 +372,11 @@ internal fun computeLocalPartialSha256(file: File, windowBytes: Int): String {
   return digest.digest().toHex()
 }
 
-internal fun computeStreamPartialSha256(input: InputStream, windowBytes: Int): String {
+internal fun computeStreamPartialSha256(
+  input: InputStream,
+  windowBytes: Int,
+  checkActive: () -> Unit = {},
+): String {
   val digest = MessageDigest.getInstance("SHA-256")
   val headBuffer = ByteArray(windowBytes)
   var headLen = 0
@@ -335,6 +386,7 @@ internal fun computeStreamPartialSha256(input: InputStream, windowBytes: Int): S
 
   val ioBuf = ByteArray(16 * 1024)
   while (true) {
+    checkActive()
     val n = input.read(ioBuf)
     if (n <= 0) break
     var offset = 0
@@ -369,10 +421,14 @@ internal fun computeStreamPartialSha256(input: InputStream, windowBytes: Int): S
   return digest.digest().toHex()
 }
 
-internal fun computeStreamFullSha256(input: InputStream): String {
+internal fun computeStreamFullSha256(
+  input: InputStream,
+  checkActive: () -> Unit = {},
+): String {
   val digest = MessageDigest.getInstance("SHA-256")
   val buf = ByteArray(64 * 1024)
   while (true) {
+    checkActive()
     val n = input.read(buf)
     if (n <= 0) break
     digest.update(buf, 0, n)
@@ -380,9 +436,16 @@ internal fun computeStreamFullSha256(input: InputStream): String {
   return digest.digest().toHex()
 }
 
-private fun ByteArray.toHex(): String =
-  buildString(size * 2) {
-    for (b in this@toHex) {
-      append(String.format("%02x", b))
-    }
+private val HEX_CHARS = charArrayOf(
+  '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+)
+
+private fun ByteArray.toHex(): String {
+  val chars = CharArray(size * 2)
+  for (i in indices) {
+    val v = this[i].toInt() and 0xFF
+    chars[i * 2] = HEX_CHARS[v ushr 4]
+    chars[i * 2 + 1] = HEX_CHARS[v and 0x0F]
   }
+  return String(chars)
+}

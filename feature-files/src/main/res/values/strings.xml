@@ -12,6 +12,10 @@
         <item quantity="one">%1$s file, all indexed</item>
         <item quantity="other">%1$s files, all indexed</item>
     </plurals>
+    <plurals name="library_indexed_documents_subtitle">
+        <item quantity="one">%1$s document, all indexed</item>
+        <item quantity="other">%1$s documents, all indexed</item>
+    </plurals>
     <plurals name="recycle_bin_header_subtitle">
         <item quantity="one">%1$s trashed, 30-day retention</item>
         <item quantity="other">%1$s trashed, 30-day retention</item>
@@ -45,6 +49,7 @@
     <!-- Recent & categories -->
     <string name="library_recent_title">Recent</string>
     <string name="library_recent_see_all">See all</string>
+    <string name="category_documents">Documents</string>
     <string name="category_all_files">All files</string>
     <string name="category_pdf">PDF</string>
     <string name="category_word">Word</string>
@@ -160,6 +165,7 @@
     <string name="options_settings_tools_title">Settings &amp; Tools</string>
     <string name="options_appearance_title">Appearance &amp; Liquid Glass</string>
     <string name="options_appearance_subtitle">Active: %1$s</string>
+    <string name="options_appearance_subtitle_release">Theme, glass clarity &amp; motion</string>
     <string name="options_rescan_title">Rescan device documents</string>
     <string name="options_rescan_subtitle">Refresh Room index across storage &amp; SAF</string>
     <string name="options_link_saf_title">Link SAF folder</string>
@@ -275,12 +281,21 @@
     <string name="tool_tags_collections_title">Tags &amp; Collections</string>
     <string name="tool_tags_collections_subtitle">Create, rename, delete and organize documents</string>
     <string name="library_collections_title">Collections</string>
+    <string name="library_filters_title">Filters</string>
     <string name="library_collections_manage">Manage</string>
     <string name="library_tags_manage_chip">+ Manage tags</string>
     <string name="library_tags_filter_cd">Filter by tag %1$s</string>
     <plurals name="collection_doc_count">
         <item quantity="one">%1$d document</item>
         <item quantity="other">%1$d documents</item>
+    </plurals>
+    <plurals name="analyzer_doc_count_formatted">
+        <item quantity="one">%1$s document</item>
+        <item quantity="other">%1$s documents</item>
+    </plurals>
+    <plurals name="analyzer_file_count_formatted">
+        <item quantity="one">%1$s file</item>
+        <item quantity="other">%1$s files</item>
     </plurals>
 
     <!-- Duplicate Finder -->
@@ -310,6 +325,11 @@
     <!-- Storage Analyzer -->
     <string name="analyzer_title">Storage Analyzer</string>
     <string name="analyzer_total_used_label">Total Prism-indexed storage</string>
+    <string name="analyzer_total_documents_label">Prism-indexed documents</string>
+    <string name="analyzer_by_file_type_title">By file type</string>
+    <string name="analyzer_scope_documents">Documents</string>
+    <string name="analyzer_scope_all_files">All indexed files</string>
+    <string name="analyzer_less_than_one_pct">&lt;1%</string>
     <plurals name="analyzer_indexed_count">
         <item quantity="one">%1$s across %2$s document</item>
         <item quantity="other">%1$s across %2$s documents</item>

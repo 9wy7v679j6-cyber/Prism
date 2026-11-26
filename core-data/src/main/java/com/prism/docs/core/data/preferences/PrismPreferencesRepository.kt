@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.prism.docs.core.data.model.GlassIntensity
@@ -38,6 +39,7 @@ constructor(
     val THEME_MODE = stringPreferencesKey("theme_mode")
     val USE_DYNAMIC_COLOR = booleanPreferencesKey("use_dynamic_color")
     val GLASS_INTENSITY = stringPreferencesKey("glass_intensity")
+    val GLASS_CLARITY = floatPreferencesKey("glass_clarity")
     val REDUCE_TRANSPARENCY = booleanPreferencesKey("reduce_transparency")
     val REDUCE_MOTION = booleanPreferencesKey("reduce_motion")
     val SAF_FOLDER_GRANTS = stringPreferencesKey("saf_folder_grants_json")
@@ -54,21 +56,29 @@ constructor(
         }
       }
       .map { prefs ->
-        PrismPreferences(
-          onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: false,
-          themeMode =
-            prefs[Keys.THEME_MODE]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
-              ?: ThemeMode.LIGHT,
-          useDynamicColor = prefs[Keys.USE_DYNAMIC_COLOR] ?: false,
-          glassIntensity =
+          val intensity =
             prefs[Keys.GLASS_INTENSITY]?.let {
               runCatching { GlassIntensity.valueOf(it) }.getOrNull()
-            } ?: GlassIntensity.STANDARD,
-          reduceTransparency = prefs[Keys.REDUCE_TRANSPARENCY] ?: false,
-          reduceMotion = prefs[Keys.REDUCE_MOTION] ?: false,
-          safFolderGrants = decodeGrants(prefs[Keys.SAF_FOLDER_GRANTS]),
-          fullAccessBannerDismissed = prefs[Keys.FULL_ACCESS_BANNER_DISMISSED] ?: false,
-        )
+            } ?: GlassIntensity.STANDARD
+          val defaultClarity =
+            when (intensity) {
+              GlassIntensity.SUBTLE -> 0.58f
+              GlassIntensity.STANDARD -> 0.35f
+              GlassIntensity.RICH -> 0.14f
+            }
+          PrismPreferences(
+            onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: false,
+            themeMode =
+              prefs[Keys.THEME_MODE]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
+                ?: ThemeMode.LIGHT,
+            useDynamicColor = prefs[Keys.USE_DYNAMIC_COLOR] ?: false,
+            glassIntensity = intensity,
+            glassClarity = (prefs[Keys.GLASS_CLARITY] ?: defaultClarity).coerceIn(0f, 1f),
+            reduceTransparency = prefs[Keys.REDUCE_TRANSPARENCY] ?: false,
+            reduceMotion = prefs[Keys.REDUCE_MOTION] ?: false,
+            safFolderGrants = decodeGrants(prefs[Keys.SAF_FOLDER_GRANTS]),
+            fullAccessBannerDismissed = prefs[Keys.FULL_ACCESS_BANNER_DISMISSED] ?: false,
+          )
       }
 
   suspend fun setOnboardingCompleted(completed: Boolean) {
@@ -85,6 +95,11 @@ constructor(
 
   suspend fun setGlassIntensity(intensity: GlassIntensity) {
     context.prismDataStore.edit { it[Keys.GLASS_INTENSITY] = intensity.name }
+  }
+
+  suspend fun setGlassClarity(clarity: Float) {
+    val clamped = clarity.coerceIn(0f, 1f)
+    context.prismDataStore.edit { it[Keys.GLASS_CLARITY] = clamped }
   }
 
   suspend fun setReduceTransparency(enabled: Boolean) {

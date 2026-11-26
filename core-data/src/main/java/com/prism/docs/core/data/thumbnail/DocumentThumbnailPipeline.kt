@@ -20,11 +20,16 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
+import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -40,14 +45,14 @@ data class ThumbnailRequest(
   val sizeBytes: Long,
   val targetSizePx: Int = DEFAULT_TARGET_SIZE_PX,
 ) {
-  val cacheKey: String
-    get() =
-      ThumbnailCacheKey.compute(
-        pathOrUri = uriString,
-        lastModifiedEpochMs = lastModifiedEpochMs,
-        sizeBytes = sizeBytes,
-        targetSizePx = targetSizePx,
-      )
+  val cacheKey: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
+    ThumbnailCacheKey.compute(
+      pathOrUri = uriString,
+      lastModifiedEpochMs = lastModifiedEpochMs,
+      sizeBytes = sizeBytes,
+      targetSizePx = targetSizePx,
+    )
+  }
 
   companion object {
     const val DEFAULT_TARGET_SIZE_PX: Int = 320
@@ -63,6 +68,10 @@ data class ThumbnailCacheStats(
 )
 
 object ThumbnailCacheKey {
+  private val HEX_CHARS = charArrayOf(
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+  )
+
   fun compute(
     pathOrUri: String,
     lastModifiedEpochMs: Long,
@@ -71,11 +80,13 @@ object ThumbnailCacheKey {
   ): String {
     val raw = "$pathOrUri|$lastModifiedEpochMs|$sizeBytes|$targetSizePx"
     val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
-    return buildString(digest.size * 2) {
-      for (b in digest) {
-        append(String.format("%02x", b))
-      }
+    val chars = CharArray(digest.size * 2)
+    for (i in digest.indices) {
+      val v = digest[i].toInt() and 0xFF
+      chars[i * 2] = HEX_CHARS[v ushr 4]
+      chars[i * 2 + 1] = HEX_CHARS[v and 0x0F]
     }
+    return String(chars)
   }
 }
 
@@ -121,8 +132,8 @@ internal constructor(
   /** Tracks keys known to have no decodable thumbnail (e.g. OOXML without docProps/thumbnail). */
   private val missingThumbnailKeys = object : LruCache<String, Boolean>(2048) {}
 
-  /** Per-document mutex guaranteeing strictly serialized PdfRenderer access (1 page at a time). */
-  private val pdfDocumentLocks = ConcurrentHashMap<String, Mutex>()
+  /** Fixed-size striped mutex table guaranteeing strictly serialized PdfRenderer access per document. */
+  private val pdfDocumentLocks = Array(PDF_LOCK_STRIPES) { Mutex() }
 
   /** Prevents concurrent duplicate work for the exact same cache key. */
   private val inFlightRequests = ConcurrentHashMap<String, CompletableDeferred<Bitmap?>>()
@@ -132,6 +143,9 @@ internal constructor(
 
   /** Serializes disk cache eviction passes. */
   private val diskTrimMutex = Mutex()
+
+  /** Approximate total bytes on disk (-1 = uninitialized, triggers initial scan on first write). */
+  private val estimatedDiskBytes = AtomicLong(-1L)
 
   fun peekMemoryCache(request: ThumbnailRequest): Bitmap? = memoryCache.get(request.cacheKey)
 
@@ -150,48 +164,69 @@ internal constructor(
       return null
     }
 
-    // Coalesce concurrent requests for the exact same key
-    val existingDeferred = inFlightRequests[key]
-    if (existingDeferred != null) {
-      return existingDeferred.await()
-    }
-
-    val newDeferred = CompletableDeferred<Bitmap?>()
-    val raced = inFlightRequests.putIfAbsent(key, newDeferred)
-    if (raced != null) {
-      return raced.await()
-    }
-
-    return try {
-      val bitmap =
-        withContext(Dispatchers.IO) {
-          readFromDiskCache(key)?.also { diskBitmap -> memoryCache.put(key, diskBitmap) }
-            ?: decodeSemaphore.withPermit {
-              decodeThumbnailForRequest(request)?.also { decoded ->
-                memoryCache.put(key, decoded)
-                writeToDiskCache(key, decoded)
-              }
-            }
+    // Coalesce concurrent requests for the exact same key, retrying once if an earlier owner cancels
+    var attempts = 0
+    while (attempts < 2) {
+      attempts++
+      val existingDeferred = inFlightRequests[key]
+      if (existingDeferred != null) {
+        return try {
+          existingDeferred.await()
+        } catch (ce: CancellationException) {
+          currentCoroutineContext().ensureActive()
+          continue
         }
-      if (bitmap == null) {
-        missingThumbnailKeys.put(key, true)
       }
-      newDeferred.complete(bitmap)
-      bitmap
-    } catch (t: Throwable) {
-      newDeferred.complete(null)
-      null
-    } finally {
-      inFlightRequests.remove(key, newDeferred)
+
+      val newDeferred = CompletableDeferred<Bitmap?>()
+      val raced = inFlightRequests.putIfAbsent(key, newDeferred)
+      if (raced != null) {
+        return try {
+          raced.await()
+        } catch (ce: CancellationException) {
+          currentCoroutineContext().ensureActive()
+          continue
+        }
+      }
+
+      return try {
+        val bitmap =
+          withContext(Dispatchers.IO) {
+            readFromDiskCache(key)?.also { diskBitmap -> memoryCache.put(key, diskBitmap) }
+              ?: decodeSemaphore.withPermit {
+                currentCoroutineContext().ensureActive()
+                decodeThumbnailForRequest(request)?.also { decoded ->
+                  memoryCache.put(key, decoded)
+                  writeToDiskCache(key, decoded)
+                }
+              }
+          }
+        if (bitmap == null) {
+          missingThumbnailKeys.put(key, true)
+        }
+        newDeferred.complete(bitmap)
+        bitmap
+      } catch (ce: CancellationException) {
+        inFlightRequests.remove(key, newDeferred)
+        newDeferred.cancel(ce)
+        throw ce
+      } catch (_: Throwable) {
+        newDeferred.complete(null)
+        null
+      } finally {
+        inFlightRequests.remove(key, newDeferred)
+      }
     }
+    return null
   }
 
   suspend fun computeCacheStats(): ThumbnailCacheStats =
     withContext(Dispatchers.IO) {
       val files = diskCacheDir.listFiles()?.filter { it.isFile && !it.name.endsWith(".tmp") }.orEmpty()
       val totalDiskBytes = files.sumOf { it.length() }
+      estimatedDiskBytes.set(totalDiskBytes)
       ThumbnailCacheStats(
-        memoryEntryCount = memoryCache.putCount() - memoryCache.evictionCount(),
+        memoryEntryCount = memoryCache.snapshot().size,
         memorySizeBytes = memoryCache.size().toLong() * 1024L,
         diskEntryCount = files.size,
         diskSizeBytes = totalDiskBytes,
@@ -212,6 +247,7 @@ internal constructor(
             freedBytes += len
           }
         }
+        estimatedDiskBytes.set(0L)
       }
       freedBytes
     }
@@ -238,29 +274,34 @@ internal constructor(
     uriString: String,
     targetSizePx: Int,
   ): Bitmap? {
-    val documentMutex = pdfDocumentLocks.computeIfAbsent(uriString) { Mutex() }
+    val stripe = (uriString.hashCode() and Int.MAX_VALUE) % pdfDocumentLocks.size
+    val documentMutex = pdfDocumentLocks[stripe]
     return documentMutex.withLock {
-      runCatching {
-          openReadOnlyPfd(uriString)?.use { pfd ->
-            PdfRenderer(pfd).use { renderer ->
-              if (renderer.pageCount <= 0) return@use null
-              renderer.openPage(0).use { page ->
-                val srcW = page.width.coerceAtLeast(1)
-                val srcH = page.height.coerceAtLeast(1)
-                val scale = targetSizePx.toFloat() / maxOf(srcW, srcH).toFloat()
-                val dstW = (srcW * scale).toInt().coerceIn(32, targetSizePx)
-                val dstH = (srcH * scale).toInt().coerceIn(32, targetSizePx)
+      currentCoroutineContext().ensureActive()
+      try {
+        openReadOnlyPfd(uriString)?.use { pfd ->
+          PdfRenderer(pfd).use { renderer ->
+            if (renderer.pageCount <= 0) return@use null
+            renderer.openPage(0).use { page ->
+              val srcW = page.width.coerceAtLeast(1)
+              val srcH = page.height.coerceAtLeast(1)
+              val scale = targetSizePx.toFloat() / maxOf(srcW, srcH).toFloat()
+              val dstW = (srcW * scale).toInt().coerceIn(32, targetSizePx)
+              val dstH = (srcH * scale).toInt().coerceIn(32, targetSizePx)
 
-                val bitmap = Bitmap.createBitmap(dstW, dstH, Bitmap.Config.ARGB_8888)
-                val canvas = Canvas(bitmap)
-                canvas.drawColor(Color.WHITE)
-                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                bitmap
-              }
+              val bitmap = Bitmap.createBitmap(dstW, dstH, Bitmap.Config.ARGB_8888)
+              val canvas = Canvas(bitmap)
+              canvas.drawColor(Color.WHITE)
+              page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+              bitmap
             }
           }
         }
-        .getOrNull()
+      } catch (ce: CancellationException) {
+        throw ce
+      } catch (_: Throwable) {
+        null
+      }
     }
   }
 
@@ -327,6 +368,33 @@ internal constructor(
    */
   private fun extractOoxmlEmbeddedThumbnail(uriString: String, targetSizePx: Int): Bitmap? {
     return runCatching {
+        val localFile = resolveLocalFile(uriString)
+        if (localFile != null && localFile.exists()) {
+          ZipFile(localFile).use { zipFile ->
+            val directEntry =
+              OOXML_THUMB_PATHS.firstNotNullOfOrNull { path -> zipFile.getEntry(path) }
+                ?: run {
+                  var scanned = 0
+                  var matched: java.util.zip.ZipEntry? = null
+                  val entries = zipFile.entries()
+                  while (entries.hasMoreElements() && scanned < MAX_ZIP_ENTRIES_TO_SCAN) {
+                    val e = entries.nextElement()
+                    scanned++
+                    val normalized = e.name.replace('\\', '/').lowercase()
+                    if (normalized in OOXML_THUMB_PATHS_LOWER) {
+                      matched = e
+                      break
+                    }
+                  }
+                  matched
+                }
+            if (directEntry != null) {
+              val bytes = zipFile.getInputStream(directEntry).use { readBoundedBytes(it, MAX_EMBEDDED_THUMB_BYTES) }
+              if (bytes.isNotEmpty()) return@use decodeSampledBitmapFromBytes(bytes, targetSizePx)
+            }
+            return@use null
+          }
+        }
         openInputStream(uriString)?.use { input ->
           ZipInputStream(input.buffered()).use { zip ->
             var scannedEntries = 0
@@ -334,11 +402,7 @@ internal constructor(
               val entry = zip.nextEntry ?: break
               scannedEntries++
               val normalized = entry.name.replace('\\', '/').lowercase()
-              if (
-                normalized == "docprops/thumbnail.jpeg" ||
-                  normalized == "docprops/thumbnail.jpg" ||
-                  normalized == "docprops/thumbnail.png"
-              ) {
+              if (normalized in OOXML_THUMB_PATHS_LOWER) {
                 val bytes = readBoundedBytes(zip, MAX_EMBEDDED_THUMB_BYTES)
                 if (bytes.isNotEmpty()) {
                   return@use decodeSampledBitmapFromBytes(bytes, targetSizePx)
@@ -360,17 +424,22 @@ internal constructor(
     if (decoded != null) {
       runCatching { file.setLastModified(System.currentTimeMillis()) }
     } else {
-      runCatching { file.delete() }
+      val badLen = file.length()
+      if (runCatching { file.delete() }.getOrDefault(false)) {
+        estimatedDiskBytes.updateAndGet { cur -> if (cur >= badLen) cur - badLen else cur }
+      }
     }
     return decoded
   }
 
   private suspend fun writeToDiskCache(cacheKey: String, bitmap: Bitmap) {
+    var wroteDelta = 0L
     runCatching {
       if (!diskCacheDir.exists()) {
         diskCacheDir.mkdirs()
       }
       val finalFile = File(diskCacheDir, "$cacheKey.thumb")
+      val prevLen = if (finalFile.exists()) finalFile.length() else 0L
       val tempFile = File(diskCacheDir, "$cacheKey.${System.nanoTime()}.tmp")
       FileOutputStream(tempFile).use { out ->
         val format =
@@ -385,16 +454,29 @@ internal constructor(
         tempFile.copyTo(finalFile, overwrite = true)
         tempFile.delete()
       }
+      wroteDelta = finalFile.length() - prevLen
     }
-    trimDiskCacheIfNeeded()
+    val currentEstimate =
+      estimatedDiskBytes.updateAndGet { cur ->
+        if (cur < 0L) -1L else (cur + wroteDelta).coerceAtLeast(0L)
+      }
+    if (currentEstimate < 0L || currentEstimate > maxDiskBytes) {
+      trimDiskCacheIfNeeded()
+    }
   }
 
   private suspend fun trimDiskCacheIfNeeded() {
     diskTrimMutex.withLock {
       val files =
-        diskCacheDir.listFiles()?.filter { it.isFile && !it.name.endsWith(".tmp") } ?: return
+        diskCacheDir.listFiles()?.filter { it.isFile && !it.name.endsWith(".tmp") } ?: run {
+          estimatedDiskBytes.set(0L)
+          return
+        }
       var totalBytes = files.sumOf { it.length() }
-      if (totalBytes <= maxDiskBytes) return
+      if (totalBytes <= maxDiskBytes) {
+        estimatedDiskBytes.set(totalBytes)
+        return
+      }
 
       val sortedOldestFirst = files.sortedBy { it.lastModified() }
       val targetBytes = (maxDiskBytes * 8) / 10
@@ -405,6 +487,7 @@ internal constructor(
           totalBytes -= len
         }
       }
+      estimatedDiskBytes.set(totalBytes)
     }
   }
 
@@ -503,9 +586,14 @@ internal constructor(
     private const val DISK_CACHE_FOLDER = "prism_thumbs"
     private const val DEFAULT_MAX_DISK_BYTES = 64L * 1024L * 1024L
     private const val MAX_CONCURRENT_DECODES = 4
+    private const val PDF_LOCK_STRIPES = 64
     private const val MAX_ZIP_ENTRIES_TO_SCAN = 256
     private const val MAX_EMBEDDED_THUMB_BYTES = 2 * 1024 * 1024
     private val OOXML_EXTENSIONS = setOf("docx", "xlsx", "pptx")
+    private val OOXML_THUMB_PATHS =
+      listOf("docProps/thumbnail.jpeg", "docProps/thumbnail.jpg", "docProps/thumbnail.png")
+    private val OOXML_THUMB_PATHS_LOWER =
+      setOf("docprops/thumbnail.jpeg", "docprops/thumbnail.jpg", "docprops/thumbnail.png")
 
     private fun defaultMemoryCacheKb(): Int {
       val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
@@ -22,15 +23,19 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.CallMerge
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.RotateRight
 import androidx.compose.material.icons.rounded.Compress
+import androidx.compose.material.icons.rounded.DonutLarge
 import androidx.compose.material.icons.rounded.Draw
+import androidx.compose.material.icons.rounded.FileCopy
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -43,19 +48,22 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSegmentedControl
 import com.prism.docs.core.ui.glass.GlassSurface
 import com.prism.docs.core.ui.glass.ObserveScrollCollapse
 import com.prism.docs.core.ui.glass.ScrollEdgeFade
+import com.prism.docs.core.ui.glass.glassClickable
 import com.prism.docs.core.ui.glass.rememberHeaderScrollProgress
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
-import com.prism.docs.core.ui.theme.LocalHazeState
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
-import dev.chrisbanes.haze.hazeSource
+import com.prism.docs.core.ui.theme.PrismDimens
 
+@Immutable
 private data class PdfToolSpec(
   val groupIndex: Int,
   val title: String,
@@ -67,11 +75,12 @@ private data class PdfToolSpec(
 @Composable
 fun PdfToolsHubScreen(
   onTabBarCollapsedChange: (Boolean) -> Unit,
+  onOpenDuplicateFinder: () -> Unit = {},
+  onOpenStorageAnalyzer: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val listState = rememberLazyListState()
   val headerScrollProgress = rememberHeaderScrollProgress(listState)
-  val hazeState = LocalHazeState.current
   val env = LocalGlassEnvironment.current
   val tokens = LocalPrismVisualTokens.current
   val colorScheme = MaterialTheme.colorScheme
@@ -145,18 +154,69 @@ fun PdfToolsHubScreen(
       contentPadding =
         PaddingValues(
           top = topHeaderDp + 8.dp,
-          bottom = navBarBottom + 116.dp,
+          bottom = navBarBottom + PrismDimens.ListBottomContentPadding,
           start = 20.dp,
           end = 20.dp,
         ),
       verticalArrangement = Arrangement.spacedBy(14.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
-      modifier =
-        Modifier.fillMaxSize()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
-          .testTag("pdf_tools_list"),
+      modifier = Modifier.fillMaxSize().testTag("pdf_tools_list"),
     ) {
-      item {
+      // Product Priority: Storage tools live here in Tools tab (and Library options sheet)
+      item(key = "storage_tools_heading", contentType = "section_heading") {
+        Column(
+          modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(top = 2.dp),
+          verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+          Text(
+            text = "Storage tools",
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            color = colorScheme.onSurface,
+          )
+          Text(
+            text = "Analyze indexed document usage and clean up duplicate documents",
+            style = MaterialTheme.typography.bodySmall,
+            color = colorScheme.onSurfaceVariant,
+          )
+        }
+      }
+
+      item(key = "storage_tools_cards", contentType = "storage_tools") {
+        Column(
+          modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
+          verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          StorageToolActionCard(
+            title = "Duplicate Finder",
+            subtitle = "Find identical PDFs, Office files, and text documents to safely move copies to Bin.",
+            icon = Icons.Rounded.FileCopy,
+            accent = tokens.warningAccent,
+            isDark = env.isDark,
+            onClick = onOpenDuplicateFinder,
+            modifier = Modifier.testTag("tools_duplicate_finder_card"),
+          )
+          StorageToolActionCard(
+            title = "Storage Analyzer",
+            subtitle = "Inspect document storage breakdown by file type, largest files, and biggest folders.",
+            icon = Icons.Rounded.DonutLarge,
+            accent = colorScheme.primary,
+            isDark = env.isDark,
+            onClick = onOpenStorageAnalyzer,
+            modifier = Modifier.testTag("tools_storage_analyzer_card"),
+          )
+        }
+      }
+
+      item(key = "pdf_tools_heading", contentType = "section_heading") {
+        Text(
+          text = "PDF & Document tools",
+          style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+          color = colorScheme.onSurface,
+          modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(top = 6.dp),
+        )
+      }
+
+      item(key = "pdf_tools_segment", contentType = "segmented_filter") {
         GlassSegmentedControl(
           options = listOf("All", "Organize", "Optimize", "Edit & Lock"),
           selectedIndex = selectedGroup,
@@ -165,10 +225,15 @@ fun PdfToolsHubScreen(
         )
       }
 
-      items(visibleTools, key = { it.title }) { tool ->
+      items(
+        items = visibleTools,
+        key = { it.title },
+        contentType = { "pdf_tool_card" },
+      ) { tool ->
         GlassSurface(
           cornerRadius = 24.dp,
           elevation = GlassElevation.SUBTLE,
+          useBackdropBlur = false,
           accentTint = tool.accent,
           modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
         ) {
@@ -237,7 +302,7 @@ fun PdfToolsHubScreen(
       verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
       Text(
-        text = "Offline PDF toolkit",
+        text = "Offline PDF & storage toolkit",
         style = MaterialTheme.typography.titleSmall,
         color = colorScheme.onSurfaceVariant,
       )
@@ -250,8 +315,65 @@ fun PdfToolsHubScreen(
 
     ScrollEdgeFade(
       isTop = false,
-      height = navBarBottom + 96.dp,
+      height = navBarBottom + PrismDimens.BottomScrimHeight,
       modifier = Modifier.align(Alignment.BottomCenter),
     )
+  }
+}
+
+@Composable
+private fun StorageToolActionCard(
+  title: String,
+  subtitle: String,
+  icon: ImageVector,
+  accent: Color,
+  isDark: Boolean,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val colorScheme = MaterialTheme.colorScheme
+  GlassSurface(
+    cornerRadius = 22.dp,
+    elevation = GlassElevation.SUBTLE,
+    useBackdropBlur = false,
+    accentTint = accent.copy(alpha = if (isDark) 0.14f else 0.08f),
+    modifier =
+      modifier
+        .fillMaxWidth()
+        .defaultMinSize(minHeight = 64.dp)
+        .glassClickable(role = Role.Button, onClick = onClick),
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+      horizontalArrangement = Arrangement.spacedBy(14.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Box(
+        modifier =
+          Modifier.size(44.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(accent.copy(alpha = if (isDark) 0.22f else 0.14f)),
+        contentAlignment = Alignment.Center,
+      ) {
+        Icon(imageVector = icon, contentDescription = null, tint = accent)
+      }
+      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+          text = title,
+          style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+          color = colorScheme.onSurface,
+        )
+        Text(
+          text = subtitle,
+          style = MaterialTheme.typography.bodySmall,
+          color = colorScheme.onSurfaceVariant,
+        )
+      }
+      Icon(
+        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+        contentDescription = null,
+        tint = colorScheme.onSurfaceVariant,
+      )
+    }
   }
 }

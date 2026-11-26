@@ -79,16 +79,18 @@ import com.prism.docs.core.data.duplicates.DuplicateScanProgress
 import com.prism.docs.core.data.duplicates.DuplicateScanStage
 import com.prism.docs.core.data.model.IncomingDocumentRequest
 import com.prism.docs.core.data.thumbnail.DocumentThumbnailPipeline
+import androidx.compose.runtime.CompositionLocalProvider
 import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSurface
+import com.prism.docs.core.ui.glass.LocalGlassBackdrop
 import com.prism.docs.core.ui.glass.ScrollEdgeFade
+import com.prism.docs.core.ui.glass.glassContentCaptureSource
 import com.prism.docs.core.ui.glass.rememberHeaderScrollProgress
 import com.prism.docs.core.ui.glass.rememberPrismHaptics
-import com.prism.docs.core.ui.theme.LocalHazeState
+import com.prism.docs.core.ui.glass.rememberScreenGlassBackdropState
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
 import com.prism.docs.core.ui.theme.PrismDimens
-import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.delay
 
 @Composable
@@ -99,7 +101,7 @@ fun DuplicateFinderScreen(
   viewModel: DuplicateFinderViewModel = hiltViewModel(),
 ) {
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-  val hazeState = LocalHazeState.current
+  val screenBackdropState = rememberScreenGlassBackdropState()
   val colorScheme = MaterialTheme.colorScheme
   val haptics = rememberPrismHaptics()
   val density = LocalDensity.current
@@ -137,11 +139,11 @@ fun DuplicateFinderScreen(
       horizontalAlignment = Alignment.CenterHorizontally,
       modifier =
         Modifier.fillMaxSize()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
+          .glassContentCaptureSource(screenBackdropState)
           .testTag("duplicate_finder_list"),
     ) {
       if (uiState.progress.isRunning) {
-        item(key = "dup_scan_progress_card") {
+        item(key = "dup_scan_progress_card", contentType = "dup_progress") {
           DuplicateScanProgressCard(
             progress = uiState.progress,
             onCancel = viewModel::cancelScan,
@@ -151,7 +153,7 @@ fun DuplicateFinderScreen(
       }
 
       if (uiState.groups.isNotEmpty()) {
-        item(key = "dup_reclaimable_summary_card") {
+        item(key = "dup_reclaimable_summary_card", contentType = "dup_summary") {
           DuplicateSummaryCard(
             reclaimableBytes = uiState.totalReclaimableBytes,
             groupCount = uiState.groups.size,
@@ -165,7 +167,11 @@ fun DuplicateFinderScreen(
           )
         }
 
-        items(uiState.groups, key = { it.groupKey }) { group ->
+        items(
+          items = uiState.groups,
+          key = { it.groupKey },
+          contentType = { "dup_group_card" },
+        ) { group ->
           DuplicateGroupCard(
             group = group,
             thumbnailPipeline = viewModel.thumbnailPipeline,
@@ -212,7 +218,8 @@ fun DuplicateFinderScreen(
       modifier = Modifier.align(Alignment.BottomCenter),
     )
 
-    // Floating Glass Top Bar (outside Haze source)
+    // Floating Glass Top Bar sampling screen content + blobs
+    CompositionLocalProvider(LocalGlassBackdrop provides screenBackdropState) {
     Box(
       modifier =
         Modifier.align(Alignment.TopCenter)
@@ -230,6 +237,7 @@ fun DuplicateFinderScreen(
         shape = CircleShape,
         elevation = GlassElevation.FLOATING,
         useBackdropBlur = isScrolledUnder,
+        enableRefraction = true,
         modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth().height(PrismDimens.HeaderBarHeight),
       ) {
         Row(
@@ -309,6 +317,7 @@ fun DuplicateFinderScreen(
           )
         }
       }
+    }
     }
   }
 }

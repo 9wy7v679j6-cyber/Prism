@@ -2,6 +2,7 @@ package com.prism.docs.feature.files
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.compose.runtime.Immutable
 import com.prism.docs.core.data.duplicates.DuplicateFileGroup
 import com.prism.docs.core.data.duplicates.DuplicateScanProgress
 import com.prism.docs.core.data.duplicates.DuplicateScanScheduler
@@ -13,9 +14,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+@Immutable
 data class DuplicateFinderUiState(
   val progress: DuplicateScanProgress = DuplicateScanProgress(),
   val groups: List<DuplicateFileGroup> = emptyList(),
@@ -64,9 +67,13 @@ constructor(
   fun triggerInitialScanIfNeeded() {
     if (autoStarted) return
     autoStarted = true
-    val current = uiState.value
-    if (!current.progress.isRunning && current.progress.stage == DuplicateScanStage.IDLE && current.groups.isEmpty()) {
-      scheduler.startScan()
+    viewModelScope.launch {
+      val (progress, groups) =
+        combine(scheduler.observeScanProgress(), scheduler.observeDuplicateGroups()) { p, g -> p to g }
+          .first()
+      if (!progress.isRunning && progress.stage == DuplicateScanStage.IDLE && groups.isEmpty()) {
+        scheduler.startScan()
+      }
     }
   }
 

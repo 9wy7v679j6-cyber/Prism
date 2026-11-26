@@ -76,9 +76,10 @@ import com.prism.docs.core.ui.theme.PrismColors
 import com.prism.docs.core.ui.theme.PrismDimens
 import com.prism.docs.core.ui.theme.PrismVisualTokens
 import java.text.NumberFormat
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 
 data class CategoryVisualSpec(
@@ -511,6 +512,10 @@ fun rememberFormattedByteSize(bytes: Long): String {
   return stringResource(R.string.format_bytes_gb, gb)
 }
 
+private val WEEKDAY_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("EEEE")
+private val DAY_MONTH_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM")
+private val FULL_DATE_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy")
+
 @Composable
 fun rememberFormattedRelativeDay(epochMs: Long): String {
   if (epochMs <= 0L) return stringResource(R.string.format_unknown_date)
@@ -519,16 +524,24 @@ fun rememberFormattedRelativeDay(epochMs: Long): String {
     dayDiff <= 0 -> stringResource(R.string.format_day_today)
     dayDiff == 1 -> stringResource(R.string.format_day_yesterday)
     dayDiff in 2..6 ->
-      remember(epochMs) { SimpleDateFormat("EEEE", Locale.getDefault()).format(Date(epochMs)) }
+      remember(epochMs) {
+        WEEKDAY_FORMATTER
+          .withLocale(Locale.getDefault())
+          .format(Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()))
+      }
     else ->
-      remember(epochMs) { SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(epochMs)) }
+      remember(epochMs) {
+        DAY_MONTH_FORMATTER
+          .withLocale(Locale.getDefault())
+          .format(Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()))
+      }
   }
 }
 
 @Composable
 fun rememberFormattedModifiedTimestamp(epochMs: Long): String {
   if (epochMs <= 0L) return stringResource(R.string.format_unknown_date_title)
-  val now = System.currentTimeMillis()
+  val now = remember(epochMs) { System.currentTimeMillis() }
   val diff = (now - epochMs).coerceAtLeast(0L)
   val oneDay = 24L * 60L * 60L * 1000L
   return when {
@@ -546,28 +559,33 @@ fun rememberFormattedModifiedTimestamp(epochMs: Long): String {
       pluralStringResource(R.plurals.format_days_ago, days, days)
     }
     else ->
-      remember(epochMs) { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(epochMs)) }
+      remember(epochMs) {
+        FULL_DATE_FORMATTER
+          .withLocale(Locale.getDefault())
+          .format(Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()))
+      }
   }
 }
 
 private fun computeDayDifference(epochMs: Long): Int {
-  val nowCal = Calendar.getInstance()
-  val targetCal = Calendar.getInstance().apply { timeInMillis = epochMs }
-  return if (nowCal.get(Calendar.YEAR) == targetCal.get(Calendar.YEAR)) {
-    nowCal.get(Calendar.DAY_OF_YEAR) - targetCal.get(Calendar.DAY_OF_YEAR)
-  } else {
-    ((nowCal.timeInMillis - epochMs) / (24L * 60L * 60L * 1000L)).toInt()
-  }
+  val zone = ZoneId.systemDefault()
+  val today = Instant.now().atZone(zone).toLocalDate()
+  val target = Instant.ofEpochMilli(epochMs).atZone(zone).toLocalDate()
+  return ChronoUnit.DAYS.between(target, today).toInt()
 }
 
 fun formatRelativeDay(epochMs: Long): String {
   if (epochMs <= 0L) return "unknown date"
   val dayDiff = computeDayDifference(epochMs)
+  val zone = ZoneId.systemDefault()
+  val locale = Locale.getDefault()
   return when {
     dayDiff <= 0 -> "today"
     dayDiff == 1 -> "yesterday"
-    dayDiff in 2..6 -> SimpleDateFormat("EEEE", Locale.getDefault()).format(Date(epochMs))
-    else -> SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(epochMs))
+    dayDiff in 2..6 ->
+      WEEKDAY_FORMATTER.withLocale(locale).format(Instant.ofEpochMilli(epochMs).atZone(zone))
+    else ->
+      DAY_MONTH_FORMATTER.withLocale(locale).format(Instant.ofEpochMilli(epochMs).atZone(zone))
   }
 }
 
@@ -581,6 +599,9 @@ fun formatModifiedTimestamp(epochMs: Long): String {
     diff < 3_600_000L -> "${diff / 60_000L}m ago"
     diff < oneDay -> "${diff / 3_600_000L}h ago"
     diff < 7L * oneDay -> "${diff / oneDay}d ago"
-    else -> SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(epochMs))
+    else ->
+      FULL_DATE_FORMATTER
+        .withLocale(Locale.getDefault())
+        .format(Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()))
   }
 }

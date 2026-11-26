@@ -393,6 +393,84 @@ class DocumentRepositoryAndIndexerTest {
     }
   }
 
+  @Test
+  fun incrementalSyncDeduplicatesCanonicalPathsAndFiltersDocumentsOnly() = runTest {
+    // Pre-existing MediaStore row for the exact same on-disk Download file
+    db.documentIndexDao().upsert(
+      com.prism.docs.core.data.db.IndexedDocumentEntity(
+        uriString = "content://media/external/file/4201",
+        displayName = "prism-debug-apk (5).zip",
+        normalizedName = "prism-debug-apk (5).zip",
+        parentPath = "/storage/emulated/0/Download",
+        mimeType = "application/zip",
+        extension = "zip",
+        category = DocumentCategory.ARCHIVES.name,
+        sizeBytes = 6_410_000L,
+        lastModifiedEpochMs = 5_000L,
+        sourceType = StorageSourceType.MEDIASTORE.name,
+      )
+    )
+
+    val fsZip =
+      ScannedDocumentMetadata(
+        uriString = "file:///storage/emulated/0/Download/prism-debug-apk%20(5).zip",
+        displayName = "prism-debug-apk (5).zip",
+        parentPath = "/storage/emulated/0/Download",
+        mimeType = "application/zip",
+        extension = "zip",
+        category = DocumentCategory.ARCHIVES,
+        sizeBytes = 6_410_000L,
+        lastModifiedEpochMs = 5_000L,
+        isDirectory = false,
+        sourceType = StorageSourceType.FILESYSTEM,
+      )
+    val msZipDuplicate =
+      fsZip.copy(
+        uriString = "content://media/external/file/4201",
+        sourceType = StorageSourceType.MEDIASTORE,
+      )
+    val reportPdf =
+      sampleMeta("file:///storage/emulated/0/Documents/Q4.pdf", "Q4.pdf", "/storage/emulated/0/Documents", DocumentCategory.PDF, 420_000L, 6_000L)
+    val readmeMd =
+      sampleMeta("file:///storage/emulated/0/Documents/notes.md", "notes.md", "/storage/emulated/0/Documents", DocumentCategory.CODE_TEXT, 4_096L, 7_000L)
+    val snapshotJpg =
+      sampleMeta("file:///storage/emulated/0/Pictures/shot.jpg", "shot.jpg", "/storage/emulated/0/Pictures", DocumentCategory.IMAGES, 1_800_000L, 8_000L)
+
+    // Gateway emits both the Filesystem and MediaStore entries for the same zip path
+    fakeGateway.documents = listOf(fsZip, msZipDuplicate, reportPdf, readmeMd, snapshotJpg)
+    indexer.runIncrementalSync(nowEpochMs = 20_000L)
+
+    // All files view must contain prism-debug-apk (5).zip ONCE (never duplicated)
+    val allIndexed =
+      repository
+        .pagedDocuments(
+          FileListQuery(
+            documentsOnly = false,
+            sortField = FileSortField.NAME,
+            sortDirection = SortDirection.ASC,
+          )
+        )
+        .asSnapshot()
+    assertEquals(
+      listOf("notes.md", "prism-debug-apk (5).zip", "Q4.pdf", "shot.jpg"),
+      allIndexed.map { it.displayName },
+    )
+    assertEquals(1, allIndexed.count { it.displayName == "prism-debug-apk (5).zip" })
+
+    // Default Library query (documentsOnly = true) shows PDF + Markdown only, hiding ZIP and JPG
+    val docsOnly =
+      repository
+        .pagedDocuments(
+          FileListQuery(
+            documentsOnly = true,
+            sortField = FileSortField.NAME,
+            sortDirection = SortDirection.ASC,
+          )
+        )
+        .asSnapshot()
+    assertEquals(listOf("notes.md", "Q4.pdf"), docsOnly.map { it.displayName })
+  }
+
   private fun sampleMeta(
     uri: String,
     name: String,

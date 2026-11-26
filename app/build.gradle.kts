@@ -81,6 +81,10 @@ android {
   }
 }
 
+composeCompiler {
+  stabilityConfigurationFiles.add(rootProject.layout.projectDirectory.file("compose_stability_config.conf"))
+}
+
 dependencies {
   implementation(project(":core-ui"))
   implementation(project(":core-data"))
@@ -98,6 +102,7 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
   implementation(libs.androidx.navigation.compose)
+  implementation(libs.androidx.profileinstaller)
   implementation(libs.androidx.work.runtime.ktx)
 
   implementation(libs.androidx.compose.animation)

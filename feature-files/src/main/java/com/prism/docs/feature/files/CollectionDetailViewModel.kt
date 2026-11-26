@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.compose.runtime.Immutable
 import com.prism.docs.core.data.db.CollectionEntity
 import com.prism.docs.core.data.db.IndexedDocumentEntity
 import com.prism.docs.core.data.paging.DocumentRepository
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+@Immutable
 data class CollectionDetailUiState(
   val collection: CollectionEntity? = null,
   val documents: List<IndexedDocumentEntity> = emptyList(),

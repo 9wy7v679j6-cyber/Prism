@@ -8,6 +8,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 
 @HiltWorker
 class DocumentIndexWorker
@@ -42,6 +43,8 @@ constructor(
           KEY_PHASE to "Completed",
         )
       Result.success(output)
+    } catch (ce: CancellationException) {
+      throw ce
     } catch (e: SecurityException) {
       Result.failure(workDataOf(KEY_PHASE to "Permission revoked"))
     } catch (e: Exception) {

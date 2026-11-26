@@ -63,16 +63,27 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import android.os.Build
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -203,31 +214,42 @@ fun GlassSegmentedControl(
                 liveDragSlot = startRaw
                 hoveredSlot = currentSnapped
                 isDragging = true
-                horizontalDrag(slop.id) { change ->
-                  change.consume()
-                  val raw = xToSlot(change.position.x)
-                  liveDragSlot = raw
-                  val snapped = raw.roundToInt().coerceIn(0, options.lastIndex)
-                  if (snapped != currentSnapped) {
-                    currentSnapped = snapped
-                    hoveredSlot = snapped
-                    haptics.segmentTick()
+                var settledNormally = false
+                try {
+                  horizontalDrag(slop.id) { change ->
+                    change.consume()
+                    val raw = xToSlot(change.position.x)
+                    liveDragSlot = raw
+                    val snapped = raw.roundToInt().coerceIn(0, options.lastIndex)
+                    if (snapped != currentSnapped) {
+                      currentSnapped = snapped
+                      hoveredSlot = snapped
+                      haptics.segmentTick()
+                    }
                   }
-                }
-                val releasePos = liveDragSlot
-                val finalSlot = currentSnapped
-                hoveredSlot = null
-                if (finalSlot != latestSelectedIndex) {
-                  latestOnSelect(finalSlot)
-                }
-                scope.launch {
-                  pillAnim.snapTo(releasePos)
-                  isDragging = false
-                  pillAnim.animateTo(
-                    targetValue = finalSlot.toFloat(),
-                    animationSpec =
-                      if (motion) spring(dampingRatio = 0.74f, stiffness = 460f) else snap(),
-                  )
+                  val releasePos = liveDragSlot
+                  val finalSlot = currentSnapped
+                  hoveredSlot = null
+                  if (finalSlot != latestSelectedIndex) {
+                    latestOnSelect(finalSlot)
+                  }
+                  settledNormally = true
+                  scope.launch {
+                    pillAnim.snapTo(releasePos)
+                    isDragging = false
+                    pillAnim.animateTo(
+                      targetValue = finalSlot.toFloat(),
+                      animationSpec =
+                        if (motion) spring(dampingRatio = 0.74f, stiffness = 460f) else snap(),
+                    )
+                  }
+                } finally {
+                  if (!settledNormally) {
+                    hoveredSlot = null
+                    isDragging = false
+                    val resetTarget = latestSelectedIndex.toFloat()
+                    scope.launch { pillAnim.snapTo(resetTarget) }
+                  }
                 }
               }
             }
@@ -359,30 +381,41 @@ fun GlassToggle(
               isDragging = true
               liveProgress = current
               previewChecked = crossed
-              horizontalDrag(slop.id) { change ->
-                change.consume()
-                current = (current + change.positionChange().x / travelPx).coerceIn(0f, 1f)
-                liveProgress = current
-                val nowChecked = current >= 0.5f
-                if (nowChecked != crossed) {
-                  crossed = nowChecked
-                  previewChecked = crossed
-                  haptics.toggle(crossed)
+              var settledNormally = false
+              try {
+                horizontalDrag(slop.id) { change ->
+                  change.consume()
+                  current = (current + change.positionChange().x / travelPx).coerceIn(0f, 1f)
+                  liveProgress = current
+                  val nowChecked = current >= 0.5f
+                  if (nowChecked != crossed) {
+                    crossed = nowChecked
+                    previewChecked = crossed
+                    haptics.toggle(crossed)
+                  }
                 }
-              }
-              val releaseProgress = liveProgress
-              val finalChecked = crossed
-              previewChecked = null
-              if (finalChecked != latestChecked) {
-                latestOnCheckedChange(finalChecked)
-              }
-              scope.launch {
-                thumbAnim.snapTo(releaseProgress)
-                isDragging = false
-                thumbAnim.animateTo(
-                  targetValue = if (finalChecked) 1f else 0f,
-                  animationSpec = PrismMotion.tactileSpring(env.reduceMotion),
-                )
+                val releaseProgress = liveProgress
+                val finalChecked = crossed
+                previewChecked = null
+                if (finalChecked != latestChecked) {
+                  latestOnCheckedChange(finalChecked)
+                }
+                settledNormally = true
+                scope.launch {
+                  thumbAnim.snapTo(releaseProgress)
+                  isDragging = false
+                  thumbAnim.animateTo(
+                    targetValue = if (finalChecked) 1f else 0f,
+                    animationSpec = PrismMotion.tactileSpring(env.reduceMotion),
+                  )
+                }
+              } finally {
+                if (!settledNormally) {
+                  previewChecked = null
+                  isDragging = false
+                  val resetTarget = if (latestChecked) 1f else 0f
+                  scope.launch { thumbAnim.snapTo(resetTarget) }
+                }
               }
             }
           }
@@ -488,6 +521,338 @@ fun GlassSlider(
           inactiveTrackColor = colorScheme.onSurface.copy(alpha = 0.14f),
         ),
       modifier = Modifier.fillMaxWidth().testTag("glass_slider_$label"),
+    )
+  }
+}
+
+/**
+ * Liquid Glass clarity slider (0% Frosted -> 100% Clear):
+ * - Translucent glass track with active Prism optical fill and tick marks at 0 / 25 / 50 / 75 / 100%.
+ * - Swelling Liquid Glass capsule thumb (~1.20x while dragged) that captures and refracts/magnifies
+ *   the track underneath it in the draw phase (AGSL lens shader on API 33+, optical highlight fallback
+ *   on API 26–32).
+ * - Haptic detent tick at 0%, 25%, 50%, 75%, and 100%.
+ */
+@Composable
+fun LiquidGlassClaritySlider(
+  value: Float,
+  onValueChange: (Float) -> Unit,
+  modifier: Modifier = Modifier,
+  enabled: Boolean = true,
+  onValueChangeFinished: () -> Unit = {},
+) {
+  val env = LocalGlassEnvironment.current
+  val motion = LocalGlassMotion.current
+  val debugConfig = LocalGlassDebugConfig.current
+  val colorScheme = MaterialTheme.colorScheme
+  val haptics = rememberPrismHaptics()
+  val clamped = value.coerceIn(0f, 1f)
+
+  val latestValue by rememberUpdatedState(clamped)
+  val latestOnChange by rememberUpdatedState(onValueChange)
+  val latestOnFinished by rememberUpdatedState(onValueChangeFinished)
+
+  var isDragging by remember { mutableStateOf(false) }
+  var lastNotch by remember { mutableIntStateOf((clamped * 4f).roundToInt().coerceIn(0, 4)) }
+
+  val swellState =
+    animateFloatAsState(
+      targetValue = if (isDragging) 1f else 0f,
+      animationSpec = if (motion) spring(dampingRatio = 0.54f, stiffness = 460f) else snap(),
+      label = "clarity_thumb_swell",
+    )
+
+  val trackLayer = rememberGraphicsLayer()
+  val thumbPath = remember { Path() }
+  val lensEffect =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      remember { CachedLensMagnifyEffect() }
+    } else {
+      null
+    }
+
+  val percent = (clamped * 100f).roundToInt()
+
+  Box(
+    modifier =
+      modifier
+        .fillMaxWidth()
+        .height(52.dp)
+        .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+        .graphicsLayer { alpha = if (enabled) 1f else 0.48f }
+        .pointerInput(motion, enabled) {
+          if (!enabled) return@pointerInput
+          val thumbHalfPx = 22.dp.toPx()
+
+          fun xToFraction(x: Float): Float {
+            val usable = (size.width - thumbHalfPx * 2f).coerceAtLeast(1f)
+            return ((x - thumbHalfPx) / usable).coerceIn(0f, 1f)
+          }
+
+          fun emitValue(next: Float) {
+            val notches = floatArrayOf(0f, 0.25f, 0.50f, 0.75f, 1f)
+            val nearestIdx =
+              notches.indices.minByOrNull { kotlin.math.abs(next - notches[it]) } ?: 0
+            val nearNotch = kotlin.math.abs(next - notches[nearestIdx]) <= 0.032f
+            if (nearNotch && nearestIdx != lastNotch) {
+              lastNotch = nearestIdx
+              haptics.segmentTick()
+            } else if (!nearNotch) {
+              val crossedNotch =
+                when {
+                  next > latestValue -> notches.indexOfFirst { it > latestValue && it <= next }
+                  next < latestValue -> notches.indexOfLast { it < latestValue && it >= next }
+                  else -> -1
+                }
+              if (crossedNotch != -1 && crossedNotch != lastNotch) {
+                lastNotch = crossedNotch
+                haptics.segmentTick()
+              }
+            }
+            latestOnChange(next)
+          }
+
+          awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            isDragging = true
+            var finishedNormally = false
+            try {
+              haptics.dragStart()
+              emitValue(xToFraction(down.position.x))
+              val pointerId = down.id
+              while (true) {
+                val event = awaitPointerEvent()
+                val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                if (!change.pressed) {
+                  isDragging = false
+                  finishedNormally = true
+                  latestOnFinished()
+                  break
+                }
+                if (change.positionChange().x != 0f) {
+                  change.consume()
+                  emitValue(xToFraction(change.position.x))
+                }
+              }
+            } finally {
+              if (!finishedNormally) {
+                isDragging = false
+                latestOnFinished()
+              }
+            }
+          }
+        }
+        .semantics {
+          contentDescription = "Glass clarity slider"
+          stateDescription = "$percent%"
+        }
+        .testTag("liquid_glass_clarity_slider"),
+    contentAlignment = Alignment.Center,
+  ) {
+    // 1. Track layer recorded into GraphicsLayer so the glass thumb can genuinely refract it
+    Box(
+      modifier =
+        Modifier.fillMaxSize()
+          .drawWithContent {
+            if (
+              size.width < 2f ||
+                size.height < 2f ||
+                GlassBackdropRecordingGuard.isRecording() ||
+                trackLayer.isReleased
+            ) {
+              drawContent()
+              return@drawWithContent
+            }
+            val trackH = 12.dp.toPx()
+            val trackTop = (size.height - trackH) * 0.5f
+            val padX = 22.dp.toPx()
+            val trackW = (size.width - padX * 2f).coerceAtLeast(1f)
+            val corner = CornerRadius(trackH * 0.5f, trackH * 0.5f)
+            val fillW = (trackW * clamped).coerceAtLeast(trackH * 0.5f)
+
+            trackLayer.record {
+              // Frosted recess track
+              drawRoundRect(
+                color =
+                  if (env.isDark) Color.White.copy(alpha = 0.14f)
+                  else Color(0xFF1A2C56).copy(alpha = 0.12f),
+                topLeft = Offset(padX, trackTop),
+                size = Size(trackW, trackH),
+                cornerRadius = corner,
+              )
+              // Prism optical active fill
+              drawRoundRect(
+                brush =
+                  Brush.horizontalGradient(
+                    colors = listOf(PrismColors.IndigoBlue, colorScheme.primary, PrismColors.IceCyan),
+                    startX = padX,
+                    endX = padX + trackW,
+                  ),
+                topLeft = Offset(padX, trackTop),
+                size = Size(fillW.coerceAtMost(trackW), trackH),
+                cornerRadius = corner,
+              )
+              // 0 / 25 / 50 / 75 / 100% tick notches along track
+              for (i in 0..4) {
+                val frac = i / 4f
+                val tx = padX + trackW * frac
+                val isFilled = clamped >= frac - 0.01f
+                drawCircle(
+                  color =
+                    if (isFilled) Color.White.copy(alpha = 0.85f)
+                    else colorScheme.onSurface.copy(alpha = if (env.isDark) 0.34f else 0.28f),
+                  radius = 2.dp.toPx(),
+                  center = Offset(tx, size.height * 0.5f),
+                )
+              }
+              // Hairline glass border around track
+              drawRoundRect(
+                color = Color.White.copy(alpha = if (env.isDark) 0.24f else 0.72f),
+                topLeft = Offset(padX, trackTop),
+                size = Size(trackW, trackH),
+                cornerRadius = corner,
+                style = Stroke(width = 0.85.dp.toPx()),
+              )
+            }
+            drawLayer(trackLayer)
+            drawContent()
+          }
+    )
+
+    // 2. Swelling, track-refracting Liquid Glass capsule thumb
+    Box(
+      modifier =
+        Modifier.fillMaxSize()
+          .graphicsLayer {
+            val swell = swellState.value
+            val padX = 22.dp.toPx()
+            val trackW = (size.width - padX * 2f).coerceAtLeast(1f)
+            val thumbW = (38.dp.toPx() * (1f + 0.22f * swell))
+            val thumbH = (26.dp.toPx() * (1f + 0.20f * swell))
+            val cx = padX + trackW * clamped
+            val cy = size.height * 0.5f
+
+            if (
+              Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                lensEffect != null &&
+                debugConfig.enableEdgeRefraction &&
+                !env.reduceTransparency
+            ) {
+              renderEffect =
+                lensEffect.obtain(
+                  widthPx = size.width,
+                  heightPx = size.height,
+                  centerX = cx,
+                  centerY = cy,
+                  halfW = thumbW * 0.5f,
+                  halfH = thumbH * 0.5f,
+                  radius = thumbH * 0.5f,
+                  magnifyStrength = 0.75f + swell * 0.65f,
+                  dispersionPx = 1.0.dp.toPx() + swell * 1.8.dp.toPx(),
+                )
+            } else {
+              renderEffect = null
+            }
+          }
+          .drawBehind {
+            if (size.width < 2f || size.height < 2f) return@drawBehind
+            val swell = swellState.value
+            val padX = 22.dp.toPx()
+            val trackW = (size.width - padX * 2f).coerceAtLeast(1f)
+            val thumbW = 38.dp.toPx() * (1f + 0.22f * swell)
+            val thumbH = 26.dp.toPx() * (1f + 0.20f * swell)
+            val cx = padX + trackW * clamped
+            val cy = size.height * 0.5f
+            val left = cx - thumbW * 0.5f
+            val top = cy - thumbH * 0.5f
+            val corner = CornerRadius(thumbH * 0.5f, thumbH * 0.5f)
+
+            // Draw magnified underlying track through the lens capsule
+            if (!env.reduceTransparency) {
+              thumbPath.reset()
+              thumbPath.addRoundRect(
+                androidx.compose.ui.geometry.RoundRect(
+                  left = left,
+                  top = top,
+                  right = left + thumbW,
+                  bottom = top + thumbH,
+                  cornerRadius = corner,
+                )
+              )
+              clipPath(thumbPath) {
+                if (!GlassBackdropRecordingGuard.isRecording() && !trackLayer.isReleased) {
+                  drawLayer(trackLayer)
+                }
+                // Translucent crystalline body over the refracted track
+                drawRoundRect(
+                  brush =
+                    Brush.verticalGradient(
+                      colors =
+                        if (env.isDark) {
+                          listOf(
+                            Color.White.copy(alpha = 0.24f + swell * 0.08f),
+                            Color.White.copy(alpha = 0.06f),
+                            colorScheme.primary.copy(alpha = 0.14f + swell * 0.08f),
+                          )
+                        } else {
+                          listOf(
+                            Color.White.copy(alpha = 0.64f - swell * 0.22f),
+                            Color.White.copy(alpha = 0.22f - swell * 0.08f),
+                            Color.White.copy(alpha = 0.42f - swell * 0.12f),
+                          )
+                        },
+                      startY = top,
+                      endY = top + thumbH,
+                    ),
+                  topLeft = Offset(left, top),
+                  size = Size(thumbW, thumbH),
+                  cornerRadius = corner,
+                )
+              }
+            } else {
+              drawRoundRect(
+                color = colorScheme.surface,
+                topLeft = Offset(left, top),
+                size = Size(thumbW, thumbH),
+                cornerRadius = corner,
+              )
+            }
+
+            // Upper curved specular lens highlight inside thumb
+            val sheenInset = 5.dp.toPx()
+            val sheenW = (thumbW - sheenInset * 2f).coerceAtLeast(2f)
+            val sheenH = thumbH * 0.34f
+            drawRoundRect(
+              brush =
+                Brush.verticalGradient(
+                  colors = listOf(Color.White.copy(alpha = 0.78f), Color.Transparent),
+                  startY = top + 2.dp.toPx(),
+                  endY = top + 2.dp.toPx() + sheenH,
+                ),
+              topLeft = Offset(left + sheenInset, top + 2.dp.toPx()),
+              size = Size(sheenW, sheenH),
+              cornerRadius = CornerRadius(sheenH * 0.5f, sheenH * 0.5f),
+            )
+
+            // Specular bezel stroke around thumb
+            val strokePx = (1.25.dp.toPx() + swell * 0.4.dp.toPx())
+            drawRoundRect(
+              brush =
+                Brush.verticalGradient(
+                  colors =
+                    listOf(
+                      Color.White.copy(alpha = 0.96f),
+                      colorScheme.primary.copy(alpha = if (env.isDark) 0.48f else 0.34f),
+                    ),
+                  startY = top,
+                  endY = top + thumbH,
+                ),
+              topLeft = Offset(left + strokePx * 0.5f, top + strokePx * 0.5f),
+              size = Size(thumbW - strokePx, thumbH - strokePx),
+              cornerRadius = corner,
+              style = Stroke(width = strokePx),
+            )
+          }
     )
   }
 }
@@ -624,6 +989,7 @@ fun GlassBottomSheet(
 ) {
   val env = LocalGlassEnvironment.current
   val motion = LocalGlassMotion.current
+  val dynamics = LocalGlassDynamics.current
   val colorScheme = MaterialTheme.colorScheme
   val haptics = rememberPrismHaptics()
   val scope = rememberCoroutineScope()
@@ -720,6 +1086,7 @@ fun GlassBottomSheet(
         scope.launch {
           dragOffsetAnim.snapTo(offsetPx)
           isDragging = false
+          dynamics.sheetDragEnergy = 0f
           if (!dismissed) {
             dragOffsetAnim.animateTo(
               targetValue = 0f,
@@ -850,20 +1217,35 @@ fun GlassBottomSheet(
                   val initialVisual = applyResistance(rawAccumulated, latestDetent)
                   liveDragPx = initialVisual
                   updateThresholdHaptics(initialVisual, latestDetent)
+                  var settledNormally = false
+                  try {
+                    val completed =
+                      verticalDrag(slop.id) { change ->
+                        val deltaY = change.positionChange().y
+                        change.consume()
+                        velocityTracker.addPosition(change.uptimeMillis, change.position)
+                        rawAccumulated += deltaY
+                        val visual = applyResistance(rawAccumulated, latestDetent)
+                        liveDragPx = visual
+                        if (motion) {
+                          dynamics.sheetDragEnergy =
+                            (kotlin.math.abs(visual) / (snapThresholdPx * 2f)).coerceIn(0f, 1f)
+                        }
+                        updateThresholdHaptics(visual, latestDetent)
+                      }
 
-                  val completed =
-                    verticalDrag(slop.id) { change ->
-                      val deltaY = change.positionChange().y
-                      change.consume()
-                      velocityTracker.addPosition(change.uptimeMillis, change.position)
-                      rawAccumulated += deltaY
-                      val visual = applyResistance(rawAccumulated, latestDetent)
-                      liveDragPx = visual
-                      updateThresholdHaptics(visual, latestDetent)
+                    val velocityY = if (completed) velocityTracker.calculateVelocity().y else 0f
+                    settledNormally = true
+                    settleSheet(liveDragPx, velocityY)
+                  } finally {
+                    if (!settledNormally) {
+                      armedDirection = 0
+                      isDragging = false
+                      liveDragPx = 0f
+                      dynamics.sheetDragEnergy = 0f
+                      scope.launch { dragOffsetAnim.snapTo(0f) }
                     }
-
-                  val velocityY = if (completed) velocityTracker.calculateVelocity().y else 0f
-                  settleSheet(liveDragPx, velocityY)
+                  }
                 }
               }
             }
@@ -873,6 +1255,7 @@ fun GlassBottomSheet(
           shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp),
           elevation = GlassElevation.OVERLAY,
           useBackdropBlur = true,
+          enableRefraction = true,
           modifier =
             Modifier.fillMaxSize()
               .graphicsLayer {

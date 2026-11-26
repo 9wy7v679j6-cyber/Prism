@@ -121,12 +121,10 @@ import com.prism.docs.core.ui.glass.glassClickable
 import com.prism.docs.core.ui.glass.glassEntrance
 import com.prism.docs.core.ui.glass.glassPress
 import com.prism.docs.core.ui.glass.rememberPrismHaptics
-import com.prism.docs.core.ui.theme.LocalHazeState
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
 import com.prism.docs.core.ui.theme.PrismDimens
 import com.prism.docs.core.ui.theme.PrismMotion
-import dev.chrisbanes.haze.hazeSource
 import kotlin.math.abs
 import kotlinx.coroutines.launch
 
@@ -164,7 +162,6 @@ fun StorageBrowserSection(
   rootsListState: LazyListState = rememberLazyListState(),
   directoryListState: LazyListState = rememberLazyListState(),
 ) {
-  val hazeState = LocalHazeState.current
   val colorScheme = MaterialTheme.colorScheme
   val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
   val currentDir = storageState.currentDirectory
@@ -187,7 +184,6 @@ fun StorageBrowserSection(
       modifier =
         modifier
           .fillMaxSize()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
           .testTag("storage_roots_list"),
     ) {
       item {
@@ -298,7 +294,7 @@ fun StorageBrowserSection(
       contentPadding =
         PaddingValues(
           top = topContentPadding,
-          bottom = navBarBottom + 144.dp,
+          bottom = navBarBottom + PrismDimens.ListBottomContentPadding,
           start = 16.dp,
           end = 16.dp,
         ),
@@ -307,7 +303,6 @@ fun StorageBrowserSection(
       modifier =
         modifier
           .fillMaxSize()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
           .testTag("storage_directory_grid"),
     ) {
       item(span = { GridItemSpan(maxLineSpan) }) {
@@ -412,7 +407,7 @@ fun StorageBrowserSection(
       contentPadding =
         PaddingValues(
           top = topContentPadding,
-          bottom = navBarBottom + 144.dp,
+          bottom = navBarBottom + PrismDimens.ListBottomContentPadding,
           start = 16.dp,
           end = 16.dp,
         ),
@@ -421,7 +416,6 @@ fun StorageBrowserSection(
       modifier =
         modifier
           .fillMaxSize()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
           .testTag("storage_directory_list"),
     ) {
       item {

@@ -22,11 +22,16 @@ import com.prism.docs.core.data.db.TagWithCountRow
 import com.prism.docs.core.data.model.DirectoryChangeEvent
 import com.prism.docs.core.data.model.FileListQuery
 import com.prism.docs.core.data.storage.DocumentStorageGateway
+import android.database.sqlite.SQLiteConstraintException
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.withContext
 
 @Singleton
 class DocumentRepository
@@ -42,6 +47,7 @@ constructor(
   companion object {
     const val RECYCLE_BIN_RETENTION_MS: Long = 30L * 24L * 60L * 60L * 1000L
     const val DEFAULT_PAGE_SIZE: Int = 60
+    private const val SQLITE_IN_CHUNK_SIZE: Int = 500
   }
 
   fun pagedDocuments(
@@ -64,7 +70,13 @@ constructor(
 
   fun observeActiveCount(): Flow<Int> = documentIndexDao.observeActiveCount()
 
+  fun observeActivePrimaryDocumentCount(): Flow<Int> =
+    documentIndexDao.observeActivePrimaryDocumentCount()
+
   fun observeTotalIndexedBytes(): Flow<Long> = documentIndexDao.observeTotalIndexedBytes()
+
+  fun observeTotalPrimaryDocumentBytes(): Flow<Long> =
+    documentIndexDao.observeTotalPrimaryDocumentBytes()
 
   fun observeFavoriteCount(): Flow<Int> = documentIndexDao.observeFavoriteCount()
 
@@ -73,11 +85,20 @@ constructor(
   fun observeCategoryCounts(): Flow<List<CategoryCountRow>> =
     documentIndexDao.observeCategoryCounts()
 
+  fun observePrimaryDocumentCategoryCounts(): Flow<List<CategoryCountRow>> =
+    documentIndexDao.observePrimaryDocumentCategoryCounts()
+
   fun observeLargestDocuments(limit: Int = 40): Flow<List<IndexedDocumentEntity>> =
     documentIndexDao.observeLargestDocuments(limit)
 
+  fun observeLargestPrimaryDocuments(limit: Int = 40): Flow<List<IndexedDocumentEntity>> =
+    documentIndexDao.observeLargestPrimaryDocuments(limit)
+
   fun observeFolderStorageStats(limit: Int = 25): Flow<List<FolderStorageStatRow>> =
     documentIndexDao.observeFolderStorageStats(limit)
+
+  fun observePrimaryDocumentFolderStorageStats(limit: Int = 25): Flow<List<FolderStorageStatRow>> =
+    documentIndexDao.observePrimaryDocumentFolderStorageStats(limit)
 
   fun observeRecents(limit: Int = 30): Flow<List<IndexedDocumentEntity>> =
     documentIndexDao.observeRecentDocuments(limit)
@@ -103,13 +124,25 @@ constructor(
 
   fun observeTagsWithStats(): Flow<List<TagWithCountRow>> = tagDao.observeTagsWithStats()
 
-  fun observeCollectionCrossRefsForDocuments(documentIds: List<Long>): Flow<List<DocumentCollectionCrossRef>> =
-    if (documentIds.isEmpty()) kotlinx.coroutines.flow.flowOf(emptyList())
-    else collectionDao.observeCrossRefsForDocuments(documentIds)
+  fun observeCollectionCrossRefsForDocuments(documentIds: List<Long>): Flow<List<DocumentCollectionCrossRef>> {
+    if (documentIds.isEmpty()) return flowOf(emptyList())
+    val distinctIds = documentIds.distinct()
+    if (distinctIds.size <= SQLITE_IN_CHUNK_SIZE) {
+      return collectionDao.observeCrossRefsForDocuments(distinctIds)
+    }
+    val chunkFlows = distinctIds.chunked(SQLITE_IN_CHUNK_SIZE).map { collectionDao.observeCrossRefsForDocuments(it) }
+    return combine(chunkFlows) { arrays -> arrays.flatMap { it } }
+  }
 
-  fun observeTagCrossRefsForDocuments(documentIds: List<Long>): Flow<List<DocumentTagCrossRef>> =
-    if (documentIds.isEmpty()) kotlinx.coroutines.flow.flowOf(emptyList())
-    else tagDao.observeCrossRefsForDocuments(documentIds)
+  fun observeTagCrossRefsForDocuments(documentIds: List<Long>): Flow<List<DocumentTagCrossRef>> {
+    if (documentIds.isEmpty()) return flowOf(emptyList())
+    val distinctIds = documentIds.distinct()
+    if (distinctIds.size <= SQLITE_IN_CHUNK_SIZE) {
+      return tagDao.observeCrossRefsForDocuments(distinctIds)
+    }
+    val chunkFlows = distinctIds.chunked(SQLITE_IN_CHUNK_SIZE).map { tagDao.observeCrossRefsForDocuments(it) }
+    return combine(chunkFlows) { arrays -> arrays.flatMap { it } }
+  }
 
   fun observeRecycleBin(): Flow<List<RecycleBinEntryEntity>> = recycleBinDao.observeAll()
 
@@ -117,11 +150,19 @@ constructor(
 
   fun observeRecycleBinBytes(): Flow<Long> = recycleBinDao.observeTotalBytes()
 
-  suspend fun getDocumentsByUris(uris: List<String>): List<IndexedDocumentEntity> =
-    if (uris.isEmpty()) emptyList() else documentIndexDao.getByUris(uris)
+  suspend fun getDocumentsByUris(uris: List<String>): List<IndexedDocumentEntity> {
+    if (uris.isEmpty()) return emptyList()
+    val distinctUris = uris.distinct()
+    if (distinctUris.size <= SQLITE_IN_CHUNK_SIZE) return documentIndexDao.getByUris(distinctUris)
+    return distinctUris.chunked(SQLITE_IN_CHUNK_SIZE).flatMap { documentIndexDao.getByUris(it) }
+  }
 
-  suspend fun getDocumentsByIds(ids: List<Long>): List<IndexedDocumentEntity> =
-    if (ids.isEmpty()) emptyList() else documentIndexDao.getByIds(ids)
+  suspend fun getDocumentsByIds(ids: List<Long>): List<IndexedDocumentEntity> {
+    if (ids.isEmpty()) return emptyList()
+    val distinctIds = ids.distinct()
+    if (distinctIds.size <= SQLITE_IN_CHUNK_SIZE) return documentIndexDao.getByIds(distinctIds)
+    return distinctIds.chunked(SQLITE_IN_CHUNK_SIZE).flatMap { documentIndexDao.getByIds(it) }
+  }
 
   suspend fun listStorageRoots() = storageGateway.listStorageRoots()
 
@@ -178,36 +219,47 @@ constructor(
 
   suspend fun addDocumentToCollection(documentId: Long, collectionId: Long) {
     val now = System.currentTimeMillis()
-    collectionDao.addDocumentToCollection(
-      DocumentCollectionCrossRef(
-        documentId = documentId,
-        collectionId = collectionId,
-        addedAtEpochMs = now,
+    database.withTransaction {
+      collectionDao.addDocumentToCollection(
+        DocumentCollectionCrossRef(
+          documentId = documentId,
+          collectionId = collectionId,
+          addedAtEpochMs = now,
+        )
       )
-    )
-    collectionDao.touchUpdated(collectionId, now)
+      collectionDao.touchUpdated(collectionId, now)
+    }
   }
 
   suspend fun addDocumentsToCollection(documentIds: List<Long>, collectionId: Long) {
     if (documentIds.isEmpty()) return
     val now = System.currentTimeMillis()
-    collectionDao.addDocumentsToCollection(
+    val refs =
       documentIds.distinct().map {
         DocumentCollectionCrossRef(documentId = it, collectionId = collectionId, addedAtEpochMs = now)
       }
-    )
-    collectionDao.touchUpdated(collectionId, now)
+    database.withTransaction {
+      collectionDao.addDocumentsToCollection(refs)
+      collectionDao.touchUpdated(collectionId, now)
+    }
   }
 
   suspend fun removeDocumentFromCollection(documentId: Long, collectionId: Long) {
-    collectionDao.removeDocumentFromCollection(documentId, collectionId)
-    collectionDao.touchUpdated(collectionId, System.currentTimeMillis())
+    database.withTransaction {
+      collectionDao.removeDocumentFromCollection(documentId, collectionId)
+      collectionDao.touchUpdated(collectionId, System.currentTimeMillis())
+    }
   }
 
   suspend fun removeDocumentsFromCollection(documentIds: List<Long>, collectionId: Long) {
     if (documentIds.isEmpty()) return
-    collectionDao.removeDocumentsFromCollection(documentIds, collectionId)
-    collectionDao.touchUpdated(collectionId, System.currentTimeMillis())
+    val distinctIds = documentIds.distinct()
+    database.withTransaction {
+      distinctIds.chunked(SQLITE_IN_CHUNK_SIZE).forEach { chunk ->
+        collectionDao.removeDocumentsFromCollection(chunk, collectionId)
+      }
+      collectionDao.touchUpdated(collectionId, System.currentTimeMillis())
+    }
   }
 
   suspend fun createTag(
@@ -217,24 +269,36 @@ constructor(
   ): Long {
     val clean = name.trim()
     require(clean.isNotEmpty()) { "Tag name cannot be blank" }
-    val existing = tagDao.findByNameIgnoreCase(clean)
-    if (existing != null) return existing.id
-    return tagDao.insert(
-      TagEntity(
-        name = clean,
-        colorHex = colorHex,
-        createdAtEpochMs = createdAtEpochMs,
-      )
-    )
+    return database.withTransaction {
+      val existing = tagDao.findByNameIgnoreCase(clean)
+      if (existing != null) return@withTransaction existing.id
+      try {
+        tagDao.insert(
+          TagEntity(
+            name = clean,
+            colorHex = colorHex,
+            createdAtEpochMs = createdAtEpochMs,
+          )
+        )
+      } catch (e: SQLiteConstraintException) {
+        tagDao.findByNameIgnoreCase(clean)?.id ?: throw e
+      }
+    }
   }
 
   suspend fun renameTag(tagId: Long, newName: String): Boolean {
     val clean = newName.trim()
     if (clean.isEmpty()) return false
-    val collision = tagDao.findByNameIgnoreCase(clean)
-    if (collision != null && collision.id != tagId) return false
-    tagDao.rename(tagId, clean)
-    return true
+    return database.withTransaction {
+      val collision = tagDao.findByNameIgnoreCase(clean)
+      if (collision != null && collision.id != tagId) return@withTransaction false
+      try {
+        tagDao.rename(tagId, clean)
+        true
+      } catch (_: SQLiteConstraintException) {
+        false
+      }
+    }
   }
 
   suspend fun deleteTag(tagId: Long) {
@@ -261,7 +325,12 @@ constructor(
 
   suspend fun detachTagFromDocuments(documentIds: List<Long>, tagId: Long) {
     if (documentIds.isEmpty()) return
-    tagDao.detachTagFromDocuments(documentIds, tagId)
+    val distinctIds = documentIds.distinct()
+    database.withTransaction {
+      distinctIds.chunked(SQLITE_IN_CHUNK_SIZE).forEach { chunk ->
+        tagDao.detachTagFromDocuments(chunk, tagId)
+      }
+    }
   }
 
   /**
@@ -306,15 +375,19 @@ constructor(
   suspend fun purgeExpiredRecycleBin(nowEpochMs: Long = System.currentTimeMillis()): Int {
     val expired = recycleBinDao.getExpiredEntries(nowEpochMs)
     if (expired.isEmpty()) return 0
-    for (entry in expired) {
-      if (entry.trashedFilePath.isNotBlank() && !entry.trashedFilePath.startsWith("content://")) {
-        runCatching { File(entry.trashedFilePath).delete() }
+    withContext(Dispatchers.IO) {
+      for (entry in expired) {
+        if (entry.trashedFilePath.isNotBlank() && !entry.trashedFilePath.startsWith("content://")) {
+          runCatching { File(entry.trashedFilePath).delete() }
+        }
       }
     }
     val docIds = expired.map { it.documentId }
     database.withTransaction {
       recycleBinDao.deleteExpiredEntries(nowEpochMs)
-      documentIndexDao.deleteByIds(docIds)
+      docIds.chunked(SQLITE_IN_CHUNK_SIZE).forEach { chunk ->
+        documentIndexDao.deleteByIds(chunk)
+      }
     }
     return expired.size
   }

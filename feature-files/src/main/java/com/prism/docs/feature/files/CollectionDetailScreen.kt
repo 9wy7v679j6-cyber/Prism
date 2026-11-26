@@ -62,12 +62,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.prism.docs.core.data.model.IncomingDocumentRequest
 import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSurface
+import com.prism.docs.core.ui.glass.LocalGlassBackdrop
 import com.prism.docs.core.ui.glass.ScrollEdgeFade
+import com.prism.docs.core.ui.glass.glassContentCaptureSource
 import com.prism.docs.core.ui.glass.rememberHeaderScrollProgress
 import com.prism.docs.core.ui.glass.rememberPrismHaptics
-import com.prism.docs.core.ui.theme.LocalHazeState
+import com.prism.docs.core.ui.glass.rememberScreenGlassBackdropState
 import com.prism.docs.core.ui.theme.PrismDimens
-import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.delay
 
 @Composable
@@ -80,7 +81,7 @@ fun CollectionDetailScreen(
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
   val context = LocalContext.current
   val density = LocalDensity.current
-  val hazeState = LocalHazeState.current
+  val screenBackdropState = rememberScreenGlassBackdropState()
   val colorScheme = MaterialTheme.colorScheme
   val listState = rememberLazyListState()
   val scrollProgress = rememberHeaderScrollProgress(listState)
@@ -128,7 +129,7 @@ fun CollectionDetailScreen(
       horizontalAlignment = Alignment.CenterHorizontally,
       modifier =
         Modifier.fillMaxSize()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
+          .glassContentCaptureSource(screenBackdropState)
           .testTag("collection_detail_list"),
     ) {
       if (uiState.isLoaded && collection == null) {
@@ -254,7 +255,11 @@ fun CollectionDetailScreen(
             }
           }
         } else {
-          itemsIndexed(uiState.documents, key = { _, doc -> doc.id }) { idx, doc ->
+          itemsIndexed(
+            items = uiState.documents,
+            key = { _, doc -> doc.id },
+            contentType = { _, _ -> "collection_doc_row" },
+          ) { idx, doc ->
             DocumentListRow(
               document = doc,
               thumbnailPipeline = viewModel.thumbnailPipeline,
@@ -310,7 +315,8 @@ fun CollectionDetailScreen(
       modifier = Modifier.align(Alignment.BottomCenter),
     )
 
-    // Floating Glass Top Bar (outside Haze source)
+    // Floating Glass Top Bar sampling screen content + blobs
+    CompositionLocalProvider(LocalGlassBackdrop provides screenBackdropState) {
     Box(
       modifier =
         Modifier.align(Alignment.TopCenter)
@@ -421,6 +427,7 @@ fun CollectionDetailScreen(
             ),
         )
       }
+    }
     }
   }
   }

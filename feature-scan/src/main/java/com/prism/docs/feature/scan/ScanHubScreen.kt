@@ -46,8 +46,7 @@ import com.prism.docs.core.ui.glass.ObserveScrollCollapse
 import com.prism.docs.core.ui.glass.ScrollEdgeFade
 import com.prism.docs.core.ui.glass.rememberHeaderScrollProgress
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
-import com.prism.docs.core.ui.theme.LocalHazeState
-import dev.chrisbanes.haze.hazeSource
+import com.prism.docs.core.ui.theme.PrismDimens
 
 @Composable
 fun ScanHubScreen(
@@ -56,7 +55,6 @@ fun ScanHubScreen(
 ) {
   val listState = rememberLazyListState()
   val headerScrollProgress = rememberHeaderScrollProgress(listState)
-  val hazeState = LocalHazeState.current
   val colorScheme = MaterialTheme.colorScheme
   val density = LocalDensity.current
 
@@ -74,7 +72,7 @@ fun ScanHubScreen(
       contentPadding =
         PaddingValues(
           top = topHeaderDp + 8.dp,
-          bottom = navBarBottom + 116.dp,
+          bottom = navBarBottom + PrismDimens.ListBottomContentPadding,
           start = 20.dp,
           end = 20.dp,
         ),
@@ -82,7 +80,6 @@ fun ScanHubScreen(
       horizontalAlignment = Alignment.CenterHorizontally,
       modifier =
         Modifier.fillMaxSize()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
           .testTag("scan_hub_list"),
     ) {
       item {
@@ -154,7 +151,7 @@ fun ScanHubScreen(
 
     ScrollEdgeFade(
       isTop = false,
-      height = navBarBottom + 96.dp,
+      height = navBarBottom + PrismDimens.BottomScrimHeight,
       modifier = Modifier.align(Alignment.BottomCenter),
     )
   }

@@ -56,15 +56,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.withFrameNanos
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -189,6 +195,22 @@ private fun bakeBlobTexture(color: Color, blobAlpha: Float): ImageBitmap {
 }
 
 @Composable
+private fun rememberAppForegroundState(): State<Boolean> {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val isForeground = remember(lifecycleOwner) {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, _ ->
+            isForeground.value = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    return isForeground
+}
+
+@Composable
 fun DriftingBlobsBackdrop(
     modifier: Modifier = Modifier,
     base: Color = Color(0xFFE8EDF9),
@@ -196,16 +218,26 @@ fun DriftingBlobsBackdrop(
     blobAlpha: Float = 1f,
 ) {
     val motion = LocalGlassMotion.current
-    val clock: State<Float> = if (motion && blobAlpha > 0.005f) {
-        val infinite = rememberInfiniteTransition(label = "glassBlobs")
-        infinite.animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(60_000, easing = LinearEasing), RepeatMode.Restart),
-            label = "glassBlobClock",
-        )
-    } else {
-        remember { mutableStateOf(0f) }
+    val dynamics = LocalGlassDynamics.current
+    val foregroundState = rememberAppForegroundState()
+    val clockState = remember { mutableFloatStateOf(0f) }
+
+    // Frame-paced loop pauses automatically when app is backgrounded or during fast flings,
+    // resuming smoothly from the exact frozen phase with zero frame jumps.
+    LaunchedEffect(motion, blobAlpha, foregroundState.value, dynamics.isFastFlinging) {
+        if (!motion || blobAlpha <= 0.005f || !foregroundState.value || dynamics.isFastFlinging) {
+            return@LaunchedEffect
+        }
+        var lastFrameNs = 0L
+        while (true) {
+            withFrameNanos { frameNs ->
+                if (lastFrameNs != 0L) {
+                    val dtSec = ((frameNs - lastFrameNs) / 1_000_000_000f).coerceIn(0f, 0.05f)
+                    clockState.floatValue = (clockState.floatValue + dtSec / 60f) % 1f
+                }
+                lastFrameNs = frameNs
+            }
+        }
     }
 
     val textures: List<ImageBitmap> = remember(blobs, blobAlpha) {
@@ -218,7 +250,7 @@ fun DriftingBlobsBackdrop(
             .background(base)
             .drawBehind {
                 if (textures.isEmpty()) return@drawBehind
-                val t = clock.value
+                val t = clockState.floatValue
                 val twoPi = 2f * PI.toFloat()
                 val w = size.width
                 val h = size.height
@@ -247,8 +279,8 @@ fun DriftingBlobsBackdrop(
 
 /**
  * A soft white highlight that sweeps across the surface every [periodMs]. Use it on the floating
- * tab bar and other large glass pieces; not on every small control.
- * [cornerRadius] should match the surface (use a large value such as 999.dp for a capsule).
+ * tab bar and other large glass pieces; not on every small control. Pauses automatically when the
+ * app is in the background or while a fast fling is in progress.
  */
 fun Modifier.glassSheen(
     cornerRadius: Dp = 999.dp,
@@ -256,19 +288,48 @@ fun Modifier.glassSheen(
     sweepMs: Int = 1500,
     peakAlpha: Float = 0.45f,
 ): Modifier = composed {
-    if (!LocalGlassMotion.current) return@composed this
-    val infinite = rememberInfiniteTransition(label = "glassSheen")
-    val progress = infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(periodMs, easing = LinearEasing), RepeatMode.Restart),
-        label = "glassSheenProgress",
-    )
-    val sweepFraction = sweepMs.toFloat() / periodMs
+    val motion = LocalGlassMotion.current
+    val debugConfig = LocalGlassDebugConfig.current
+    if (!motion || !debugConfig.enableSheen) return@composed this
+    val dynamics = LocalGlassDynamics.current
+    val foregroundState = rememberAppForegroundState()
+    // -1f while sleeping between sweeps so draw phase skips work and Choreographer stays idle
+    val sweepProgressState = remember { mutableFloatStateOf(-1f) }
+
+    LaunchedEffect(motion, debugConfig.enableSheen, foregroundState.value, dynamics.isFastFlinging, periodMs, sweepMs) {
+        if (!motion || !debugConfig.enableSheen || !foregroundState.value || dynamics.isFastFlinging) {
+            sweepProgressState.floatValue = -1f
+            return@LaunchedEffect
+        }
+        val effectiveSweepMs = sweepMs.coerceAtLeast(100)
+        val effectivePeriodMs = periodMs.coerceAtLeast(effectiveSweepMs)
+        val idleMs = (effectivePeriodMs - effectiveSweepMs).toLong()
+        val sweepSec = effectiveSweepMs / 1000f
+        while (true) {
+            var elapsedSec = 0f
+            var lastFrameNs = 0L
+            sweepProgressState.floatValue = 0f
+            while (elapsedSec < sweepSec) {
+                withFrameNanos { frameNs ->
+                    if (lastFrameNs != 0L) {
+                        val dtSec = ((frameNs - lastFrameNs) / 1_000_000_000f).coerceIn(0f, 0.05f)
+                        elapsedSec += dtSec
+                        sweepProgressState.floatValue = (elapsedSec / sweepSec).coerceIn(0f, 1f)
+                    }
+                    lastFrameNs = frameNs
+                }
+            }
+            sweepProgressState.floatValue = -1f
+            if (idleMs > 0L) {
+                delay(idleMs)
+            }
+        }
+    }
+
     val sheenMidColor = Color.White.copy(alpha = peakAlpha)
     this.drawWithContent {
         drawContent()
-        val q = progress.value / sweepFraction
+        val q = sweepProgressState.floatValue
         if (q in 0f..1f) {
             val eased = FastOutSlowInEasing.transform(q)
             val band = size.width * 0.5f

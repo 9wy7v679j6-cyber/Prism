@@ -1,7 +1,10 @@
 package com.prism.docs.core.ui.glass
 
+import android.os.Build
 import androidx.compose.runtime.State
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
@@ -10,6 +13,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
@@ -38,6 +42,7 @@ internal fun Modifier.liquidGlassDockPill(
   return this
     .drawBehind {
       val insetPx = inset.toPx()
+      if (size.width <= 2f * insetPx + 4f || size.height <= 2f * insetPx + 4f) return@drawBehind
       val innerW = (size.width - 2f * insetPx).coerceAtLeast(1f)
       val segW = innerW / count
       val baseH = (size.height - 2f * insetPx).coerceAtLeast(1f)
@@ -53,8 +58,10 @@ internal fun Modifier.liquidGlassDockPill(
       val extraW = (stretch * segW * 0.28f) + (lift * 5.dp.toPx())
       val heightDelta = (lift * 3.dp.toPx()) - (stretch * 3.2.dp.toPx())
 
-      val pillW = (segW + extraW).coerceAtMost(innerW)
-      val pillH = (baseH + heightDelta).coerceIn(baseH * 0.78f, size.height - 3.dp.toPx())
+      val pillW = (segW + extraW).coerceAtMost(innerW).coerceAtLeast(1f)
+      val minPillH = (baseH * 0.78f).coerceAtLeast(1f)
+      val maxPillH = (size.height - 3.dp.toPx()).coerceAtLeast(minPillH)
+      val pillH = (baseH + heightDelta).coerceIn(minPillH, maxPillH)
 
       // Bias center slightly toward the leading edge of motion for organic liquid inertia
       val baseCenterX = insetPx + (pos + 0.5f) * segW
@@ -197,6 +204,7 @@ internal fun Modifier.liquidGlassDockPill(
       drawContent()
       // 6. Reactive top-edge specular light bloom tracking the active pill across the outer glass rim
       val insetPx = inset.toPx()
+      if (size.width <= 2f * insetPx + 4f || size.height < 4f) return@drawWithContent
       val innerW = (size.width - 2f * insetPx).coerceAtLeast(1f)
       val segW = innerW / count
       val pos = positionState.value.coerceIn(-0.12f, (count - 1).toFloat() + 0.12f)
@@ -220,6 +228,71 @@ internal fun Modifier.liquidGlassDockPill(
 }
 
 /**
+ * Draw/layer-phase AGSL optical magnifying lens for the floating tab bar (API 33+).
+ *
+ * Magnifies and chromatically refracts the tab icons underneath the sliding selection pill as it
+ * glides with a spring or is finger-scrubbed, without causing any recompositions. Automatically
+ * renders static magnification when Reduce Motion is enabled, and no-ops cleanly on API 26–32.
+ */
+internal fun Modifier.liquidGlassTabMagnifyingLens(
+  positionState: State<Float>,
+  lagPositionState: State<Float>,
+  dragLiftState: State<Float>,
+  count: Int,
+  inset: Dp = 5.dp,
+): Modifier = composed {
+  if (count <= 0 || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return@composed this
+  val debugConfig = LocalGlassDebugConfig.current
+  if (!debugConfig.enableEdgeRefraction) return@composed this
+  val motion = LocalGlassMotion.current
+  val lensEffect = remember { CachedLensMagnifyEffect() }
+
+  this.graphicsLayer {
+    val insetPx = inset.toPx()
+    if (size.width <= 2f * insetPx + 4f || size.height <= 2f * insetPx + 4f) {
+      renderEffect = null
+      return@graphicsLayer
+    }
+    val innerW = (size.width - 2f * insetPx).coerceAtLeast(1f)
+    val segW = innerW / count
+    val baseH = (size.height - 2f * insetPx).coerceAtLeast(1f)
+    if (segW <= 0f || baseH <= 0f) {
+      renderEffect = null
+      return@graphicsLayer
+    }
+
+    val pos = positionState.value.coerceIn(-0.16f, (count - 1).toFloat() + 0.16f)
+    val lag = lagPositionState.value.coerceIn(-0.16f, (count - 1).toFloat() + 0.16f)
+    val lift = if (motion) dragLiftState.value.coerceIn(0f, 1.25f) else 0f
+    val stretch = if (motion) abs(pos - lag).coerceIn(0f, 1.35f) else 0f
+
+    val pillW = (segW + stretch * segW * 0.24f + lift * 5.dp.toPx()).coerceAtMost(innerW).coerceAtLeast(1f)
+    val minPillH = (baseH * 0.78f).coerceAtLeast(1f)
+    val maxPillH = size.height.coerceAtLeast(minPillH)
+    val pillH = (baseH + lift * 3.dp.toPx() - stretch * 2.5.dp.toPx()).coerceIn(minPillH, maxPillH)
+    val minCenterX = insetPx + pillW * 0.5f
+    val maxCenterX = (size.width - insetPx - pillW * 0.5f).coerceAtLeast(minCenterX)
+    val centerX = (insetPx + (pos + 0.5f) * segW).coerceIn(minCenterX, maxCenterX)
+    val centerY = size.height * 0.5f
+
+    val magStrength = 0.55f + lift * 0.45f + stretch * 0.35f
+    val dispersionPx = (0.75.dp.toPx() + (lift + stretch) * 1.4.dp.toPx())
+    renderEffect =
+      lensEffect.obtain(
+        widthPx = size.width,
+        heightPx = size.height,
+        centerX = centerX,
+        centerY = centerY,
+        halfW = pillW * 0.5f,
+        halfH = pillH * 0.5f,
+        radius = min(pillW, pillH) * 0.5f,
+        magnifyStrength = magStrength,
+        dispersionPx = dispersionPx,
+      )
+  }
+}
+
+/**
  * Vertical Liquid Glass sliding lens pill for [GlassNavigationRail] on tablets and foldables.
  */
 internal fun Modifier.liquidGlassRailPill(
@@ -238,6 +311,7 @@ internal fun Modifier.liquidGlassRailPill(
     val vInset = verticalInset.toPx()
     val hInset = horizontalInset.toPx()
     val gap = itemSpacing.toPx()
+    if (size.width <= 2f * hInset + 4f || size.height <= 2f * vInset + 4f) return@drawBehind
     val totalH = (size.height - 2f * vInset - gap * (count - 1)).coerceAtLeast(1f)
     val segH = totalH / count
     val pillW = (size.width - 2f * hInset).coerceAtLeast(1f)
@@ -248,10 +322,13 @@ internal fun Modifier.liquidGlassRailPill(
     val lift = dragLiftState.value.coerceIn(0f, 1.2f)
     val stretch = abs(pos - lag).coerceIn(0f, 1.2f)
 
-    val pillH = segH + stretch * segH * 0.24f + lift * 3.dp.toPx()
+    val maxTrackH = (size.height - 2f * vInset + 4.dp.toPx()).coerceAtLeast(1f)
+    val pillH = (segH + stretch * segH * 0.24f + lift * 3.dp.toPx()).coerceAtMost(maxTrackH).coerceAtLeast(1f)
     val centerY = vInset + pos * (segH + gap) + segH * 0.5f
-    val pillTop = (centerY - pillH * 0.5f).coerceIn(vInset - 2.dp.toPx(), size.height - vInset + 2.dp.toPx() - pillH)
-    val cornerR = 20.dp.toPx()
+    val minTop = vInset - 2.dp.toPx()
+    val maxTop = (size.height - vInset + 2.dp.toPx() - pillH).coerceAtLeast(minTop)
+    val pillTop = (centerY - pillH * 0.5f).coerceIn(minTop, maxTop)
+    val cornerR = min(20.dp.toPx(), min(pillW, pillH) * 0.5f)
 
     val fillBrush =
       if (isDark) {

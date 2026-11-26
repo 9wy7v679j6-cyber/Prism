@@ -344,7 +344,9 @@ internal fun LibraryOptionsGlassSheet(
         OptionsActionRow(
           icon = Icons.Rounded.Palette,
           title = stringResource(R.string.options_appearance_title),
-          subtitle = stringResource(R.string.options_appearance_subtitle, env.capabilityTier.label),
+          subtitle =
+            if (isDebugBuild) stringResource(R.string.options_appearance_subtitle, env.capabilityTier.label)
+            else stringResource(R.string.options_appearance_subtitle_release),
           testTag = "top_glass_settings_button",
           onClick = {
             onDismiss()

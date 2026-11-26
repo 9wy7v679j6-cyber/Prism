@@ -24,19 +24,29 @@ constructor(
 
   override suspend fun doWork(): Result {
     return try {
+      var lastStage: DuplicateScanStage? = null
+      var lastEmitNanos = 0L
       val result =
         duplicateFinderEngine.scanActiveDuplicates { progress ->
-          setProgress(
-            workDataOf(
-              KEY_STAGE to progress.stage.name,
-              KEY_TOTAL_CANDIDATES to progress.totalCandidates,
-              KEY_PROCESSED_COUNT to progress.processedCount,
-              KEY_SIZE_GROUPS to progress.sizeGroupCount,
-              KEY_PARTIAL_MATCHES to progress.partialMatchCount,
-              KEY_CONFIRMED_GROUPS to progress.confirmedGroupCount,
-              KEY_RECLAIMABLE_BYTES to progress.reclaimableBytes,
+          val nowNanos = System.nanoTime()
+          val isBoundary =
+            progress.stage != lastStage ||
+              (progress.totalCandidates > 0 && progress.processedCount >= progress.totalCandidates)
+          if (isBoundary || nowNanos - lastEmitNanos >= PROGRESS_THROTTLE_NS) {
+            lastStage = progress.stage
+            lastEmitNanos = nowNanos
+            setProgress(
+              workDataOf(
+                KEY_STAGE to progress.stage.name,
+                KEY_TOTAL_CANDIDATES to progress.totalCandidates,
+                KEY_PROCESSED_COUNT to progress.processedCount,
+                KEY_SIZE_GROUPS to progress.sizeGroupCount,
+                KEY_PARTIAL_MATCHES to progress.partialMatchCount,
+                KEY_CONFIRMED_GROUPS to progress.confirmedGroupCount,
+                KEY_RECLAIMABLE_BYTES to progress.reclaimableBytes,
+              )
             )
-          )
+          }
         }
       Result.success(
         workDataOf(
@@ -56,6 +66,7 @@ constructor(
   }
 
   companion object {
+    private const val PROGRESS_THROTTLE_NS = 150_000_000L
     const val UNIQUE_WORK_NAME = "prism_duplicate_finder_scan"
     const val KEY_STAGE = "stage"
     const val KEY_TOTAL_CANDIDATES = "total_candidates"

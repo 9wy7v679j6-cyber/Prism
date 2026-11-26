@@ -20,6 +20,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -168,11 +169,11 @@ object PrismDimens {
   val FilterBarCornerRadius = 18.dp
   val ToastCornerRadius = 20.dp
 
-  val ListBottomContentPadding = 144.dp
-  val OverlayBottomPadding = 112.dp
+  val ListBottomContentPadding = 168.dp
+  val OverlayBottomPadding = 124.dp
   val TopScrimCollapsedHeight = 76.dp
   val TopScrimExpandedHeight = 156.dp
-  val BottomScrimHeight = 104.dp
+  val BottomScrimHeight = 132.dp
 
   val BadgeSquareSize = 46.dp
   val BadgeSquareCornerRadius = 14.dp
@@ -487,6 +488,7 @@ object PrismMotion {
 data class GlassEnvironment(
   val isDark: Boolean = false,
   val capabilityTier: GlassCapabilityTier = GlassCapabilityTier.FROSTED_TRANSLUCENT,
+  val clarity: Float = 0.35f,
   val blurScale: Float = 1.0f,
   val tintScale: Float = 1.0f,
   val reduceTransparency: Boolean = false,
@@ -514,6 +516,7 @@ fun isSystemReduceMotionEnabled(context: Context): Boolean {
 fun PrismTheme(
   darkTheme: Boolean = isSystemInDarkTheme(),
   dynamicColor: Boolean = true,
+  glassClarity: Float = 0.35f,
   blurScale: Float = 1.0f,
   tintScale: Float = 1.0f,
   reduceTransparency: Boolean = false,
@@ -521,45 +524,54 @@ fun PrismTheme(
   content: @Composable () -> Unit,
 ) {
   val context = LocalContext.current
-  val effectiveReduceMotion = reduceMotion || isSystemReduceMotionEnabled(context)
+  val systemReduceMotion = remember(context) { isSystemReduceMotionEnabled(context) }
+  val effectiveReduceMotion = reduceMotion || systemReduceMotion
 
   val colorScheme: ColorScheme =
-    when {
-      dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-        val dynamic =
-          if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        // Preserve Prism's crisp canvas depth and legible typography while adopting Material You accent
-        dynamic.copy(
-          background = if (darkTheme) PrismColors.DarkCanvas else PrismColors.LightCanvas,
-          onBackground = if (darkTheme) PrismColors.DarkOnSurface else PrismColors.LightOnSurface,
-          surface = if (darkTheme) PrismColors.DarkSurface else PrismColors.LightSurface,
-          onSurface = if (darkTheme) PrismColors.DarkOnSurface else PrismColors.LightOnSurface,
-          surfaceVariant =
-            if (darkTheme) PrismColors.DarkSurfaceVariant else PrismColors.LightSurfaceVariant,
-          onSurfaceVariant =
-            if (darkTheme) PrismColors.DarkOnSurfaceMuted else PrismColors.LightOnSurfaceMuted,
-          outline = if (darkTheme) PrismColors.DarkOutline else PrismLightColorScheme.outline,
-          outlineVariant =
-            if (darkTheme) PrismColors.DarkOutlineVariant else PrismLightColorScheme.outlineVariant,
-          error = if (darkTheme) PrismColors.DarkDestructiveAccent else PrismColors.CoralPdf,
-        )
+    remember(darkTheme, dynamicColor, context) {
+      when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+          val dynamic =
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+          // Preserve Prism's crisp canvas depth and legible typography while adopting Material You accent
+          dynamic.copy(
+            background = if (darkTheme) PrismColors.DarkCanvas else PrismColors.LightCanvas,
+            onBackground = if (darkTheme) PrismColors.DarkOnSurface else PrismColors.LightOnSurface,
+            surface = if (darkTheme) PrismColors.DarkSurface else PrismColors.LightSurface,
+            onSurface = if (darkTheme) PrismColors.DarkOnSurface else PrismColors.LightOnSurface,
+            surfaceVariant =
+              if (darkTheme) PrismColors.DarkSurfaceVariant else PrismColors.LightSurfaceVariant,
+            onSurfaceVariant =
+              if (darkTheme) PrismColors.DarkOnSurfaceMuted else PrismColors.LightOnSurfaceMuted,
+            outline = if (darkTheme) PrismColors.DarkOutline else PrismLightColorScheme.outline,
+            outlineVariant =
+              if (darkTheme) PrismColors.DarkOutlineVariant else PrismLightColorScheme.outlineVariant,
+            error = if (darkTheme) PrismColors.DarkDestructiveAccent else PrismColors.CoralPdf,
+          )
+        }
+        darkTheme -> PrismDarkColorScheme
+        else -> PrismLightColorScheme
       }
-      darkTheme -> PrismDarkColorScheme
-      else -> PrismLightColorScheme
     }
 
-  val tier = resolveGlassCapabilityTier(reduceTransparency = reduceTransparency)
+  val clampedClarity = glassClarity.coerceIn(0f, 1f)
+  val tier = remember(reduceTransparency) { resolveGlassCapabilityTier(reduceTransparency = reduceTransparency) }
   val glassEnv =
-    GlassEnvironment(
-      isDark = darkTheme,
-      capabilityTier = tier,
-      blurScale = blurScale,
-      tintScale = tintScale,
-      reduceTransparency = reduceTransparency,
-      reduceMotion = effectiveReduceMotion,
-    )
+    remember(darkTheme, tier, clampedClarity, blurScale, tintScale, reduceTransparency, effectiveReduceMotion) {
+      GlassEnvironment(
+        isDark = darkTheme,
+        capabilityTier = tier,
+        clarity = clampedClarity,
+        blurScale = blurScale,
+        tintScale = tintScale,
+        reduceTransparency = reduceTransparency,
+        reduceMotion = effectiveReduceMotion,
+      )
+    }
   val visualTokens =
-    if (darkTheme) darkPrismVisualTokens(colorScheme) else lightPrismVisualTokens()
+    remember(darkTheme, colorScheme) {
+      if (darkTheme) darkPrismVisualTokens(colorScheme) else lightPrismVisualTokens()
+    }
 
   CompositionLocalProvider(
     LocalGlassEnvironment provides glassEnv,

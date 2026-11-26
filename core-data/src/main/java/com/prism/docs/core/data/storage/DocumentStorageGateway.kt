@@ -158,6 +158,7 @@ constructor(
     withContext(Dispatchers.IO) {
       val state = currentAccessState()
       val seenUris = HashSet<String>(1024)
+      val seenCanonicalPaths = HashSet<String>(1024)
       val buffer = ArrayList<ScannedDocumentMetadata>(batchSize)
       var totalScanned = 0
 
@@ -165,6 +166,8 @@ constructor(
         if (item.isDirectory || isDirectoryMimeType(item.mimeType)) return
         if (isHiddenOrSystemPath(item.parentPath) || item.displayName.startsWith(".")) return
         if (!seenUris.add(item.uriString)) return
+        val canonicalKey = canonicalPathKey(item.parentPath, item.displayName)
+        if (canonicalKey != null && !seenCanonicalPaths.add(canonicalKey)) return
         buffer.add(item)
         totalScanned++
         if (buffer.size >= batchSize) {
@@ -173,17 +176,19 @@ constructor(
         }
       }
 
-      // 1. Fast MediaStore.Files sweep (works broadly and captures system-indexed media/documents)
-      scanMediaStoreFiles { emitItem(it) }
-
-      // 2. When All Files Access is granted, walk storage roots to catch non-MediaStore documents
-      //    (e.g., .docx, .xlsx, .pptx, .epub, .7z, code files in arbitrary folders)
+      // 1. When All Files Access is granted, walk direct filesystem roots FIRST so canonical
+      //    file:// entries own every physical path and MediaStore cannot double-index the same file
+      //    under a second content://media/external/file/<id> URI.
       if (state.level == StorageAccessLevel.FULL_ALL_FILES) {
         val roots = listStorageRoots().filter { it.sourceType == StorageSourceType.FILESYSTEM }
         for (root in roots) {
           walkFilesystemDirectory(File(root.pathOrUri)) { emitItem(it) }
         }
       }
+
+      // 2. MediaStore.Files sweep (primary source in limited/SAF mode; in full-access mode only
+      //    fills in any entries whose canonical path was not already emitted by filesystem walk).
+      scanMediaStoreFiles(alreadySeenCanonicalPaths = seenCanonicalPaths) { emitItem(it) }
 
       // 3. Walk persisted SAF trees (primary source in SAF degraded mode, plus USB-OTG roots)
       for (grant in state.safFolders) {
@@ -286,19 +291,26 @@ constructor(
     onFile: suspend (ScannedDocumentMetadata) -> Unit,
   ) {
     if (!root.exists() || !root.isDirectory) return
-    val stack = ArrayDeque<File>()
-    stack.add(root)
+    val visitedCanonicalDirs = HashSet<String>(128)
+    val rootCanonical = runCatching { root.canonicalPath }.getOrElse { root.absolutePath }
+    visitedCanonicalDirs.add(rootCanonical)
+    val stack = ArrayDeque<Pair<File, Int>>()
+    stack.add(root to 0)
     while (stack.isNotEmpty()) {
-      val current = stack.removeLast()
+      val (current, depth) = stack.removeLast()
       val children = runCatching { current.listFiles() }.getOrNull() ?: continue
       for (child in children) {
         val name = child.name
         if (name.startsWith(".")) continue
         if (child.isDirectory) {
+          if (depth >= MAX_WALK_DEPTH) continue
           val abs = child.absolutePath
           if (isHiddenOrSystemPath(abs)) continue
-          stack.add(child)
-        } else if (child.isFile && !child.isDirectory) {
+          val canonical = runCatching { child.canonicalPath }.getOrElse { abs }
+          if (visitedCanonicalDirs.add(canonical)) {
+            stack.add(child to (depth + 1))
+          }
+        } else if (child.isFile) {
           if (isHiddenOrSystemPath(child.absolutePath)) continue
           onFile(fileToMetadata(child))
         }
@@ -325,7 +337,10 @@ constructor(
     )
   }
 
-  private suspend fun scanMediaStoreFiles(onFile: suspend (ScannedDocumentMetadata) -> Unit) {
+  private suspend fun scanMediaStoreFiles(
+    alreadySeenCanonicalPaths: Set<String> = emptySet(),
+    onFile: suspend (ScannedDocumentMetadata) -> Unit,
+  ) {
     val collection =
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
@@ -406,6 +421,22 @@ constructor(
             val isPending = pendingCol >= 0 && !cursor.isNull(pendingCol) && cursor.getInt(pendingCol) != 0
             val isTrashed = trashedCol >= 0 && !cursor.isNull(trashedCol) && cursor.getInt(trashedCol) != 0
 
+            val parent =
+              when {
+                dataPath.isNotBlank() -> File(dataPath).parent.orEmpty()
+                relPath.isNotBlank() && primaryExternalDir != null ->
+                  File(primaryExternalDir, relPath.trimEnd('/')).absolutePath
+                relPath.isNotBlank() -> relPath.trimEnd('/')
+                else -> ""
+              }
+
+            if (alreadySeenCanonicalPaths.isNotEmpty()) {
+              val canonicalKey = canonicalPathKey(parent, name)
+              if (canonicalKey != null && canonicalKey in alreadySeenCanonicalPaths) {
+                continue
+              }
+            }
+
             if (
               shouldSkipMediaStoreRow(
                 displayName = name,
@@ -424,12 +455,6 @@ constructor(
             val mime = DocumentCategoryClassifier.inferMimeType(name, rawMime)
             val size = if (sizeCol >= 0) cursor.getLong(sizeCol) else 0L
             val modSec = if (modCol >= 0) cursor.getLong(modCol) else 0L
-            val parent =
-              when {
-                dataPath.isNotBlank() -> File(dataPath).parent.orEmpty()
-                relPath.isNotBlank() -> relPath.trimEnd('/')
-                else -> ""
-              }
 
             val contentUri = ContentUris.withAppendedId(collection, id)
             onFile(
@@ -533,6 +558,8 @@ constructor(
   }
 
   companion object {
+    private const val MAX_WALK_DEPTH = 32
+    private val MULTI_SLASH_REGEX = Regex("/+")
     private val DIRECTORY_MIME_TYPES =
       setOf(
         DocumentsContract.Document.MIME_TYPE_DIR.lowercase(),
@@ -555,6 +582,21 @@ constructor(
     }
 
     /**
+     * Produces a canonical physical-path key so MediaStore (`content://media/...`) and direct
+     * filesystem (`file:///storage/...`) scans never double-index the same file on disk.
+     * Returns null for opaque SAF `content://` tree paths so SAF deduplication stays URI-based.
+     */
+    fun canonicalPathKey(parentPath: String, displayName: String): String? {
+      val trimmedParent = parentPath.trim()
+      val trimmedName = displayName.trim()
+      if (trimmedParent.isEmpty() || trimmedName.isEmpty()) return null
+      if (trimmedParent.startsWith("content://", ignoreCase = true)) return null
+      val normalizedParent = trimmedParent.replace('\\', '/').trimEnd('/')
+      if (normalizedParent.isEmpty()) return null
+      return "$normalizedParent/$trimmedName".replace(MULTI_SLASH_REGEX, "/").lowercase()
+    }
+
+    /**
      * Filters out MediaStore rows that represent directories (e.g., "Android", "media", "DCIM"),
      * pending/trashed system records, hidden dot-entries, or restricted app-private directories.
      */
@@ -573,13 +615,11 @@ constructor(
       if (isDirectoryMimeType(rawMimeType)) return true
       if (isHiddenOrSystemPath(dataPath) || isHiddenOrSystemPath("/$relativePath")) return true
 
-      if (dataPath.isNotBlank()) {
-        val candidate = File(dataPath)
-        if (candidate.isDirectory) return true
-        if (candidate.exists() && !candidate.isFile) return true
-      }
-
-      if (dataPath.isBlank() && primaryExternalRoot != null) {
+      val dataFile = if (dataPath.isNotBlank()) File(dataPath) else null
+      if (dataFile != null) {
+        if (dataFile.isDirectory) return true
+        if (dataFile.exists() && !dataFile.isFile) return true
+      } else if (primaryExternalRoot != null) {
         val parentDir =
           if (relativePath.isNotBlank()) File(primaryExternalRoot, relativePath)
           else primaryExternalRoot
@@ -591,14 +631,13 @@ constructor(
       // In Android MediaStore, directory entries carry MEDIA_TYPE_NONE (0), null MIME type,
       // and no file extension (e.g. "Android", "media"). If we could not confirm a regular file
       // on disk, skip such entries rather than surfacing folders as documents.
-      val confirmedRegularFile = dataPath.isNotBlank() && File(dataPath).isFile
       if (
-        !confirmedRegularFile &&
-          rawMimeType.isNullOrBlank() &&
+        rawMimeType.isNullOrBlank() &&
           mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_NONE &&
           !displayName.contains('.')
       ) {
-        return true
+        val confirmedRegularFile = dataFile != null && dataFile.isFile
+        if (!confirmedRegularFile) return true
       }
 
       return false

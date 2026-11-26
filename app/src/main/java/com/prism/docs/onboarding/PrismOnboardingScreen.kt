@@ -59,10 +59,8 @@ import com.prism.docs.core.ui.R as CoreUiR
 import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSurface
 import com.prism.docs.core.ui.glass.ScrollEdgeFade
-import com.prism.docs.core.ui.theme.LocalHazeState
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
-import dev.chrisbanes.haze.hazeSource
 
 @Composable
 fun PrismOnboardingScreen(
@@ -72,7 +70,6 @@ fun PrismOnboardingScreen(
   onContinueToApp: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val hazeState = LocalHazeState.current
   val colorScheme = MaterialTheme.colorScheme
   val tokens = LocalPrismVisualTokens.current
   val density = LocalDensity.current
@@ -98,7 +95,6 @@ fun PrismOnboardingScreen(
       horizontalAlignment = Alignment.CenterHorizontally,
       modifier =
         Modifier.fillMaxSize()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
           .testTag("onboarding_scroll_list"),
     ) {
       item {

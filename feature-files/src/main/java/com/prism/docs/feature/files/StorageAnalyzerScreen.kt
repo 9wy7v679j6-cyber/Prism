@@ -48,6 +48,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -88,25 +89,83 @@ import com.prism.docs.core.data.model.IncomingDocumentRequest
 import com.prism.docs.core.data.thumbnail.DocumentThumbnailPipeline
 import com.prism.docs.core.ui.glass.ConnectedGlassCardSlice
 import com.prism.docs.core.ui.glass.GlassElevation
+import com.prism.docs.core.ui.glass.GlassSegmentedControl
 import com.prism.docs.core.ui.glass.GlassSurface
+import com.prism.docs.core.ui.glass.LocalGlassBackdrop
 import com.prism.docs.core.ui.glass.LocalGlassMotion
 import com.prism.docs.core.ui.glass.ScrollEdgeFade
 import com.prism.docs.core.ui.glass.glassClickable
+import com.prism.docs.core.ui.glass.glassContentCaptureSource
 import com.prism.docs.core.ui.glass.rememberHeaderScrollProgress
 import com.prism.docs.core.ui.glass.rememberPrismHaptics
-import com.prism.docs.core.ui.theme.LocalHazeState
+import com.prism.docs.core.ui.glass.rememberScreenGlassBackdropState
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismDimens
-import dev.chrisbanes.haze.hazeSource
 import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 
-private data class ArcSliceGeometry(
+internal data class ArcSliceGeometry(
   val segment: StorageRingSegment,
   val startAngleDeg: Float,
   val sweepAngleDeg: Float,
 )
+
+/**
+ * Computes non-overlapping arc sweeps summing strictly to `360f - gapDeg * count` while ensuring
+ * every non-empty category stays visually legible (`minSweepDeg`).
+ */
+internal fun computeNormalizedArcSlices(
+  segments: List<StorageRingSegment>,
+  gapDeg: Float = 3.5f,
+  minSweepDeg: Float = 6f,
+): List<ArcSliceGeometry> {
+  if (segments.isEmpty()) return emptyList()
+  if (segments.size == 1) {
+    return listOf(ArcSliceGeometry(segments.first(), startAngleDeg = -90f, sweepAngleDeg = 360f))
+  }
+
+  val count = segments.size
+  val usableSweep = (360f - gapDeg * count).coerceAtLeast(count * minSweepDeg)
+  val rawSweeps = FloatArray(count) { i -> segments[i].fraction.coerceAtLeast(0f) * usableSweep }
+
+  // Iteratively enforce minSweepDeg while reclaiming excess strictly from larger slices so sum == usableSweep
+  val locked = BooleanArray(count)
+  repeat(count) {
+    var deficit = 0f
+    var freeTotal = 0f
+    for (i in 0 until count) {
+      if (!locked[i] && rawSweeps[i] < minSweepDeg) {
+        deficit += (minSweepDeg - rawSweeps[i])
+        rawSweeps[i] = minSweepDeg
+        locked[i] = true
+      }
+    }
+    if (deficit <= 0.001f) return@repeat
+    for (i in 0 until count) {
+      if (!locked[i]) freeTotal += (rawSweeps[i] - minSweepDeg).coerceAtLeast(0f)
+    }
+    if (freeTotal > 0.001f) {
+      for (i in 0 until count) {
+        if (!locked[i]) {
+          val reducible = (rawSweeps[i] - minSweepDeg).coerceAtLeast(0f)
+          rawSweeps[i] -= deficit * (reducible / freeTotal)
+        }
+      }
+    }
+  }
+
+  val sum = rawSweeps.sum().coerceAtLeast(1f)
+  val scale = usableSweep / sum
+  val result = ArrayList<ArcSliceGeometry>(count)
+  var cursor = -90f
+  for (i in 0 until count) {
+    val sweep = (rawSweeps[i] * scale).coerceAtLeast(1f)
+    result += ArcSliceGeometry(segments[i], startAngleDeg = cursor, sweepAngleDeg = sweep)
+    cursor += sweep + gapDeg
+  }
+  return result
+}
 
 private fun StorageRingBucket.iconVector(): ImageVector =
   when (this) {
@@ -146,7 +205,7 @@ fun StorageAnalyzerScreen(
   viewModel: StorageAnalyzerViewModel = hiltViewModel(),
 ) {
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-  val hazeState = LocalHazeState.current
+  val screenBackdropState = rememberScreenGlassBackdropState()
   val colorScheme = MaterialTheme.colorScheme
   val density = LocalDensity.current
   val haptics = rememberPrismHaptics()
@@ -177,11 +236,29 @@ fun StorageAnalyzerScreen(
       horizontalAlignment = Alignment.CenterHorizontally,
       modifier =
         Modifier.fillMaxSize()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
+          .glassContentCaptureSource(screenBackdropState)
           .testTag("storage_analyzer_list"),
     ) {
+      // Product Priority: Default to Documents only with toggle for All indexed files
+      item(key = "analyzer_scope_toggle", contentType = "scope_toggle") {
+        GlassSegmentedControl(
+          options =
+            listOf(
+              stringResource(R.string.analyzer_scope_documents),
+              stringResource(R.string.analyzer_scope_all_files),
+            ),
+          selectedIndex = if (uiState.includeAllIndexedFiles) 1 else 0,
+          onSelect = { idx -> viewModel.setIncludeAllIndexedFiles(idx == 1) },
+          modifier =
+            Modifier.widthIn(max = PrismDimens.ContentMaxWidth)
+              .fillMaxWidth()
+              .testTag("analyzer_scope_segmented"),
+        )
+        Spacer(Modifier.height(PrismDimens.SpaceSection))
+      }
+
       if (uiState.totalDocumentCount == 0 && uiState.largestFiles.isEmpty()) {
-        item(key = "analyzer_empty") {
+        item(key = "analyzer_empty", contentType = "empty_card") {
           GlassSurface(
             cornerRadius = PrismDimens.EmptyCardCornerRadius,
             elevation = GlassElevation.SUBTLE,
@@ -223,9 +300,10 @@ fun StorageAnalyzerScreen(
           }
         }
       } else {
-        // 1. Hero Ring + Proportional Distribution Card
-        item(key = "analyzer_ring_card") {
+        // 1. Hero Ring + Proportional Stacked Bar Card
+        item(key = "analyzer_ring_card", contentType = "ring_hero") {
           StorageRingHeroCard(
+            includeAllIndexedFiles = uiState.includeAllIndexedFiles,
             totalBytes = uiState.totalBytes,
             totalDocuments = uiState.totalDocumentCount,
             segments = uiState.segments,
@@ -237,20 +315,25 @@ fun StorageAnalyzerScreen(
           Spacer(Modifier.height(PrismDimens.SpaceLarge))
         }
 
-        // 2. Clean Aligned Category Breakdown Card (replaces ragged FlowRow legend)
+        // 2. "By file type" Category Breakdown Card (Job 5 screenshot fix)
         if (uiState.segments.isNotEmpty()) {
-          item(key = "analyzer_categories_header") {
+          item(key = "analyzer_categories_header", contentType = "section_header") {
             AnalyzerSectionHeader(
-              title = stringResource(R.string.analyzer_total_used_label),
+              title = stringResource(R.string.analyzer_by_file_type_title),
               subtitle = stringResource(R.string.analyzer_tap_hint),
               modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
             )
             Spacer(Modifier.height(PrismDimens.SpaceMedium))
           }
 
-          itemsIndexed(uiState.segments, key = { _, seg -> "seg_${seg.bucket.name}" }) { idx, seg ->
+          itemsIndexed(
+            items = uiState.segments,
+            key = { _, seg -> "seg_${seg.bucket.name}" },
+            contentType = { _, _ -> "category_slice_row" },
+          ) { idx, seg ->
             CategoryBreakdownSliceRow(
               segment = seg,
+              includeAllIndexedFiles = uiState.includeAllIndexedFiles,
               isFirst = idx == 0,
               isLast = idx == uiState.segments.lastIndex,
               onClick = {
@@ -261,14 +344,14 @@ fun StorageAnalyzerScreen(
             )
           }
 
-          item(key = "analyzer_categories_spacer") {
+          item(key = "analyzer_categories_spacer", contentType = "spacer") {
             Spacer(Modifier.height(PrismDimens.SpaceLarge))
           }
         }
 
         // 3. Biggest Folders
         if (uiState.biggestFolders.isNotEmpty()) {
-          item(key = "analyzer_folders_header") {
+          item(key = "analyzer_folders_header", contentType = "section_header") {
             AnalyzerSectionHeader(
               title = stringResource(R.string.analyzer_biggest_folders_title),
               subtitle = null,
@@ -280,8 +363,9 @@ fun StorageAnalyzerScreen(
           val maxFolderBytes =
             uiState.biggestFolders.maxOfOrNull { it.totalBytes }?.coerceAtLeast(1L) ?: 1L
           itemsIndexed(
-            uiState.biggestFolders,
+            items = uiState.biggestFolders,
             key = { idx, f -> "folder_${idx}_${f.parentPath}" },
+            contentType = { _, _ -> "folder_slice_row" },
           ) { idx, folder ->
             FolderStatSliceRow(
               folder = folder,
@@ -292,14 +376,14 @@ fun StorageAnalyzerScreen(
             )
           }
 
-          item(key = "analyzer_folders_spacer") {
+          item(key = "analyzer_folders_spacer", contentType = "spacer") {
             Spacer(Modifier.height(PrismDimens.SpaceLarge))
           }
         }
 
         // 4. Largest Files
         if (uiState.largestFiles.isNotEmpty()) {
-          item(key = "analyzer_largest_header") {
+          item(key = "analyzer_largest_header", contentType = "section_header") {
             AnalyzerSectionHeader(
               title = stringResource(R.string.analyzer_largest_files_title),
               subtitle = null,
@@ -308,7 +392,11 @@ fun StorageAnalyzerScreen(
             Spacer(Modifier.height(PrismDimens.SpaceMedium))
           }
 
-          itemsIndexed(uiState.largestFiles, key = { _, doc -> "largest_${doc.id}" }) { idx, doc ->
+          itemsIndexed(
+            items = uiState.largestFiles,
+            key = { _, doc -> "largest_${doc.id}" },
+            contentType = { _, _ -> "largest_file_row" },
+          ) { idx, doc ->
             LargestFileSliceRow(
               rank = idx + 1,
               document = doc,
@@ -343,78 +431,80 @@ fun StorageAnalyzerScreen(
 
     ScrollEdgeFade(
       isTop = false,
-      height = navBarBottom + 56.dp,
+      height = navBarBottom + 72.dp,
       modifier = Modifier.align(Alignment.BottomCenter),
     )
 
-    // Floating Liquid Glass Top Bar with refraction & scrolled size badge
-    Box(
-      modifier =
-        Modifier.align(Alignment.TopCenter)
-          .fillMaxWidth()
-          .onSizeChanged { topBarHeightPx = it.height }
-          .statusBarsPadding()
-          .padding(
-            horizontal = PrismDimens.ScreenHorizontalPadding,
-            vertical = PrismDimens.SpaceSmall,
-          ),
-      contentAlignment = Alignment.Center,
-    ) {
-      GlassSurface(
-        cornerRadius = 28.dp,
-        shape = RoundedCornerShape(28.dp),
-        elevation = GlassElevation.FLOATING,
-        useBackdropBlur = isScrolledUnder,
-        enableRefraction = true,
+    // Floating Liquid Glass Top Bar sampling screen content + blobs via screenBackdropState
+    CompositionLocalProvider(LocalGlassBackdrop provides screenBackdropState) {
+      Box(
         modifier =
-          Modifier.widthIn(max = PrismDimens.ContentMaxWidth)
+          Modifier.align(Alignment.TopCenter)
             .fillMaxWidth()
-            .height(PrismDimens.HeaderBarHeight),
+            .onSizeChanged { topBarHeightPx = it.height }
+            .statusBarsPadding()
+            .padding(
+              horizontal = PrismDimens.ScreenHorizontalPadding,
+              vertical = PrismDimens.SpaceSmall,
+            ),
+        contentAlignment = Alignment.Center,
       ) {
-        Row(
-          modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(4.dp),
+        GlassSurface(
+          cornerRadius = 28.dp,
+          shape = RoundedCornerShape(28.dp),
+          elevation = GlassElevation.FLOATING,
+          useBackdropBlur = isScrolledUnder,
+          enableRefraction = true,
+          modifier =
+            Modifier.widthIn(max = PrismDimens.ContentMaxWidth)
+              .fillMaxWidth()
+              .height(PrismDimens.HeaderBarHeight),
         ) {
-          IconButton(
-            onClick = {
-              haptics.tap()
-              onNavigateBack()
-            },
-            modifier = Modifier.size(PrismDimens.TouchTargetMin).testTag("analyzer_back_button"),
+          Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
           ) {
-            Icon(
-              imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-              contentDescription = stringResource(R.string.dup_back_cd),
-              tint = colorScheme.onSurface,
-            )
-          }
-          Text(
-            text = stringResource(R.string.analyzer_title),
-            style = MaterialTheme.typography.titleLarge,
-            color = colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).semantics { heading() },
-          )
-          AnimatedVisibility(
-            visible = isScrolledUnder && uiState.totalDocumentCount > 0,
-            enter = fadeIn(tween(180)),
-            exit = fadeOut(tween(120)),
-          ) {
-            Box(
-              modifier =
-                Modifier.padding(end = 6.dp)
-                  .clip(CircleShape)
-                  .background(colorScheme.primary.copy(alpha = 0.14f))
-                  .padding(horizontal = 10.dp, vertical = 5.dp),
+            IconButton(
+              onClick = {
+                haptics.tap()
+                onNavigateBack()
+              },
+              modifier = Modifier.size(PrismDimens.TouchTargetMin).testTag("analyzer_back_button"),
             ) {
-              Text(
-                text = totalBytesText,
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                color = colorScheme.primary,
-                maxLines = 1,
+              Icon(
+                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                contentDescription = stringResource(R.string.dup_back_cd),
+                tint = colorScheme.onSurface,
               )
+            }
+            Text(
+              text = stringResource(R.string.analyzer_title),
+              style = MaterialTheme.typography.titleLarge,
+              color = colorScheme.onSurface,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.weight(1f).semantics { heading() },
+            )
+            AnimatedVisibility(
+              visible = isScrolledUnder && uiState.totalDocumentCount > 0,
+              enter = fadeIn(tween(180)),
+              exit = fadeOut(tween(120)),
+            ) {
+              Box(
+                modifier =
+                  Modifier.padding(end = 6.dp)
+                    .clip(CircleShape)
+                    .background(colorScheme.primary.copy(alpha = 0.14f))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+              ) {
+                Text(
+                  text = totalBytesText,
+                  style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                  color = colorScheme.primary,
+                  maxLines = 1,
+                )
+              }
             }
           }
         }
@@ -456,6 +546,7 @@ private fun AnalyzerSectionHeader(
 
 @Composable
 private fun StorageRingHeroCard(
+  includeAllIndexedFiles: Boolean,
   totalBytes: Long,
   totalDocuments: Int,
   segments: List<StorageRingSegment>,
@@ -476,26 +567,16 @@ private fun StorageRingHeroCard(
       label = "storage_ring_reveal",
     )
 
-  val arcSlices =
-    remember(segments) {
-      val list = mutableListOf<ArcSliceGeometry>()
-      val count = segments.size
-      val gapDeg = if (count > 1) 5f else 0f
-      val usableSweep = 360f - gapDeg * count
-      var cursor = -90f
-      for (seg in segments) {
-        val rawSweep = (seg.fraction * usableSweep).coerceAtLeast(if (count == 1) 360f else 8f)
-        list += ArcSliceGeometry(seg, cursor, rawSweep)
-        cursor += rawSweep + gapDeg
-      }
-      list
-    }
+  val arcSlices = remember(segments) { computeNormalizedArcSlices(segments) }
 
   val totalBytesText = rememberFormattedByteSize(totalBytes)
   val totalCountFormatted = remember(totalDocuments) { formatFileCount(totalDocuments) }
   val trackColor =
     if (tokens.isDark) Color.White.copy(alpha = 0.08f)
     else colorScheme.primary.copy(alpha = 0.09f)
+  val dividerColor =
+    if (tokens.isDark) Color(0xFF0B0E1D).copy(alpha = 0.72f)
+    else Color.White.copy(alpha = 0.78f)
   val innerGlowColor =
     if (tokens.isDark) colorScheme.primary.copy(alpha = 0.12f)
     else colorScheme.primary.copy(alpha = 0.06f)
@@ -512,7 +593,7 @@ private fun StorageRingHeroCard(
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceLarge),
     ) {
-      // Top KPI summary row
+      // Top KPI summary row with comma-formatted count badge
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -523,7 +604,11 @@ private fun StorageRingHeroCard(
           verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
           Text(
-            text = stringResource(R.string.analyzer_total_used_label),
+            text =
+              stringResource(
+                if (includeAllIndexedFiles) R.string.analyzer_total_used_label
+                else R.string.analyzer_total_documents_label
+              ),
             style = MaterialTheme.typography.labelLarge,
             color = colorScheme.onSurfaceVariant,
           )
@@ -542,9 +627,10 @@ private fun StorageRingHeroCard(
           Text(
             text =
               pluralStringResource(
-                R.plurals.collection_doc_count,
+                if (includeAllIndexedFiles) R.plurals.analyzer_file_count_formatted
+                else R.plurals.analyzer_doc_count_formatted,
                 totalDocuments,
-                totalDocuments,
+                totalCountFormatted,
               ),
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
             color = colorScheme.primary,
@@ -552,7 +638,7 @@ private fun StorageRingHeroCard(
         }
       }
 
-      // Interactive Luminous Liquid Glass Ring Chart
+      // Interactive Luminous Liquid Glass Ring Chart (StrokeCap.Butt prevents overlapping caps)
       Box(
         modifier = Modifier.size(220.dp),
         contentAlignment = Alignment.Center,
@@ -613,7 +699,7 @@ private fun StorageRingHeroCard(
             style = Stroke(width = strokeWidth),
           )
 
-          // Category arcs
+          // Crisp non-overlapping category arcs
           for (slice in arcSlices) {
             drawArc(
               color = slice.segment.bucket.colorFor(tokens.isDark),
@@ -622,7 +708,7 @@ private fun StorageRingHeroCard(
               useCenter = false,
               topLeft = topLeft,
               size = arcSize,
-              style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
+              style = Stroke(width = strokeWidth, cap = StrokeCap.Butt),
             )
           }
         }
@@ -644,25 +730,71 @@ private fun StorageRingHeroCard(
         }
       }
 
-      // Linear proportional distribution bar for instant left-to-right comparison
+      // True proportional stacked horizontal bar (replaces dot-plus-bar legend)
       if (segments.isNotEmpty()) {
-        Row(
+        Canvas(
           modifier =
             Modifier.fillMaxWidth()
               .height(10.dp)
               .clip(CircleShape)
-              .background(trackColor),
-          horizontalArrangement = Arrangement.spacedBy(3.dp),
+              .background(trackColor)
+              .testTag("analyzer_stacked_bar"),
         ) {
-          segments.forEach { seg ->
-            val segWeight = (seg.fraction * sweepReveal).coerceAtLeast(0.03f)
-            Box(
-              modifier =
-                Modifier.weight(segWeight)
-                  .fillMaxHeight()
-                  .clip(CircleShape)
-                  .background(seg.bucket.colorFor(tokens.isDark)),
+          val w = size.width
+          val h = size.height
+          if (w <= 0f || h <= 0f) return@Canvas
+          val dividerPx = 1.5.dp.toPx()
+          val minSliverPx = 4.dp.toPx().coerceAtMost(w / segments.size.coerceAtLeast(1))
+          val totalGaps = dividerPx * (segments.size - 1).coerceAtLeast(0)
+          val availW = (w - totalGaps).coerceAtLeast(1f)
+
+          // Compute normalized widths honoring minSliverPx
+          val widths = FloatArray(segments.size) { i ->
+            (segments[i].fraction.coerceAtLeast(0f) * availW)
+          }
+          val locked = BooleanArray(segments.size)
+          repeat(segments.size) {
+            var deficit = 0f
+            var free = 0f
+            for (i in widths.indices) {
+              if (!locked[i] && widths[i] < minSliverPx) {
+                deficit += minSliverPx - widths[i]
+                widths[i] = minSliverPx
+                locked[i] = true
+              }
+            }
+            if (deficit <= 0.01f) return@repeat
+            for (i in widths.indices) {
+              if (!locked[i]) free += (widths[i] - minSliverPx).coerceAtLeast(0f)
+            }
+            if (free > 0.01f) {
+              for (i in widths.indices) {
+                if (!locked[i]) {
+                  val reducible = (widths[i] - minSliverPx).coerceAtLeast(0f)
+                  widths[i] -= deficit * (reducible / free)
+                }
+              }
+            }
+          }
+
+          val scale = (availW / widths.sum().coerceAtLeast(1f)) * sweepReveal
+          var x = 0f
+          for (i in segments.indices) {
+            val segW = (widths[i] * scale).coerceAtLeast(1f)
+            drawRect(
+              color = segments[i].bucket.colorFor(tokens.isDark),
+              topLeft = Offset(x, 0f),
+              size = Size(segW, h),
             )
+            x += segW
+            if (i < segments.lastIndex) {
+              drawRect(
+                color = dividerColor,
+                topLeft = Offset(x, 0f),
+                size = Size(dividerPx, h),
+              )
+              x += dividerPx
+            }
           }
         }
       }
@@ -673,6 +805,7 @@ private fun StorageRingHeroCard(
 @Composable
 private fun CategoryBreakdownSliceRow(
   segment: StorageRingSegment,
+  includeAllIndexedFiles: Boolean,
   isFirst: Boolean,
   isLast: Boolean,
   onClick: () -> Unit,
@@ -683,7 +816,14 @@ private fun CategoryBreakdownSliceRow(
   val label = stringResource(segment.bucket.labelRes)
   val segmentColor = segment.bucket.colorFor(tokens.isDark)
   val sizeText = rememberFormattedByteSize(segment.totalBytes)
-  val pct = (segment.fraction * 100f).roundToInt().coerceIn(0, 100)
+  val pctInt = (segment.fraction * 100f).roundToInt().coerceIn(0, 100)
+  val pctText =
+    if (segment.totalBytes > 0L && pctInt == 0) {
+      stringResource(R.string.analyzer_less_than_one_pct)
+    } else {
+      "$pctInt%"
+    }
+  val countFormatted = remember(segment.itemCount) { formatFileCount(segment.itemCount) }
   val cd = stringResource(R.string.analyzer_segment_cd, label, sizeText)
   val trackColor =
     if (tokens.isDark) Color.White.copy(alpha = 0.08f)
@@ -762,14 +902,14 @@ private fun CategoryBreakdownSliceRow(
             ) {
               Box(
                 modifier =
-                  Modifier.fillMaxWidth(segment.fraction.coerceIn(0.05f, 1f))
+                  Modifier.fillMaxWidth(segment.fraction.coerceIn(0.03f, 1f))
                     .fillMaxHeight()
                     .clip(CircleShape)
                     .background(segmentColor),
               )
             }
             Text(
-              text = "$pct%",
+              text = pctText,
               style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
               color = segmentColor,
               maxLines = 1,
@@ -779,9 +919,10 @@ private fun CategoryBreakdownSliceRow(
           Text(
             text =
               pluralStringResource(
-                R.plurals.collection_doc_count,
+                if (includeAllIndexedFiles) R.plurals.analyzer_file_count_formatted
+                else R.plurals.analyzer_doc_count_formatted,
                 segment.itemCount,
-                segment.itemCount,
+                countFormatted,
               ),
             style = MaterialTheme.typography.bodySmall,
             color = colorScheme.onSurfaceVariant,

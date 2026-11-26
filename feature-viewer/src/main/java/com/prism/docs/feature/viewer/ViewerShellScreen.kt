@@ -57,9 +57,7 @@ import com.prism.docs.core.ui.glass.GlassToolbarAction
 import com.prism.docs.core.ui.glass.GlassToolbarGroup
 import com.prism.docs.core.ui.glass.ScrollEdgeFade
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
-import com.prism.docs.core.ui.theme.LocalHazeState
 import com.prism.docs.core.ui.theme.PrismDimens
-import dev.chrisbanes.haze.hazeSource
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -70,7 +68,6 @@ fun ViewerShellScreen(
   onOpenEditorRoute: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
-  val hazeState = LocalHazeState.current
   val env = LocalGlassEnvironment.current
   val colorScheme = MaterialTheme.colorScheme
   val density = LocalDensity.current
@@ -89,11 +86,9 @@ fun ViewerShellScreen(
     else navBarBottom + 96.dp
 
   Box(modifier = modifier.fillMaxSize()) {
-    // Document canvas area (marked as hazeSource so floating chrome blurs live page content)
     Box(
       modifier =
         Modifier.fillMaxSize()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
           .verticalScroll(rememberScrollState())
           .padding(
             top = topChromeDp + 12.dp,

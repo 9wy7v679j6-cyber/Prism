@@ -24,6 +24,12 @@ android {
   }
 }
 
+composeCompiler {
+  reportsDestination = layout.buildDirectory.dir("compose_compiler")
+  metricsDestination = layout.buildDirectory.dir("compose_compiler")
+  stabilityConfigurationFiles.add(rootProject.layout.projectDirectory.file("compose_stability_config.conf"))
+}
+
 dependencies {
   implementation(project(":core-ui"))
   implementation(project(":core-data"))
@@ -44,4 +50,6 @@ dependencies {
   implementation(libs.hilt.android)
   implementation(libs.androidx.hilt.navigation.compose)
   ksp(libs.hilt.compiler)
+
+  testImplementation(libs.junit)
 }

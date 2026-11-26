@@ -9,14 +9,16 @@ import com.prism.docs.core.data.model.DocumentCategory
  */
 object DocumentCategoryClassifier {
 
-  private val documentExtensions = setOf("doc", "docx", "odt", "rtf", "pages", "wpd")
+  private val documentExtensions = setOf("doc", "docx", "odt", "rtf", "pages", "wpd", "odg", "odf")
   private val spreadsheetExtensions = setOf("xls", "xlsx", "ods", "csv", "tsv", "numbers")
   private val slideExtensions = setOf("ppt", "pptx", "odp", "key")
+  private val primaryTextExtensions = setOf("txt", "md", "markdown")
+  private val primaryEbookExtensions = setOf("epub")
   private val imageExtensions =
     setOf("jpg", "jpeg", "png", "webp", "gif", "heic", "heif", "bmp", "svg", "tif", "tiff", "avif")
   private val videoExtensions = setOf("mp4", "mkv", "webm", "mov", "avi", "m4v", "3gp", "ts")
   private val audioExtensions = setOf("mp3", "m4a", "aac", "wav", "flac", "ogg", "opus", "wma")
-  private val archiveExtensions = setOf("zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz")
+  private val archiveExtensions = setOf("zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz", "apk")
   private val ebookExtensions = setOf("epub", "mobi", "azw", "azw3", "fb2", "cbz", "cbr")
   private val codeTextExtensions =
     setOf(
@@ -51,6 +53,65 @@ object DocumentCategoryClassifier {
       "gradle",
       "properties",
     )
+
+  /**
+   * Canonical primary document extensions shared across Library default view,
+   * Duplicate Finder, and Storage Analyzer (documents-only mode):
+   * PDF, Word, Excel, PowerPoint, text, RTF, ODF, CSV, EPUB, and Markdown.
+   * Explicitly excludes images, video, audio, APK, ZIP, and other archives.
+   */
+  val PRIMARY_DOCUMENT_EXTENSIONS: Set<String> =
+    setOf("pdf") +
+      documentExtensions +
+      spreadsheetExtensions +
+      slideExtensions +
+      primaryTextExtensions +
+      primaryEbookExtensions
+
+  val PRIMARY_DOCUMENT_CATEGORIES: Set<DocumentCategory> =
+    setOf(
+      DocumentCategory.PDF,
+      DocumentCategory.DOCUMENTS,
+      DocumentCategory.SPREADSHEETS,
+      DocumentCategory.SLIDES,
+    )
+
+  const val PRIMARY_DOCUMENT_SQL_WHERE: String =
+    "(category IN ('PDF', 'DOCUMENTS', 'SPREADSHEETS', 'SLIDES') " +
+      "OR LOWER(extension) IN (" +
+      "'pdf','doc','docx','odt','rtf','pages','wpd','odg','odf'," +
+      "'xls','xlsx','ods','csv','tsv','numbers'," +
+      "'ppt','pptx','odp','key'," +
+      "'txt','md','markdown','epub'" +
+      "))"
+
+  fun primaryDocumentSqlClause(alias: String): String =
+    "($alias.category IN ('PDF', 'DOCUMENTS', 'SPREADSHEETS', 'SLIDES') " +
+      "OR LOWER($alias.extension) IN (" +
+      "'pdf','doc','docx','odt','rtf','pages','wpd','odg','odf'," +
+      "'xls','xlsx','ods','csv','tsv','numbers'," +
+      "'ppt','pptx','odp','key'," +
+      "'txt','md','markdown','epub'" +
+      "))"
+
+  fun isPrimaryDocument(
+    category: String,
+    extension: String,
+    mimeType: String? = null,
+  ): Boolean {
+    val ext = extension.trim().lowercase()
+    if (ext in PRIMARY_DOCUMENT_EXTENSIONS) return true
+    val cat = runCatching { DocumentCategory.valueOf(category) }.getOrNull()
+    if (cat != null && cat in PRIMARY_DOCUMENT_CATEGORIES) return true
+    val mime = mimeType?.lowercase().orEmpty()
+    return mime == "application/pdf" ||
+      mime == "application/epub+zip" ||
+      mime == "text/plain" ||
+      mime == "text/markdown" ||
+      mime == "text/csv" ||
+      mime == "application/rtf" ||
+      mime.contains("opendocument")
+  }
 
   fun extractExtension(displayName: String): String {
     val dot = displayName.lastIndexOf('.')

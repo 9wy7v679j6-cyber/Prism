@@ -86,7 +86,13 @@ internal constructor(
     const val WORKMANAGER_BATCH_FILE_THRESHOLD = 5
     const val WORKMANAGER_BATCH_BYTES_THRESHOLD = 25L * 1024L * 1024L
     private const val COPY_BUFFER_SIZE = 64 * 1024
+    private const val SQLITE_IN_CHUNK_SIZE = 500
+    private const val PROGRESS_MIN_INTERVAL_NS = 120_000_000L
+    private const val PROGRESS_MIN_BYTES_DELTA = 512L * 1024L
     private val INVALID_NAME_CHARS = charArrayOf('/', '\\', '\u0000')
+    private val HEX_CHARS = charArrayOf(
+      '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+    )
 
     internal suspend fun resolveVolumeRootFromGateway(
       gateway: DocumentStorageGateway,
@@ -317,7 +323,7 @@ internal constructor(
       { _, _, _, _ -> },
   ): FileOperationResult =
     withContext(Dispatchers.IO) {
-      val docs = documentIndexDao.getByIds(documentIds)
+      val docs = getDocumentsByIdsChunked(documentIds)
       if (docs.isEmpty()) {
         return@withContext FileOperationResult(success = false, message = "No documents selected")
       }
@@ -382,7 +388,7 @@ internal constructor(
     nowEpochMs: Long = System.currentTimeMillis(),
   ): FileOperationResult =
     withContext(Dispatchers.IO) {
-      val docs = documentIndexDao.getByIds(documentIds).filter { !it.isTrashed }
+      val docs = getDocumentsByIdsChunked(documentIds).filter { !it.isTrashed }
       if (docs.isEmpty()) {
         return@withContext FileOperationResult(success = false, message = "No active files to trash")
       }
@@ -410,7 +416,7 @@ internal constructor(
     collisionPolicy: NameCollisionPolicy = NameCollisionPolicy.AUTO_RENAME,
   ): FileOperationResult =
     withContext(Dispatchers.IO) {
-      val entries = recycleBinDao.getByDocumentIds(documentIds)
+      val entries = getRecycleBinByDocIdsChunked(documentIds)
       if (entries.isEmpty()) {
         return@withContext FileOperationResult(success = false, message = "No trashed items found")
       }
@@ -445,7 +451,7 @@ internal constructor(
 
   suspend fun permanentlyDeleteFromRecycleBin(documentIds: List<Long>): FileOperationResult =
     withContext(Dispatchers.IO) {
-      val entries = recycleBinDao.getByDocumentIds(documentIds)
+      val entries = getRecycleBinByDocIdsChunked(documentIds)
       if (entries.isEmpty()) {
         return@withContext FileOperationResult(success = false, message = "No trashed items found")
       }
@@ -454,8 +460,8 @@ internal constructor(
       }
       val ids = entries.map { it.documentId }
       database.withTransaction {
-        recycleBinDao.deleteByDocumentIds(ids)
-        documentIndexDao.deleteByIds(ids)
+        deleteRecycleBinByDocIdsChunked(ids)
+        deleteDocumentsByIdsChunked(ids)
       }
       FileOperationResult(
         success = true,
@@ -476,7 +482,7 @@ internal constructor(
       val docIds = entries.map { it.documentId }
       database.withTransaction {
         recycleBinDao.deleteAll()
-        documentIndexDao.deleteByIds(docIds)
+        deleteDocumentsByIdsChunked(docIds)
       }
       FileOperationResult(
         success = true,
@@ -495,46 +501,48 @@ internal constructor(
       val docIds = expired.map { it.documentId }
       database.withTransaction {
         recycleBinDao.deleteExpiredEntries(nowEpochMs)
-        documentIndexDao.deleteByIds(docIds)
+        deleteDocumentsByIdsChunked(docIds)
       }
       expired.size
     }
 
   fun buildShareIntent(documents: List<IndexedDocumentEntity>): Intent? {
     if (documents.isEmpty()) return null
-    val shareUris =
-      ArrayList<Uri>(documents.size).apply {
-        for (doc in documents) {
-          val localFile = resolveLocalFile(doc.uriString)
-          val uri =
-            if (localFile != null && localFile.exists()) {
-              runCatching {
-                  FileProvider.getUriForFile(
-                    context,
-                    "${context.packageName}.fileprovider",
-                    localFile,
-                  )
-                }
-                .getOrNull()
-            } else if (doc.uriString.startsWith("content://")) {
-              Uri.parse(doc.uriString)
-            } else {
-              null
+    val resolvedPairs = ArrayList<Pair<IndexedDocumentEntity, Uri>>(documents.size)
+    for (doc in documents) {
+      val localFile = resolveLocalFile(doc.uriString)
+      val uri =
+        if (localFile != null && localFile.exists()) {
+          runCatching {
+              FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                localFile,
+              )
             }
-          if (uri != null) add(uri)
+            .getOrNull()
+        } else if (doc.uriString.startsWith("content://")) {
+          Uri.parse(doc.uriString)
+        } else {
+          null
         }
-      }
-    if (shareUris.isEmpty()) return null
+      if (uri != null) resolvedPairs.add(doc to uri)
+    }
+    if (resolvedPairs.isEmpty()) return null
 
-    return if (shareUris.size == 1) {
+    return if (resolvedPairs.size == 1) {
+      val (doc, uri) = resolvedPairs.first()
       Intent(Intent.ACTION_SEND).apply {
-        type = documents.first().mimeType.ifBlank { "*/*" }
-        putExtra(Intent.EXTRA_STREAM, shareUris.first())
+        type = doc.mimeType.ifBlank { "*/*" }
+        putExtra(Intent.EXTRA_STREAM, uri)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
       }
     } else {
+      val shareUris = ArrayList<Uri>(resolvedPairs.size).apply {
+        resolvedPairs.forEach { add(it.second) }
+      }
       val commonMime =
-        documents.map { it.mimeType }.distinct().singleOrNull()?.ifBlank { "*/*" } ?: "*/*"
+        resolvedPairs.map { it.first.mimeType }.distinct().singleOrNull()?.ifBlank { "*/*" } ?: "*/*"
       Intent(Intent.ACTION_SEND_MULTIPLE).apply {
         type = commonMime
         putParcelableArrayListExtra(Intent.EXTRA_STREAM, shareUris)
@@ -845,11 +853,12 @@ internal constructor(
     doc: IndexedDocumentEntity,
     nowEpochMs: Long,
   ): Boolean {
+    val safeDisplayName = sanitizeStagedFileName(doc.displayName)
     val localFile = resolveLocalFile(doc.uriString)
     if (localFile != null && localFile.exists()) {
       val volumeRoot = volumeRootResolver(localFile)
       val trashDir = ensureHiddenTrashDirectory(volumeRoot) ?: return false
-      val stagedName = "${UUID.randomUUID().toString().take(8)}_${doc.displayName}"
+      val stagedName = "${UUID.randomUUID().toString().take(8)}_$safeDisplayName"
       val stagedFile = File(trashDir, stagedName)
 
       // Same-volume O(1) rename into <volumeRoot>/.PrismTrash/
@@ -882,7 +891,7 @@ internal constructor(
     // SAF-tree file: stage a verified copy into app-private vault before deleting the SAF document
     if (doc.uriString.startsWith("content://")) {
       val safVault = ensureSafTrashVaultDirectory() ?: return false
-      val stagedFile = File(safVault, "${UUID.randomUUID().toString().take(8)}_${doc.displayName}")
+      val stagedFile = File(safVault, "${UUID.randomUUID().toString().take(8)}_$safeDisplayName")
       val copied =
         runCatching {
             streamCopyWithSha256(
@@ -962,12 +971,13 @@ internal constructor(
       val targetTree =
         runCatching { DocumentFile.fromTreeUri(context, Uri.parse(entry.originalPath)) }.getOrNull()
       if (targetTree != null && targetTree.canWrite()) {
-        val existingNames = targetTree.listFiles().mapNotNull { it.name?.lowercase() }.toSet()
+        val existingSiblings = targetTree.listFiles()
+        val existingNames = existingSiblings.mapNotNull { it.name?.lowercase() }.toSet()
         val resolvedName =
           resolveNameCollisionAgainstExisting(existingNames, entry.displayName, collisionPolicy)
             ?: return FileOperationResult(success = true, skippedCount = 1, message = "Skipped")
         if (collisionPolicy == NameCollisionPolicy.OVERWRITE) {
-          targetTree.listFiles().firstOrNull { it.name.equals(resolvedName, true) }?.delete()
+          existingSiblings.firstOrNull { it.name.equals(resolvedName, true) }?.delete()
         }
         val mime = DocumentCategoryClassifier.inferMimeType(resolvedName, null)
         val created =
@@ -1074,6 +1084,8 @@ internal constructor(
     val digest = MessageDigest.getInstance("SHA-256")
     val buffer = ByteArray(COPY_BUFFER_SIZE)
     var total = 0L
+    var lastReportedBytes = 0L
+    var lastReportNanos = System.nanoTime()
 
     openSource()?.use { input ->
       openDest()?.use { output ->
@@ -1084,6 +1096,17 @@ internal constructor(
           output.write(buffer, 0, read)
           digest.update(buffer, 0, read)
           total += read
+          val nowNanos = System.nanoTime()
+          if (
+            total - lastReportedBytes >= PROGRESS_MIN_BYTES_DELTA ||
+              nowNanos - lastReportNanos >= PROGRESS_MIN_INTERVAL_NS
+          ) {
+            lastReportedBytes = total
+            lastReportNanos = nowNanos
+            onBytesCopied(total)
+          }
+        }
+        if (total != lastReportedBytes) {
           onBytesCopied(total)
         }
         output.flush()
@@ -1248,10 +1271,46 @@ internal constructor(
     }
   }
 
-  private fun ByteArray.toHexString(): String =
-    buildString(size * 2) {
-      for (b in this@toHexString) {
-        append(String.format("%02x", b))
-      }
+  private suspend fun getDocumentsByIdsChunked(ids: List<Long>): List<IndexedDocumentEntity> {
+    if (ids.isEmpty()) return emptyList()
+    val distinct = ids.distinct()
+    if (distinct.size <= SQLITE_IN_CHUNK_SIZE) return documentIndexDao.getByIds(distinct)
+    return distinct.chunked(SQLITE_IN_CHUNK_SIZE).flatMap { documentIndexDao.getByIds(it) }
+  }
+
+  private suspend fun getRecycleBinByDocIdsChunked(ids: List<Long>): List<RecycleBinEntryEntity> {
+    if (ids.isEmpty()) return emptyList()
+    val distinct = ids.distinct()
+    if (distinct.size <= SQLITE_IN_CHUNK_SIZE) return recycleBinDao.getByDocumentIds(distinct)
+    return distinct.chunked(SQLITE_IN_CHUNK_SIZE).flatMap { recycleBinDao.getByDocumentIds(it) }
+  }
+
+  private suspend fun deleteDocumentsByIdsChunked(ids: List<Long>) {
+    if (ids.isEmpty()) return
+    ids.distinct().chunked(SQLITE_IN_CHUNK_SIZE).forEach { chunk ->
+      documentIndexDao.deleteByIds(chunk)
     }
+  }
+
+  private suspend fun deleteRecycleBinByDocIdsChunked(ids: List<Long>) {
+    if (ids.isEmpty()) return
+    ids.distinct().chunked(SQLITE_IN_CHUNK_SIZE).forEach { chunk ->
+      recycleBinDao.deleteByDocumentIds(chunk)
+    }
+  }
+
+  private fun sanitizeStagedFileName(rawName: String): String {
+    val sanitized = rawName.replace('/', '_').replace('\\', '_').replace('\u0000', '_').trim()
+    return if (sanitized.isEmpty() || sanitized == "." || sanitized == "..") "document" else sanitized
+  }
+
+  private fun ByteArray.toHexString(): String {
+    val chars = CharArray(size * 2)
+    for (i in indices) {
+      val v = this[i].toInt() and 0xFF
+      chars[i * 2] = HEX_CHARS[v ushr 4]
+      chars[i * 2 + 1] = HEX_CHARS[v and 0x0F]
+    }
+    return String(chars)
+  }
 }

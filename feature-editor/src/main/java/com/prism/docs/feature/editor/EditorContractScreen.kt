@@ -33,8 +33,6 @@ import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSurface
 import com.prism.docs.core.ui.glass.GlassToolbarAction
 import com.prism.docs.core.ui.glass.GlassToolbarGroup
-import com.prism.docs.core.ui.theme.LocalHazeState
-import dev.chrisbanes.haze.hazeSource
 
 @Composable
 fun EditorContractScreen(
@@ -42,7 +40,6 @@ fun EditorContractScreen(
   modifier: Modifier = Modifier,
 ) {
   val colorScheme = MaterialTheme.colorScheme
-  val hazeState = LocalHazeState.current
   val density = LocalDensity.current
 
   val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -56,7 +53,6 @@ fun EditorContractScreen(
     Box(
       modifier =
         Modifier.fillMaxSize()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
           .verticalScroll(rememberScrollState())
           .padding(
             top = topChromeDp + 12.dp,

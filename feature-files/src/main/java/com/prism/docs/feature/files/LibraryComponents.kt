@@ -82,7 +82,8 @@ import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
 import com.prism.docs.core.ui.theme.PrismDimens
-import java.util.Calendar
+import java.time.Instant
+import java.time.ZoneId
 
 enum class DateBucket(@StringRes val titleRes: Int) {
   TODAY(R.string.date_group_today),
@@ -100,19 +101,12 @@ data class DateBucketBoundaries(
 ) {
   companion object {
     fun current(nowEpochMs: Long = System.currentTimeMillis()): DateBucketBoundaries {
-      val cal = Calendar.getInstance().apply {
-        timeInMillis = nowEpochMs
-        set(Calendar.HOUR_OF_DAY, 0)
-        set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-      }
-      val todayStart = cal.timeInMillis
-      val oneDay = 24L * 60L * 60L * 1000L
+      val zone = ZoneId.systemDefault()
+      val today = Instant.ofEpochMilli(nowEpochMs).atZone(zone).toLocalDate()
       return DateBucketBoundaries(
-        todayStartMs = todayStart,
-        yesterdayStartMs = todayStart - oneDay,
-        thisWeekStartMs = todayStart - 6L * oneDay,
+        todayStartMs = today.atStartOfDay(zone).toInstant().toEpochMilli(),
+        yesterdayStartMs = today.minusDays(1).atStartOfDay(zone).toInstant().toEpochMilli(),
+        thisWeekStartMs = today.minusDays(6).atStartOfDay(zone).toInstant().toEpochMilli(),
       )
     }
   }
@@ -198,18 +192,13 @@ internal fun StickyDateSectionHeader(
       cornerRadius = PrismDimens.StickyHeaderCornerRadius,
       elevation = if (useBackdropBlur) GlassElevation.FLOATING else GlassElevation.SUBTLE,
       useBackdropBlur = useBackdropBlur,
-      accentTint = colorScheme.primary.copy(alpha = if (tokens.isDark) 0.22f else 0.08f),
+      enableRefraction = useBackdropBlur,
+      accentTint = colorScheme.primary.copy(alpha = if (tokens.isDark) 0.16f else 0.08f),
       modifier = Modifier.fillMaxWidth(),
     ) {
       Row(
         modifier =
           Modifier.fillMaxWidth()
-            .background(
-              colorScheme.surface.copy(
-                alpha = if (useBackdropBlur) (if (tokens.isDark) 0.72f else 0.56f)
-                else (if (tokens.isDark) 0.62f else 0.44f)
-              )
-            )
             .padding(
               horizontal = PrismDimens.SpaceSection,
               vertical = PrismDimens.SpaceMediumLarge,
@@ -272,6 +261,7 @@ internal fun LibraryCollapsingTopBar(
         shape = CircleShape,
         elevation = GlassElevation.FLOATING,
         useBackdropBlur = true,
+        enableRefraction = true,
         modifier =
           Modifier.matchParentSize()
             .graphicsLayer {
@@ -347,8 +337,9 @@ internal fun LibraryCollapsingTopBar(
       GlassSurface(
         cornerRadius = PrismDimens.CategoryChipCornerRadius,
         shape = CircleShape,
-        elevation = GlassElevation.FLOATING,
-        useBackdropBlur = true,
+        elevation = if (isScrolledUnder) GlassElevation.SUBTLE else GlassElevation.FLOATING,
+        useBackdropBlur = !isScrolledUnder,
+        enableRefraction = !isScrolledUnder,
         onClick = onEnterSelectionMode,
         hapticOnClick = false,
         clickRole = Role.Button,
@@ -375,8 +366,9 @@ internal fun LibraryCollapsingTopBar(
         GlassSurface(
           cornerRadius = PrismDimens.CategoryChipCornerRadius,
           shape = CircleShape,
-          elevation = GlassElevation.FLOATING,
-          useBackdropBlur = true,
+          elevation = if (isScrolledUnder) GlassElevation.SUBTLE else GlassElevation.FLOATING,
+          useBackdropBlur = !isScrolledUnder,
+          enableRefraction = !isScrolledUnder,
           onClick = onSettingsClick,
           clickRole = Role.Button,
           modifier =
@@ -437,6 +429,7 @@ internal fun SelectionGlassTopBar(
     shape = RoundedCornerShape(26.dp),
     elevation = GlassElevation.FLOATING,
     useBackdropBlur = true,
+    enableRefraction = true,
     accentTint = colorScheme.primary,
     modifier =
       modifier
@@ -580,7 +573,7 @@ internal fun PrimaryGlassButton(
   modifier: Modifier = Modifier,
 ) {
   val tokens = LocalPrismVisualTokens.current
-  val gradientBrush = Brush.linearGradient(colors = tokens.brandGradient)
+  val gradientBrush = remember(tokens.brandGradient) { Brush.linearGradient(colors = tokens.brandGradient) }
   val borderColor = Color.White.copy(alpha = if (tokens.isDark) 0.42f else 0.72f)
 
   Box(
@@ -615,7 +608,7 @@ internal fun PrimaryGlassButton(
 private fun LibraryEmptyGlassIllustration(modifier: Modifier = Modifier) {
   val colorScheme = MaterialTheme.colorScheme
   val tokens = LocalPrismVisualTokens.current
-  val badgeGradient = Brush.linearGradient(colors = tokens.brandGradient)
+  val badgeGradient = remember(tokens.brandGradient) { Brush.linearGradient(colors = tokens.brandGradient) }
 
   Box(
     modifier =

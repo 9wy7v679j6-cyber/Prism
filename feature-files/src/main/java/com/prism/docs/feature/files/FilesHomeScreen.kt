@@ -74,8 +74,6 @@ import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CollectionsBookmark
-import androidx.compose.material.icons.rounded.DonutLarge
-import androidx.compose.material.icons.rounded.FileCopy
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Tune
@@ -142,20 +140,21 @@ import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSegmentedControl
 import com.prism.docs.core.ui.glass.GlassSheetDetent
 import com.prism.docs.core.ui.glass.GlassSurface
+import com.prism.docs.core.ui.glass.LocalGlassBackdrop
 import com.prism.docs.core.ui.glass.LocalGlassMotion
 import com.prism.docs.core.ui.glass.ObserveScrollCollapse
 import com.prism.docs.core.ui.glass.ScrollEdgeFade
 import com.prism.docs.core.ui.glass.glassClickable
+import com.prism.docs.core.ui.glass.glassContentCaptureSource
 import com.prism.docs.core.ui.glass.glassEntrance
 import com.prism.docs.core.ui.glass.glassPress
 import com.prism.docs.core.ui.glass.horizontalRightEdgeFade
 import com.prism.docs.core.ui.glass.rememberHeaderScrollProgress
 import com.prism.docs.core.ui.glass.rememberPrismHaptics
-import com.prism.docs.core.ui.theme.LocalHazeState
+import com.prism.docs.core.ui.glass.rememberScreenGlassBackdropState
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
 import com.prism.docs.core.ui.theme.PrismDimens
-import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.delay
 
 @Composable
@@ -275,6 +274,15 @@ fun FilesHomeScreen(
           uiState.recycleBinCount,
           formatFileCount(uiState.recycleBinCount),
         )
+      uiState.section == FilesSection.LIBRARY &&
+        uiState.query.documentsOnly &&
+        uiState.query.category == null &&
+        !uiState.query.otherCategoriesOnly ->
+        pluralStringResource(
+          R.plurals.library_indexed_documents_subtitle,
+          uiState.totalDocumentCount,
+          formatFileCount(uiState.totalDocumentCount),
+        )
       else ->
         pluralStringResource(
           R.plurals.library_indexed_files_subtitle,
@@ -341,6 +349,8 @@ fun FilesHomeScreen(
       label = "files_top_content_padding",
     )
 
+  val screenBackdropState = rememberScreenGlassBackdropState()
+
   Box(modifier = modifier.fillMaxSize()) {
     AnimatedContent(
       targetState = uiState.section,
@@ -363,7 +373,7 @@ fun FilesHomeScreen(
           EnterTransition.None togetherWith ExitTransition.None
         }
       },
-      modifier = Modifier.fillMaxSize(),
+      modifier = Modifier.fillMaxSize().glassContentCaptureSource(screenBackdropState),
       label = "files_section_transition",
     ) { activeSection ->
       when (activeSection) {
@@ -393,10 +403,10 @@ fun FilesHomeScreen(
             onAddSafFolder = onAddSafFolder,
             onDismissAccessBanner = onDismissAccessBanner,
             onTriggerSync = viewModel::triggerManualSync,
+            onSelectDocumentsOnly = viewModel::selectDocumentsScope,
+            onSelectAllFiles = viewModel::selectAllFilesScope,
             onCategorySelected = viewModel::setCategoryFilter,
             onTagSelected = viewModel::setTagFilter,
-            onOpenDuplicateFinder = onOpenDuplicateFinder,
-            onOpenStorageAnalyzer = onOpenStorageAnalyzer,
             onOpenCollectionDetail = onOpenCollectionDetail,
             onOpenManageTagsCollections = viewModel::openManageTagsCollectionsSheet,
             onManageDocumentTagsCollections = { doc -> viewModel.openAssignSheet(listOf(doc.id)) },
@@ -474,6 +484,7 @@ fun FilesHomeScreen(
       }
     }
 
+    CompositionLocalProvider(LocalGlassBackdrop provides screenBackdropState) {
     if (uiState.section == FilesSection.LIBRARY) {
       ScrollEdgeFade(
         isTop = true,
@@ -775,6 +786,7 @@ fun FilesHomeScreen(
       onRenameTag = viewModel::renameTag,
       onDeleteTag = viewModel::deleteTag,
     )
+    }
   }
 
   if (uiState.showCreateFolderDialog) {
@@ -965,10 +977,10 @@ private fun LibraryPagingSection(
   onAddSafFolder: () -> Unit,
   onDismissAccessBanner: () -> Unit,
   onTriggerSync: () -> Unit,
+  onSelectDocumentsOnly: () -> Unit,
+  onSelectAllFiles: () -> Unit,
   onCategorySelected: (DocumentCategory?) -> Unit,
   onTagSelected: (Long?) -> Unit,
-  onOpenDuplicateFinder: () -> Unit,
-  onOpenStorageAnalyzer: () -> Unit,
   onOpenCollectionDetail: (Long) -> Unit,
   onOpenManageTagsCollections: () -> Unit,
   onManageDocumentTagsCollections: (IndexedDocumentEntity) -> Unit,
@@ -984,7 +996,6 @@ private fun LibraryPagingSection(
   onTrashDocument: (IndexedDocumentEntity) -> Unit,
   onTabBarCollapsedChange: (Boolean) -> Unit,
 ) {
-  val hazeState = LocalHazeState.current
   val density = LocalDensity.current
   val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
   val showAccessBanner = storageAccessState.isDegradedMode && !preferences.fullAccessBannerDismissed
@@ -992,13 +1003,16 @@ private fun LibraryPagingSection(
   val isInitialLoading =
     pagedItems.loadState.refresh is LoadState.Loading && pagedItems.itemCount == 0
   val isAppending = pagedItems.loadState.append is LoadState.Loading
-  val dateBoundaries = remember(pagedItems.itemCount) { DateBucketBoundaries.current() }
+  val snapshotList = pagedItems.itemSnapshotList
+  val dateBoundaries = remember(snapshotList.size) { DateBucketBoundaries.current() }
   val sections =
-    buildLibrarySections(
-      pagedItems = pagedItems,
-      sortField = uiState.query.sortField,
-      boundaries = dateBoundaries,
-    )
+    remember(snapshotList, uiState.query.sortField, dateBoundaries) {
+      buildLibrarySections(
+        pagedItems = pagedItems,
+        sortField = uiState.query.sortField,
+        boundaries = dateBoundaries,
+      )
+    }
 
   val motionEnabled = LocalGlassMotion.current
   AnimatedContent(
@@ -1028,12 +1042,13 @@ private fun LibraryPagingSection(
         ),
       verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceRow),
       horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceRow),
-      modifier =
-        Modifier.fillMaxSize()
-          .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
-          .testTag("library_grid"),
+      modifier = Modifier.fillMaxSize().testTag("library_grid"),
     ) {
-      item(span = { GridItemSpan(maxLineSpan) }, key = "library_hero_stack") {
+      item(
+        span = { GridItemSpan(maxLineSpan) },
+        key = "library_hero_stack",
+        contentType = "library_hero",
+      ) {
         LibraryHeroStack(
           uiState = uiState,
           sectionTitle = sectionTitle,
@@ -1048,10 +1063,10 @@ private fun LibraryPagingSection(
           onRequestAllFilesAccess = onRequestAllFilesAccess,
           onAddSafFolder = onAddSafFolder,
           onDismissAccessBanner = onDismissAccessBanner,
+          onSelectDocumentsOnly = onSelectDocumentsOnly,
+          onSelectAllFiles = onSelectAllFiles,
           onCategorySelected = onCategorySelected,
           onTagSelected = onTagSelected,
-          onOpenDuplicateFinder = onOpenDuplicateFinder,
-          onOpenStorageAnalyzer = onOpenStorageAnalyzer,
           onOpenCollectionDetail = onOpenCollectionDetail,
           onOpenManageTagsCollections = onOpenManageTagsCollections,
           onManageDocumentTagsCollections = onManageDocumentTagsCollections,
@@ -1069,7 +1084,7 @@ private fun LibraryPagingSection(
       }
 
       if (isInitialLoading) {
-        items(6, key = { "grid_skeleton_$it" }) { idx ->
+        items(6, key = { "grid_skeleton_$it" }, contentType = { "grid_skeleton" }) { idx ->
           LibraryGridSkeletonCard(
             modifier = if (idx == 0) Modifier.testTag("library_grid_skeleton") else Modifier
           )
@@ -1119,12 +1134,18 @@ private fun LibraryPagingSection(
         }
 
         if (isAppending) {
-          items(2, key = { "grid_append_skeleton_$it" }) { LibraryGridSkeletonCard() }
+          items(2, key = { "grid_append_skeleton_$it" }, contentType = { "grid_skeleton" }) {
+            LibraryGridSkeletonCard()
+          }
         }
       }
 
       if (pagedItems.itemCount == 0 && pagedItems.loadState.refresh is LoadState.NotLoading) {
-        item(span = { GridItemSpan(maxLineSpan) }, key = "library_empty_card") {
+        item(
+          span = { GridItemSpan(maxLineSpan) },
+          key = "library_empty_card",
+          contentType = "empty_card",
+        ) {
           LibraryEmptyStateCard(
             hasActiveFilters = hasAnyFilter,
             hasFullAccess = storageAccessState.canBrowseFullDevice,
@@ -1160,56 +1181,6 @@ private fun LibraryPagingSection(
         }
       }
 
-    var pinnedHeaderHeightPx by remember { mutableIntStateOf(0) }
-    val dockAnchorPx = with(density) { topBarHeightDp.toPx() }
-    val pinnedOverlay by
-      remember(sectionRanges, dockAnchorPx, isInitialLoading) {
-        derivedStateOf {
-          if (isInitialLoading || sectionRanges.isEmpty()) return@derivedStateOf null
-          val visibleItems = listState.layoutInfo.visibleItemsInfo
-          if (visibleItems.isEmpty()) return@derivedStateOf null
-
-          val anchorInt = dockAnchorPx.toInt()
-          val firstRange = sectionRanges.first()
-          val firstAnchorIdx = firstRange.headerIndex ?: firstRange.startLazyIndex
-          val firstVisible = visibleItems.first()
-          if (firstVisible.index < firstAnchorIdx) {
-            val upcomingHeader = visibleItems.firstOrNull { it.index == firstAnchorIdx }
-            if (upcomingHeader == null || upcomingHeader.offset > anchorInt) {
-              return@derivedStateOf null
-            }
-          } else if (firstVisible.index == firstAnchorIdx && firstVisible.offset > anchorInt) {
-            return@derivedStateOf null
-          }
-
-          val anchorItem =
-            visibleItems.lastOrNull { it.offset <= anchorInt } ?: visibleItems.first()
-          val activeRangeIdx =
-            sectionRanges.indexOfFirst {
-              anchorItem.index in it.startLazyIndex..it.endLazyIndex
-            }
-          if (activeRangeIdx < 0) return@derivedStateOf null
-          val activeRange = sectionRanges[activeRangeIdx]
-          if (activeRange.headerIndex == null) return@derivedStateOf null
-
-          val headerHeight =
-            if (pinnedHeaderHeightPx > 0) pinnedHeaderHeightPx
-            else with(density) { 54.dp.roundToPx() }
-          val nextHeaderIdx = sectionRanges.getOrNull(activeRangeIdx + 1)?.headerIndex
-          val nextHeaderItem =
-            if (nextHeaderIdx != null) visibleItems.firstOrNull { it.index == nextHeaderIdx }
-            else null
-          val pushUpPx =
-            if (nextHeaderItem != null && nextHeaderItem.offset < anchorInt + headerHeight) {
-              (nextHeaderItem.offset - (anchorInt + headerHeight)).toFloat().coerceAtMost(0f)
-            } else {
-              0f
-            }
-
-          PinnedLibrarySectionOverlay(bucket = activeRange.bucket, pushUpOffsetPx = pushUpPx)
-        }
-      }
-
     val swipeCoordinator = remember { ListRowSwipeCoordinator() }
     CompositionLocalProvider(LocalListRowSwipeCoordinator provides swipeCoordinator) {
     Box(modifier = Modifier.fillMaxSize()) {
@@ -1224,10 +1195,7 @@ private fun LibraryPagingSection(
           ),
         verticalArrangement = Arrangement.spacedBy(0.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier =
-          Modifier.fillMaxSize()
-            .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
-            .testTag("library_list"),
+        modifier = Modifier.fillMaxSize().testTag("library_list"),
       ) {
         item(key = "library_hero_stack", contentType = "library_hero") {
           LibraryHeroStack(
@@ -1244,10 +1212,10 @@ private fun LibraryPagingSection(
             onRequestAllFilesAccess = onRequestAllFilesAccess,
             onAddSafFolder = onAddSafFolder,
             onDismissAccessBanner = onDismissAccessBanner,
+            onSelectDocumentsOnly = onSelectDocumentsOnly,
+            onSelectAllFiles = onSelectAllFiles,
             onCategorySelected = onCategorySelected,
             onTagSelected = onTagSelected,
-            onOpenDuplicateFinder = onOpenDuplicateFinder,
-            onOpenStorageAnalyzer = onOpenStorageAnalyzer,
             onOpenCollectionDetail = onOpenCollectionDetail,
             onOpenManageTagsCollections = onOpenManageTagsCollections,
             onManageDocumentTagsCollections = onManageDocumentTagsCollections,
@@ -1356,31 +1324,99 @@ private fun LibraryPagingSection(
         }
       }
 
-      pinnedOverlay?.let { pinned ->
-        Box(
-          modifier =
-            Modifier.align(Alignment.TopCenter)
-              .padding(top = topBarHeightDp)
-              .fillMaxWidth()
-              .clipToBounds(),
-          contentAlignment = Alignment.TopCenter,
-        ) {
-          StickyDateSectionHeader(
-            bucket = pinned.bucket,
-            useBackdropBlur = true,
-            headerTestTag = "pinned_date_section_header_${pinned.bucket.name}",
-            modifier =
-              Modifier.widthIn(max = PrismDimens.ContentMaxWidth)
-                .fillMaxWidth()
-                .padding(horizontal = PrismDimens.ScreenHorizontalPadding)
-                .onSizeChanged { pinnedHeaderHeightPx = it.height }
-                .graphicsLayer { translationY = pinned.pushUpOffsetPx },
-          )
-        }
-      }
+      PinnedLibrarySectionOverlayHost(
+        listState = listState,
+        sectionRanges = sectionRanges,
+        topBarHeightDp = topBarHeightDp,
+        isInitialLoading = isInitialLoading,
+        modifier = Modifier.align(Alignment.TopCenter),
+      )
     }
     }
   }
+  }
+}
+
+@Composable
+private fun PinnedLibrarySectionOverlayHost(
+  listState: LazyListState,
+  sectionRanges: List<LibraryLazySectionRange>,
+  topBarHeightDp: Dp,
+  isInitialLoading: Boolean,
+  modifier: Modifier = Modifier,
+) {
+  val density = LocalDensity.current
+  var pinnedHeaderHeightPx by remember { mutableIntStateOf(0) }
+  val dockAnchorPx = with(density) { topBarHeightDp.toPx() }
+  val fallbackHeaderHeightPx = with(density) { 54.dp.roundToPx() }
+  val pinnedOverlay by
+    remember(listState, sectionRanges, dockAnchorPx, fallbackHeaderHeightPx, isInitialLoading) {
+      derivedStateOf {
+        if (isInitialLoading || sectionRanges.isEmpty()) return@derivedStateOf null
+        val visibleItems = listState.layoutInfo.visibleItemsInfo
+        if (visibleItems.isEmpty()) return@derivedStateOf null
+
+        val anchorInt = dockAnchorPx.toInt()
+        val firstRange = sectionRanges.first()
+        val firstAnchorIdx = firstRange.headerIndex ?: firstRange.startLazyIndex
+        val firstVisible = visibleItems.first()
+        if (firstVisible.index < firstAnchorIdx) {
+          val upcomingHeader = visibleItems.firstOrNull { it.index == firstAnchorIdx }
+          if (upcomingHeader == null || upcomingHeader.offset > anchorInt) {
+            return@derivedStateOf null
+          }
+        } else if (firstVisible.index == firstAnchorIdx && firstVisible.offset > anchorInt) {
+          return@derivedStateOf null
+        }
+
+        val anchorItem =
+          visibleItems.lastOrNull { it.offset <= anchorInt } ?: visibleItems.first()
+        val activeRangeIdx =
+          sectionRanges.indexOfFirst {
+            anchorItem.index in it.startLazyIndex..it.endLazyIndex
+          }
+        if (activeRangeIdx < 0) return@derivedStateOf null
+        val activeRange = sectionRanges[activeRangeIdx]
+        if (activeRange.headerIndex == null) return@derivedStateOf null
+
+        val headerHeight =
+          if (pinnedHeaderHeightPx > 0) pinnedHeaderHeightPx else fallbackHeaderHeightPx
+        val nextHeaderIdx = sectionRanges.getOrNull(activeRangeIdx + 1)?.headerIndex
+        val nextHeaderItem =
+          if (nextHeaderIdx != null) visibleItems.firstOrNull { it.index == nextHeaderIdx }
+          else null
+        val pushUpPx =
+          if (nextHeaderItem != null && nextHeaderItem.offset < anchorInt + headerHeight) {
+            (nextHeaderItem.offset - (anchorInt + headerHeight)).toFloat().coerceAtMost(0f)
+          } else {
+            0f
+          }
+
+        PinnedLibrarySectionOverlay(bucket = activeRange.bucket, pushUpOffsetPx = pushUpPx)
+      }
+    }
+
+  pinnedOverlay?.let { pinned ->
+    Box(
+      modifier =
+        modifier
+          .padding(top = topBarHeightDp)
+          .fillMaxWidth()
+          .clipToBounds(),
+      contentAlignment = Alignment.TopCenter,
+    ) {
+      StickyDateSectionHeader(
+        bucket = pinned.bucket,
+        useBackdropBlur = false,
+        headerTestTag = "pinned_date_section_header_${pinned.bucket.name}",
+        modifier =
+          Modifier.widthIn(max = PrismDimens.ContentMaxWidth)
+            .fillMaxWidth()
+            .padding(horizontal = PrismDimens.ScreenHorizontalPadding)
+            .onSizeChanged { pinnedHeaderHeightPx = it.height }
+            .graphicsLayer { translationY = pinned.pushUpOffsetPx },
+      )
+    }
   }
 }
 
@@ -1400,10 +1436,10 @@ private fun LibraryHeroStack(
   onRequestAllFilesAccess: () -> Unit,
   onAddSafFolder: () -> Unit,
   onDismissAccessBanner: () -> Unit,
+  onSelectDocumentsOnly: () -> Unit,
+  onSelectAllFiles: () -> Unit,
   onCategorySelected: (DocumentCategory?) -> Unit,
   onTagSelected: (Long?) -> Unit,
-  onOpenDuplicateFinder: () -> Unit,
-  onOpenStorageAnalyzer: () -> Unit,
   onOpenCollectionDetail: (Long) -> Unit,
   onOpenManageTagsCollections: () -> Unit,
   onManageDocumentTagsCollections: (IndexedDocumentEntity) -> Unit,
@@ -1530,19 +1566,27 @@ private fun LibraryHeroStack(
       LibraryRecentSkeletonRow()
     }
 
-    PowerToolsQuickRow(
-      onOpenDuplicateFinder = onOpenDuplicateFinder,
-      onOpenStorageAnalyzer = onOpenStorageAnalyzer,
-    )
+    // Show Collections section ONLY when user has real collections (Job 5 screenshot fix)
+    if (uiState.collectionsWithStats.isNotEmpty()) {
+      CollectionsGlassSection(
+        collections = uiState.collectionsWithStats,
+        onOpenCollection = onOpenCollectionDetail,
+        onManageCollections = onOpenManageTagsCollections,
+      )
+    }
 
-    CollectionsGlassSection(
-      collections = uiState.collectionsWithStats,
-      onOpenCollection = onOpenCollectionDetail,
-      onManageCollections = onOpenManageTagsCollections,
+    // Properly titled "Filters" section (Documents default + All files + types + tags)
+    FiltersHeaderRow(
+      onManageTags = onOpenManageTagsCollections,
+      showManageAction = uiState.collectionsWithStats.isEmpty(),
     )
 
     CategoryGlassChipRow(
+      documentsOnly = uiState.query.documentsOnly,
       selectedCategory = uiState.query.category,
+      otherCategoriesOnly = uiState.query.otherCategoriesOnly,
+      onSelectDocumentsOnly = onSelectDocumentsOnly,
+      onSelectAllFiles = onSelectAllFiles,
       onCategorySelected = onCategorySelected,
     )
 
@@ -1571,96 +1615,40 @@ private fun LibraryHeroStack(
 }
 
 @Composable
-private fun PowerToolsQuickRow(
-  onOpenDuplicateFinder: () -> Unit,
-  onOpenStorageAnalyzer: () -> Unit,
+private fun FiltersHeaderRow(
+  onManageTags: () -> Unit,
+  showManageAction: Boolean,
   modifier: Modifier = Modifier,
 ) {
   val colorScheme = MaterialTheme.colorScheme
+  val tokens = LocalPrismVisualTokens.current
   Row(
-    modifier = modifier.fillMaxWidth().height(IntrinsicSize.Min),
-    horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge),
+    modifier = modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.SpaceBetween,
+    verticalAlignment = Alignment.CenterVertically,
   ) {
-    GlassSurface(
-      cornerRadius = PrismDimens.FilterBarCornerRadius,
-      elevation = GlassElevation.SUBTLE,
-      useBackdropBlur = false,
-      onClick = onOpenDuplicateFinder,
-      clickRole = Role.Button,
-      modifier =
-        Modifier.weight(1f)
-          .fillMaxHeight()
-          .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
-          .testTag("library_duplicate_finder_card"),
-    ) {
-      Row(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
+    Text(
+      text = stringResource(R.string.library_filters_title),
+      style =
+        MaterialTheme.typography.titleLarge.copy(
+          fontSize = PrismDimens.FontSizeSectionTitle,
+          fontWeight = FontWeight.ExtraBold,
+        ),
+      color = colorScheme.onSurface,
+    )
+    if (showManageAction) {
+      TextButton(
+        onClick = onManageTags,
+        modifier =
+          Modifier.defaultMinSize(
+              minWidth = PrismDimens.TouchTargetMin,
+              minHeight = PrismDimens.TouchTargetMin,
+            )
+            .testTag("library_manage_collections_button"),
       ) {
-        Box(
-          modifier =
-            Modifier.size(32.dp)
-              .clip(RoundedCornerShape(10.dp))
-              .background(colorScheme.primary.copy(alpha = 0.14f)),
-          contentAlignment = Alignment.Center,
-        ) {
-          Icon(
-            imageVector = Icons.Rounded.FileCopy,
-            contentDescription = null,
-            tint = colorScheme.primary,
-            modifier = Modifier.size(18.dp),
-          )
-        }
         Text(
-          text = stringResource(R.string.tool_duplicate_finder_title),
-          style = MaterialTheme.typography.titleSmall,
-          color = colorScheme.onSurface,
-          maxLines = 2,
-          overflow = TextOverflow.Ellipsis,
-          modifier = Modifier.weight(1f),
-        )
-      }
-    }
-
-    GlassSurface(
-      cornerRadius = PrismDimens.FilterBarCornerRadius,
-      elevation = GlassElevation.SUBTLE,
-      useBackdropBlur = false,
-      onClick = onOpenStorageAnalyzer,
-      clickRole = Role.Button,
-      modifier =
-        Modifier.weight(1f)
-          .fillMaxHeight()
-          .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
-          .testTag("library_storage_analyzer_card"),
-    ) {
-      Row(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
-      ) {
-        Box(
-          modifier =
-            Modifier.size(32.dp)
-              .clip(RoundedCornerShape(10.dp))
-              .background(colorScheme.secondary.copy(alpha = 0.14f)),
-          contentAlignment = Alignment.Center,
-        ) {
-          Icon(
-            imageVector = Icons.Rounded.DonutLarge,
-            contentDescription = null,
-            tint = colorScheme.secondary,
-            modifier = Modifier.size(18.dp),
-          )
-        }
-        Text(
-          text = stringResource(R.string.tool_storage_analyzer_title),
-          style = MaterialTheme.typography.titleSmall,
-          color = colorScheme.onSurface,
-          maxLines = 2,
-          overflow = TextOverflow.Ellipsis,
-          modifier = Modifier.weight(1f),
+          text = stringResource(R.string.library_collections_manage),
+          color = tokens.linkAccent,
         )
       }
     }
@@ -1708,72 +1696,74 @@ private fun CollectionsGlassSection(
       }
     }
 
-    if (collections.isNotEmpty()) {
-      LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge),
-        contentPadding =
-          PaddingValues(
-            start = 2.dp,
-            end = PrismDimens.SpaceStandard,
-            top = 6.dp,
-            bottom = 10.dp,
-          ),
-        modifier = Modifier.fillMaxWidth().testTag("library_collections_row"),
-      ) {
-        items(collections, key = { "lib_col_${it.id}" }) { col ->
-          val accent = parseHexColorOrDefault(col.accentHex, colorScheme.primary)
-          GlassSurface(
-            cornerRadius = PrismDimens.FilterBarCornerRadius,
-            elevation = GlassElevation.SUBTLE,
-            useBackdropBlur = false,
-            accentTint = accent.copy(alpha = 0.14f),
-            onClick = { onOpenCollection(col.id) },
-            clickRole = Role.Button,
-            modifier =
-              Modifier.widthIn(min = 144.dp, max = 224.dp)
-                .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
-                .testTag("library_collection_card_${col.id}"),
+    LazyRow(
+      horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge),
+      contentPadding =
+        PaddingValues(
+          start = 2.dp,
+          end = PrismDimens.SpaceStandard,
+          top = 6.dp,
+          bottom = 10.dp,
+        ),
+      modifier = Modifier.fillMaxWidth().testTag("library_collections_row"),
+    ) {
+      items(
+        items = collections,
+        key = { "lib_col_${it.id}" },
+        contentType = { "collection_card" },
+      ) { col ->
+        val accent = parseHexColorOrDefault(col.accentHex, colorScheme.primary)
+        GlassSurface(
+          cornerRadius = PrismDimens.FilterBarCornerRadius,
+          elevation = GlassElevation.SUBTLE,
+          useBackdropBlur = false,
+          accentTint = accent.copy(alpha = 0.14f),
+          onClick = { onOpenCollection(col.id) },
+          clickRole = Role.Button,
+          modifier =
+            Modifier.widthIn(min = 144.dp, max = 224.dp)
+              .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+              .testTag("library_collection_card_${col.id}"),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
           ) {
-            Row(
-              modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMedium),
+            Box(
+              modifier =
+                Modifier.size(34.dp)
+                  .clip(RoundedCornerShape(11.dp))
+                  .background(accent.copy(alpha = 0.18f)),
+              contentAlignment = Alignment.Center,
             ) {
-              Box(
-                modifier =
-                  Modifier.size(34.dp)
-                    .clip(RoundedCornerShape(11.dp))
-                    .background(accent.copy(alpha = 0.18f)),
-                contentAlignment = Alignment.Center,
-              ) {
-                Icon(
-                  imageVector = Icons.Rounded.CollectionsBookmark,
-                  contentDescription = null,
-                  tint = accent,
-                  modifier = Modifier.size(17.dp),
-                )
-              }
-              Column(modifier = Modifier.weight(1f, fill = false)) {
-                Text(
-                  text = col.name,
-                  style = MaterialTheme.typography.titleSmall,
-                  color = colorScheme.onSurface,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                  text =
-                    pluralStringResource(
-                      R.plurals.collection_doc_count,
-                      col.documentCount,
-                      col.documentCount,
-                    ),
-                  style = MaterialTheme.typography.labelSmall,
-                  color = colorScheme.onSurfaceVariant,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
-                )
-              }
+              Icon(
+                imageVector = Icons.Rounded.CollectionsBookmark,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(17.dp),
+              )
+            }
+            Column(modifier = Modifier.weight(1f, fill = false)) {
+              Text(
+                text = col.name,
+                style = MaterialTheme.typography.titleSmall,
+                color = colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+              Text(
+                text =
+                  pluralStringResource(
+                    R.plurals.collection_doc_count,
+                    col.documentCount,
+                    col.documentCount,
+                  ),
+                style = MaterialTheme.typography.labelSmall,
+                color = colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
             }
           }
         }
@@ -1800,12 +1790,16 @@ private fun TagFilterChipRow(
       PaddingValues(
         start = 2.dp,
         end = PrismDimens.SpaceStandard,
-        top = 6.dp,
-        bottom = 10.dp,
+        top = 4.dp,
+        bottom = 8.dp,
       ),
     modifier = modifier.fillMaxWidth().testTag("library_tag_filter_row"),
   ) {
-    items(tags, key = { "lib_tag_${it.id}" }) { tag ->
+    items(
+      items = tags,
+      key = { "lib_tag_${it.id}" },
+      contentType = { "tag_chip" },
+    ) { tag ->
       val isSelected = selectedTagId == tag.id
       val tagAccent = parseHexColorOrDefault(tag.colorHex, colorScheme.primary)
       val cd = stringResource(R.string.library_tags_filter_cd, tag.name)
@@ -1859,7 +1853,7 @@ private fun TagFilterChipRow(
       }
     }
 
-    item(key = "manage_tags_chip") {
+    item(key = "manage_tags_chip", contentType = "manage_tags_chip") {
       GlassSurface(
         cornerRadius = 18.dp,
         shape = CircleShape,
@@ -1890,14 +1884,26 @@ private fun TagFilterChipRow(
   }
 }
 
+private enum class CategoryChipKind {
+  DOCUMENTS_ONLY,
+  ALL_FILES,
+  CATEGORY,
+}
+
 private data class CategoryChipSpec(
+  val kind: CategoryChipKind,
   val category: DocumentCategory?,
   @StringRes val labelRes: Int,
+  val key: String,
 )
 
 @Composable
 private fun CategoryGlassChipRow(
+  documentsOnly: Boolean,
   selectedCategory: DocumentCategory?,
+  otherCategoriesOnly: Boolean,
+  onSelectDocumentsOnly: () -> Unit,
+  onSelectAllFiles: () -> Unit,
   onCategorySelected: (DocumentCategory?) -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -1910,17 +1916,18 @@ private fun CategoryGlassChipRow(
 
   val categories = remember {
     listOf(
-      CategoryChipSpec(null, R.string.category_all_files),
-      CategoryChipSpec(DocumentCategory.PDF, R.string.category_pdf),
-      CategoryChipSpec(DocumentCategory.DOCUMENTS, R.string.category_word),
-      CategoryChipSpec(DocumentCategory.SPREADSHEETS, R.string.category_excel),
-      CategoryChipSpec(DocumentCategory.SLIDES, R.string.category_slides),
-      CategoryChipSpec(DocumentCategory.IMAGES, R.string.category_images),
-      CategoryChipSpec(DocumentCategory.VIDEOS, R.string.category_video),
-      CategoryChipSpec(DocumentCategory.AUDIO, R.string.category_audio),
-      CategoryChipSpec(DocumentCategory.ARCHIVES, R.string.category_zip),
-      CategoryChipSpec(DocumentCategory.EBOOKS, R.string.category_books),
-      CategoryChipSpec(DocumentCategory.CODE_TEXT, R.string.category_code),
+      CategoryChipSpec(CategoryChipKind.DOCUMENTS_ONLY, null, R.string.category_documents, "DOCS"),
+      CategoryChipSpec(CategoryChipKind.ALL_FILES, null, R.string.category_all_files, "ALL"),
+      CategoryChipSpec(CategoryChipKind.CATEGORY, DocumentCategory.PDF, R.string.category_pdf, "PDF"),
+      CategoryChipSpec(CategoryChipKind.CATEGORY, DocumentCategory.DOCUMENTS, R.string.category_word, "DOCUMENTS"),
+      CategoryChipSpec(CategoryChipKind.CATEGORY, DocumentCategory.SPREADSHEETS, R.string.category_excel, "SPREADSHEETS"),
+      CategoryChipSpec(CategoryChipKind.CATEGORY, DocumentCategory.SLIDES, R.string.category_slides, "SLIDES"),
+      CategoryChipSpec(CategoryChipKind.CATEGORY, DocumentCategory.EBOOKS, R.string.category_books, "EBOOKS"),
+      CategoryChipSpec(CategoryChipKind.CATEGORY, DocumentCategory.CODE_TEXT, R.string.category_code, "CODE_TEXT"),
+      CategoryChipSpec(CategoryChipKind.CATEGORY, DocumentCategory.IMAGES, R.string.category_images, "IMAGES"),
+      CategoryChipSpec(CategoryChipKind.CATEGORY, DocumentCategory.VIDEOS, R.string.category_video, "VIDEOS"),
+      CategoryChipSpec(CategoryChipKind.CATEGORY, DocumentCategory.AUDIO, R.string.category_audio, "AUDIO"),
+      CategoryChipSpec(CategoryChipKind.CATEGORY, DocumentCategory.ARCHIVES, R.string.category_zip, "ARCHIVES"),
     )
   }
 
@@ -1935,15 +1942,30 @@ private fun CategoryGlassChipRow(
       ),
     modifier = modifier.fillMaxWidth().horizontalRightEdgeFade(fadeFraction = fadeAlpha),
   ) {
-    items(categories, key = { it.category?.name ?: "ALL" }) { spec ->
-      val isSelected = selectedCategory == spec.category
+    items(
+      items = categories,
+      key = { it.key },
+      contentType = { "category_chip" },
+    ) { spec ->
+      val isSelected =
+        when (spec.kind) {
+          CategoryChipKind.DOCUMENTS_ONLY ->
+            documentsOnly && selectedCategory == null && !otherCategoriesOnly
+          CategoryChipKind.ALL_FILES ->
+            !documentsOnly && selectedCategory == null && !otherCategoriesOnly
+          CategoryChipKind.CATEGORY -> selectedCategory == spec.category && !otherCategoriesOnly
+        }
       CategoryGlassPill(
         label = stringResource(spec.labelRes),
         selected = isSelected,
-        testTag =
-          if (spec.category == null) "category_chip_ALL"
-          else "category_chip_${spec.category.name}",
-        onClick = { onCategorySelected(spec.category) },
+        testTag = "category_chip_${spec.key}",
+        onClick = {
+          when (spec.kind) {
+            CategoryChipKind.DOCUMENTS_ONLY -> onSelectDocumentsOnly()
+            CategoryChipKind.ALL_FILES -> onSelectAllFiles()
+            CategoryChipKind.CATEGORY -> onCategorySelected(spec.category)
+          }
+        },
       )
     }
   }
@@ -2187,7 +2209,11 @@ private fun RecentDocumentsCarousel(
         ),
       modifier = Modifier.fillMaxWidth().horizontalRightEdgeFade(fadeFraction = fadeAlpha),
     ) {
-      itemsIndexed(recentDocuments, key = { _, doc -> "recent_${doc.id}" }) { idx, doc ->
+      itemsIndexed(
+        items = recentDocuments,
+        key = { _, doc -> "recent_${doc.id}" },
+        contentType = { _, _ -> "recent_doc_card" },
+      ) { idx, doc ->
         val isSelected = doc.id in selectedIds
         val request = doc.toThumbnailRequest(targetSizePx = 380)
         val sizeText = rememberFormattedByteSize(doc.sizeBytes)

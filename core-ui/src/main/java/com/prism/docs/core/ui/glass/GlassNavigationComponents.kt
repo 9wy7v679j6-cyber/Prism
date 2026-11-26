@@ -100,6 +100,7 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+@androidx.compose.runtime.Immutable
 data class GlassTabItem(
   val id: String,
   val label: String,
@@ -367,168 +368,196 @@ fun GlassFloatingTabBar(
                 var currentSnappedSlot = startSelectedIdx
                 var thresholdArmed = false
 
-                while (true) {
-                  val event = awaitPointerEvent()
-                  val change = event.changes.firstOrNull { it.id == pointerId } ?: break
-                  if (!change.pressed) {
-                    if (lockedAxis == 1) {
-                      val velocityX = velocityTracker.calculateVelocity().x
-                      if (!collapsedAtStart) {
-                        val releasePos = liveScrubSlot
-                        var finalSlot = currentSnappedSlot
-                        if (finalSlot == startSelectedIdx) {
-                          if (velocityX > 880f && startSelectedIdx < latestTabs.lastIndex) {
-                            finalSlot = startSelectedIdx + 1
+                var settledNormally = false
+                try {
+                  while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                    if (!change.pressed) {
+                      if (lockedAxis == 1) {
+                        val velocityX = velocityTracker.calculateVelocity().x
+                        if (!collapsedAtStart) {
+                          val releasePos = liveScrubSlot
+                          var finalSlot = currentSnappedSlot
+                          if (finalSlot == startSelectedIdx) {
+                            if (velocityX > 880f && startSelectedIdx < latestTabs.lastIndex) {
+                              finalSlot = startSelectedIdx + 1
+                              haptics.segmentTick()
+                            } else if (velocityX < -880f && startSelectedIdx > 0) {
+                              finalSlot = startSelectedIdx - 1
+                              haptics.segmentTick()
+                            }
+                          }
+                          hoveredSlot = null
+                          if (finalSlot != startSelectedIdx) {
+                            lastTabSlideDirection = if (finalSlot > startSelectedIdx) 1 else -1
+                            latestTabs.getOrNull(finalSlot)?.let { latestOnSelectTab(it.id) }
+                          }
+                          settledNormally = true
+                          scope.launch {
+                            pillAnim.snapTo(releasePos)
+                            isScrubbing = false
+                            pillAnim.animateTo(
+                              targetValue = finalSlot.toFloat(),
+                              animationSpec =
+                                if (motion) spring(dampingRatio = 0.56f, stiffness = 420f) else snap(),
+                            )
+                          }
+                        } else {
+                          val currentIdx = latestSelectedIndex
+                          val targetIdx =
+                            when {
+                              (totalDx >= miniSwipeCommitPx ||
+                                (velocityX > 720f && totalDx > miniSwipeCommitPx * 0.55f)) &&
+                                currentIdx < latestTabs.lastIndex -> currentIdx + 1
+                              (totalDx <= -miniSwipeCommitPx ||
+                                (velocityX < -720f && totalDx < -miniSwipeCommitPx * 0.55f)) &&
+                                currentIdx > 0 -> currentIdx - 1
+                              else -> currentIdx
+                            }
+                          val releaseOffset = liveMiniSwipePx
+                          if (targetIdx != currentIdx) {
+                            lastTabSlideDirection = if (targetIdx > currentIdx) 1 else -1
                             haptics.segmentTick()
-                          } else if (velocityX < -880f && startSelectedIdx > 0) {
-                            finalSlot = startSelectedIdx - 1
-                            haptics.segmentTick()
+                            latestTabs.getOrNull(targetIdx)?.let { latestOnSelectTab(it.id) }
+                          } else if (abs(totalDx) >= miniSwipeCommitPx * 0.85f) {
+                            haptics.tap()
+                          }
+                          settledNormally = true
+                          scope.launch {
+                            miniSwipeAnim.snapTo(releaseOffset)
+                            isMiniSwiping = false
+                            miniSwipeAnim.animateTo(
+                              targetValue = 0f,
+                              animationSpec =
+                                if (motion) spring(dampingRatio = 0.54f, stiffness = 420f) else snap(),
+                            )
                           }
                         }
-                        hoveredSlot = null
-                        if (finalSlot != startSelectedIdx) {
-                          lastTabSlideDirection = if (finalSlot > startSelectedIdx) 1 else -1
-                          latestTabs.getOrNull(finalSlot)?.let { latestOnSelectTab(it.id) }
+                      } else if (lockedAxis == 2) {
+                        val velocityY = velocityTracker.calculateVelocity().y
+                        val shouldCollapse =
+                          if (!collapsedAtStart) {
+                            totalDy >= verticalCommitPx || (velocityY > 680f && totalDy > verticalCommitPx * 0.5f)
+                          } else {
+                            !(totalDy <= -verticalCommitPx || (velocityY < -680f && totalDy < -verticalCommitPx * 0.5f))
+                          }
+                        val releaseProgress = liveVerticalProgress
+                        val targetProgress = if (shouldCollapse) 1f else 0f
+                        if (shouldCollapse != collapsedAtStart) {
+                          haptics.confirm()
+                          latestOnCollapsedChange(shouldCollapse)
                         }
+                        settledNormally = true
                         scope.launch {
-                          pillAnim.snapTo(releasePos)
-                          isScrubbing = false
-                          pillAnim.animateTo(
-                            targetValue = finalSlot.toFloat(),
-                            animationSpec =
-                              if (motion) spring(dampingRatio = 0.56f, stiffness = 420f) else snap(),
-                          )
+                          collapseAnim.snapTo(releaseProgress)
+                          searchCollapseAnim.snapTo(releaseProgress)
+                          isVerticalDragging = false
+                          val initialVel = (velocityY / verticalDragRangePx).coerceIn(-5f, 5f)
+                          launch {
+                            collapseAnim.animateTo(
+                              targetValue = targetProgress,
+                              initialVelocity = initialVel,
+                              animationSpec =
+                                if (motion) spring(dampingRatio = 0.64f, stiffness = 360f) else snap(),
+                            )
+                          }
+                          launch {
+                            searchCollapseAnim.animateTo(
+                              targetValue = targetProgress,
+                              initialVelocity = initialVel * 0.85f,
+                              animationSpec =
+                                if (motion) spring(dampingRatio = 0.58f, stiffness = 300f) else snap(),
+                            )
+                          }
                         }
                       } else {
-                        val currentIdx = latestSelectedIndex
-                        val targetIdx =
+                        settledNormally = true
+                      }
+                      break
+                    }
+
+                    val delta = change.positionChange()
+                    totalDx += delta.x
+                    totalDy += delta.y
+                    velocityTracker.addPosition(change.uptimeMillis, change.position)
+
+                    if (lockedAxis == 0) {
+                      if (hypot(totalDx, totalDy) > activationSlop) {
+                        val absX = abs(totalDx)
+                        val absY = abs(totalDy)
+                        // Require clear axis intent before committing to horizontal vs vertical gesture
+                        lockedAxis =
                           when {
-                            (totalDx >= miniSwipeCommitPx ||
-                              (velocityX > 720f && totalDx > miniSwipeCommitPx * 0.55f)) &&
-                              currentIdx < latestTabs.lastIndex -> currentIdx + 1
-                            (totalDx <= -miniSwipeCommitPx ||
-                              (velocityX < -720f && totalDx < -miniSwipeCommitPx * 0.55f)) &&
-                              currentIdx > 0 -> currentIdx - 1
-                            else -> currentIdx
+                            absX > absY * 1.35f -> 1
+                            absY > absX * 1.35f -> 2
+                            else -> 0
                           }
-                        val releaseOffset = liveMiniSwipePx
-                        if (targetIdx != currentIdx) {
-                          lastTabSlideDirection = if (targetIdx > currentIdx) 1 else -1
-                          haptics.segmentTick()
-                          latestTabs.getOrNull(targetIdx)?.let { latestOnSelectTab(it.id) }
-                        } else if (abs(totalDx) >= miniSwipeCommitPx * 0.85f) {
-                          haptics.tap()
-                        }
-                        scope.launch {
-                          miniSwipeAnim.snapTo(releaseOffset)
-                          isMiniSwiping = false
-                          miniSwipeAnim.animateTo(
-                            targetValue = 0f,
-                            animationSpec =
-                              if (motion) spring(dampingRatio = 0.54f, stiffness = 420f) else snap(),
-                          )
-                        }
-                      }
-                    } else if (lockedAxis == 2) {
-                      val velocityY = velocityTracker.calculateVelocity().y
-                      val shouldCollapse =
-                        if (!collapsedAtStart) {
-                          totalDy >= verticalCommitPx || (velocityY > 680f && totalDy > verticalCommitPx * 0.5f)
-                        } else {
-                          !(totalDy <= -verticalCommitPx || (velocityY < -680f && totalDy < -verticalCommitPx * 0.5f))
-                        }
-                      val releaseProgress = liveVerticalProgress
-                      val targetProgress = if (shouldCollapse) 1f else 0f
-                      if (shouldCollapse != collapsedAtStart) {
-                        haptics.confirm()
-                        latestOnCollapsedChange(shouldCollapse)
-                      }
-                      scope.launch {
-                        collapseAnim.snapTo(releaseProgress)
-                        searchCollapseAnim.snapTo(releaseProgress)
-                        isVerticalDragging = false
-                        val initialVel = (velocityY / verticalDragRangePx).coerceIn(-5f, 5f)
-                        launch {
-                          collapseAnim.animateTo(
-                            targetValue = targetProgress,
-                            initialVelocity = initialVel,
-                            animationSpec =
-                              if (motion) spring(dampingRatio = 0.64f, stiffness = 360f) else snap(),
-                          )
-                        }
-                        launch {
-                          searchCollapseAnim.animateTo(
-                            targetValue = targetProgress,
-                            initialVelocity = initialVel * 0.85f,
-                            animationSpec =
-                              if (motion) spring(dampingRatio = 0.58f, stiffness = 300f) else snap(),
-                          )
-                        }
-                      }
-                    }
-                    break
-                  }
-
-                  val delta = change.positionChange()
-                  totalDx += delta.x
-                  totalDy += delta.y
-                  velocityTracker.addPosition(change.uptimeMillis, change.position)
-
-                  if (lockedAxis == 0) {
-                    if (hypot(totalDx, totalDy) > activationSlop) {
-                      val absX = abs(totalDx)
-                      val absY = abs(totalDy)
-                      // Require clear axis intent before committing to horizontal vs vertical gesture
-                      lockedAxis =
-                        when {
-                          absX > absY * 1.35f -> 1
-                          absY > absX * 1.35f -> 2
-                          else -> 0
-                        }
-                      if (lockedAxis != 0) {
-                        change.consume()
-                        haptics.dragStart()
-                        if (lockedAxis == 1) {
-                          if (!collapsedAtStart) {
-                            val startRaw = xToSlot(change.position.x)
-                            currentSnappedSlot = startRaw.roundToInt().coerceIn(0, latestTabs.lastIndex)
-                            liveScrubSlot = startRaw
-                            hoveredSlot = currentSnappedSlot
-                            isScrubbing = true
-                          } else {
-                            liveMiniSwipePx = liquidRubberBand(totalDx, miniMaxTravelPx)
-                            isMiniSwiping = true
-                          }
-                        } else {
-                          val base = if (collapsedAtStart) 1f else 0f
-                          val rawP = base + totalDy / verticalDragRangePx
-                          liveVerticalProgress =
-                            when {
-                              rawP < 0f -> rawP * 0.18f
-                              rawP > 1f -> 1f + (rawP - 1f) * 0.18f
-                              else -> rawP
+                        if (lockedAxis != 0) {
+                          change.consume()
+                          haptics.dragStart()
+                          if (lockedAxis == 1) {
+                            if (!collapsedAtStart) {
+                              val startRaw = xToSlot(change.position.x)
+                              currentSnappedSlot = startRaw.roundToInt().coerceIn(0, latestTabs.lastIndex)
+                              liveScrubSlot = startRaw
+                              hoveredSlot = currentSnappedSlot
+                              isScrubbing = true
+                            } else {
+                              liveMiniSwipePx = liquidRubberBand(totalDx, miniMaxTravelPx)
+                              isMiniSwiping = true
                             }
-                          isVerticalDragging = true
+                          } else {
+                            val base = if (collapsedAtStart) 1f else 0f
+                            val rawP = base + totalDy / verticalDragRangePx
+                            liveVerticalProgress =
+                              when {
+                                rawP < 0f -> rawP * 0.18f
+                                rawP > 1f -> 1f + (rawP - 1f) * 0.18f
+                                else -> rawP
+                              }
+                            isVerticalDragging = true
+                          }
                         }
                       }
-                    }
-                  } else if (lockedAxis == 1) {
-                    change.consume()
-                    if (!collapsedAtStart) {
-                      val raw = xToSlot(change.position.x)
-                      liveScrubSlot = raw
-                      val snapped = raw.roundToInt().coerceIn(0, latestTabs.lastIndex)
-                      if (snapped != currentSnappedSlot) {
-                        currentSnappedSlot = snapped
-                        hoveredSlot = snapped
-                        haptics.segmentTick()
+                    } else if (lockedAxis == 1) {
+                      change.consume()
+                      if (!collapsedAtStart) {
+                        val raw = xToSlot(change.position.x)
+                        liveScrubSlot = raw
+                        val snapped = raw.roundToInt().coerceIn(0, latestTabs.lastIndex)
+                        if (snapped != currentSnappedSlot) {
+                          currentSnappedSlot = snapped
+                          hoveredSlot = snapped
+                          haptics.segmentTick()
+                        }
+                      } else {
+                        liveMiniSwipePx = liquidRubberBand(totalDx, miniMaxTravelPx)
+                        val canMoveInDir =
+                          (totalDx > 0f && latestSelectedIndex < latestTabs.lastIndex) ||
+                            (totalDx < 0f && latestSelectedIndex > 0)
+                        val armedNow = canMoveInDir && abs(totalDx) >= miniSwipeCommitPx
+                        if (armedNow && !thresholdArmed) {
+                          thresholdArmed = true
+                          haptics.gestureThresholdActivate()
+                        } else if (!armedNow && thresholdArmed) {
+                          thresholdArmed = false
+                          haptics.gestureThresholdDeactivate()
+                        }
                       }
                     } else {
-                      liveMiniSwipePx = liquidRubberBand(totalDx, miniMaxTravelPx)
-                      val canMoveInDir =
-                        (totalDx > 0f && latestSelectedIndex < latestTabs.lastIndex) ||
-                          (totalDx < 0f && latestSelectedIndex > 0)
-                      val armedNow = canMoveInDir && abs(totalDx) >= miniSwipeCommitPx
+                      change.consume()
+                      val base = if (collapsedAtStart) 1f else 0f
+                      val rawP = base + totalDy / verticalDragRangePx
+                      liveVerticalProgress =
+                        when {
+                          rawP < 0f -> rawP * 0.18f
+                          rawP > 1f -> 1f + (rawP - 1f) * 0.18f
+                          else -> rawP
+                        }
+                      val armedNow =
+                        if (!collapsedAtStart) totalDy >= verticalCommitPx
+                        else totalDy <= -verticalCommitPx
                       if (armedNow && !thresholdArmed) {
                         thresholdArmed = true
                         haptics.gestureThresholdActivate()
@@ -537,25 +566,21 @@ fun GlassFloatingTabBar(
                         haptics.gestureThresholdDeactivate()
                       }
                     }
-                  } else {
-                    change.consume()
-                    val base = if (collapsedAtStart) 1f else 0f
-                    val rawP = base + totalDy / verticalDragRangePx
-                    liveVerticalProgress =
-                      when {
-                        rawP < 0f -> rawP * 0.18f
-                        rawP > 1f -> 1f + (rawP - 1f) * 0.18f
-                        else -> rawP
-                      }
-                    val armedNow =
-                      if (!collapsedAtStart) totalDy >= verticalCommitPx
-                      else totalDy <= -verticalCommitPx
-                    if (armedNow && !thresholdArmed) {
-                      thresholdArmed = true
-                      haptics.gestureThresholdActivate()
-                    } else if (!armedNow && thresholdArmed) {
-                      thresholdArmed = false
-                      haptics.gestureThresholdDeactivate()
+                  }
+                } finally {
+                  if (!settledNormally && lockedAxis != 0) {
+                    hoveredSlot = null
+                    isScrubbing = false
+                    isMiniSwiping = false
+                    isVerticalDragging = false
+                    liveMiniSwipePx = 0f
+                    val resetSlot = latestSelectedIndex.toFloat()
+                    val resetCollapse = if (latestIsCollapsed && !latestIsSearchExpanded) 1f else 0f
+                    scope.launch {
+                      pillAnim.snapTo(resetSlot)
+                      miniSwipeAnim.snapTo(0f)
+                      collapseAnim.snapTo(resetCollapse)
+                      searchCollapseAnim.snapTo(resetCollapse)
                     }
                   }
                 }
@@ -611,6 +636,13 @@ fun GlassFloatingTabBar(
                     isDark = env.isDark,
                     accentColor = colorScheme.primary,
                     shadowColor = tokens.pillShadow,
+                    inset = 5.dp,
+                  )
+                  .liquidGlassTabMagnifyingLens(
+                    positionState = pillPositionState,
+                    lagPositionState = pillLagState,
+                    dragLiftState = dragLiftState,
+                    count = tabs.size,
                     inset = 5.dp,
                   )
                   .padding(5.dp),
@@ -905,52 +937,64 @@ fun GlassFloatingTabBar(
                 val velocityTracker = VelocityTracker()
                 velocityTracker.addPosition(down.uptimeMillis, down.position)
 
-                while (true) {
-                  val event = awaitPointerEvent()
-                  val change = event.changes.firstOrNull { it.id == pointerId } ?: break
-                  if (!change.pressed) {
-                    if (swipingUp) {
-                      val vy = velocityTracker.calculateVelocity().y
-                      val releaseLift = liveSearchLiftPx
-                      val trigger =
-                        totalDy <= -commitUpPx || (vy < -680f && totalDy < -commitUpPx * 0.55f)
-                      if (trigger) {
-                        haptics.confirm()
-                        latestTriggerSearch()
+                var settledNormally = false
+                try {
+                  while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                    if (!change.pressed) {
+                      if (swipingUp) {
+                        val vy = velocityTracker.calculateVelocity().y
+                        val releaseLift = liveSearchLiftPx
+                        val trigger =
+                          totalDy <= -commitUpPx || (vy < -680f && totalDy < -commitUpPx * 0.55f)
+                        if (trigger) {
+                          haptics.confirm()
+                          latestTriggerSearch()
+                        }
+                        settledNormally = true
+                        scope.launch {
+                          searchLiftAnim.snapTo(releaseLift)
+                          isSearchSwiping = false
+                          searchLiftAnim.animateTo(
+                            targetValue = 0f,
+                            animationSpec =
+                              if (motion) spring(dampingRatio = 0.52f, stiffness = 420f) else snap(),
+                          )
+                        }
+                      } else {
+                        settledNormally = true
                       }
-                      scope.launch {
-                        searchLiftAnim.snapTo(releaseLift)
-                        isSearchSwiping = false
-                        searchLiftAnim.animateTo(
-                          targetValue = 0f,
-                          animationSpec =
-                            if (motion) spring(dampingRatio = 0.52f, stiffness = 420f) else snap(),
-                        )
+                      break
+                    }
+                    val delta = change.positionChange()
+                    totalDx += delta.x
+                    totalDy += delta.y
+                    velocityTracker.addPosition(change.uptimeMillis, change.position)
+                    if (!swipingUp && totalDy < -activationSlop && abs(totalDy) > abs(totalDx) * 1.35f) {
+                      swipingUp = true
+                      change.consume()
+                      haptics.dragStart()
+                      liveSearchLiftPx = liquidRubberBand(totalDy, maxLiftPx)
+                      isSearchSwiping = true
+                    } else if (swipingUp) {
+                      change.consume()
+                      liveSearchLiftPx = liquidRubberBand(totalDy, maxLiftPx)
+                      val nowArmed = totalDy <= -commitUpPx
+                      if (nowArmed && !armed) {
+                        armed = true
+                        haptics.gestureThresholdActivate()
+                      } else if (!nowArmed && armed) {
+                        armed = false
+                        haptics.gestureThresholdDeactivate()
                       }
                     }
-                    break
                   }
-                  val delta = change.positionChange()
-                  totalDx += delta.x
-                  totalDy += delta.y
-                  velocityTracker.addPosition(change.uptimeMillis, change.position)
-                  if (!swipingUp && totalDy < -activationSlop && abs(totalDy) > abs(totalDx) * 1.35f) {
-                    swipingUp = true
-                    change.consume()
-                    haptics.dragStart()
-                    liveSearchLiftPx = liquidRubberBand(totalDy, maxLiftPx)
-                    isSearchSwiping = true
-                  } else if (swipingUp) {
-                    change.consume()
-                    liveSearchLiftPx = liquidRubberBand(totalDy, maxLiftPx)
-                    val nowArmed = totalDy <= -commitUpPx
-                    if (nowArmed && !armed) {
-                      armed = true
-                      haptics.gestureThresholdActivate()
-                    } else if (!nowArmed && armed) {
-                      armed = false
-                      haptics.gestureThresholdDeactivate()
-                    }
+                } finally {
+                  if (!settledNormally && swipingUp) {
+                    isSearchSwiping = false
+                    liveSearchLiftPx = 0f
+                    scope.launch { searchLiftAnim.snapTo(0f) }
                   }
                 }
               }
@@ -1222,50 +1266,63 @@ fun GlassNavigationRail(
                 var scrubbing = false
                 var currentSnapped = latestSelectedIndex
 
-                while (true) {
-                  val event = awaitPointerEvent()
-                  val change = event.changes.firstOrNull { it.id == pointerId } ?: break
-                  if (!change.pressed) {
-                    if (scrubbing) {
-                      val releasePos = liveDragSlot
-                      val finalSlot = currentSnapped
-                      hoveredSlot = null
-                      if (finalSlot != latestSelectedIndex) {
-                        latestTabs.getOrNull(finalSlot)?.let { latestOnSelectTab(it.id) }
+                var settledNormally = false
+                try {
+                  while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                    if (!change.pressed) {
+                      if (scrubbing) {
+                        val releasePos = liveDragSlot
+                        val finalSlot = currentSnapped
+                        hoveredSlot = null
+                        if (finalSlot != latestSelectedIndex) {
+                          latestTabs.getOrNull(finalSlot)?.let { latestOnSelectTab(it.id) }
+                        }
+                        settledNormally = true
+                        scope.launch {
+                          pillAnim.snapTo(releasePos)
+                          isDragging = false
+                          pillAnim.animateTo(
+                            targetValue = finalSlot.toFloat(),
+                            animationSpec =
+                              if (motion) spring(dampingRatio = 0.58f, stiffness = 420f) else snap(),
+                          )
+                        }
+                      } else {
+                        settledNormally = true
                       }
-                      scope.launch {
-                        pillAnim.snapTo(releasePos)
-                        isDragging = false
-                        pillAnim.animateTo(
-                          targetValue = finalSlot.toFloat(),
-                          animationSpec =
-                            if (motion) spring(dampingRatio = 0.58f, stiffness = 420f) else snap(),
-                        )
+                      break
+                    }
+                    val delta = change.positionChange()
+                    totalDy += delta.y
+                    if (!scrubbing && abs(totalDy) > activationSlop) {
+                      scrubbing = true
+                      change.consume()
+                      haptics.dragStart()
+                      val raw = yToSlot(change.position.y)
+                      currentSnapped = raw.roundToInt().coerceIn(0, latestTabs.lastIndex)
+                      liveDragSlot = raw
+                      hoveredSlot = currentSnapped
+                      isDragging = true
+                    } else if (scrubbing) {
+                      change.consume()
+                      val raw = yToSlot(change.position.y)
+                      liveDragSlot = raw
+                      val snapped = raw.roundToInt().coerceIn(0, latestTabs.lastIndex)
+                      if (snapped != currentSnapped) {
+                        currentSnapped = snapped
+                        hoveredSlot = snapped
+                        haptics.segmentTick()
                       }
                     }
-                    break
                   }
-                  val delta = change.positionChange()
-                  totalDy += delta.y
-                  if (!scrubbing && abs(totalDy) > activationSlop) {
-                    scrubbing = true
-                    change.consume()
-                    haptics.dragStart()
-                    val raw = yToSlot(change.position.y)
-                    currentSnapped = raw.roundToInt().coerceIn(0, latestTabs.lastIndex)
-                    liveDragSlot = raw
-                    hoveredSlot = currentSnapped
-                    isDragging = true
-                  } else if (scrubbing) {
-                    change.consume()
-                    val raw = yToSlot(change.position.y)
-                    liveDragSlot = raw
-                    val snapped = raw.roundToInt().coerceIn(0, latestTabs.lastIndex)
-                    if (snapped != currentSnapped) {
-                      currentSnapped = snapped
-                      hoveredSlot = snapped
-                      haptics.segmentTick()
-                    }
+                } finally {
+                  if (!settledNormally && scrubbing) {
+                    hoveredSlot = null
+                    isDragging = false
+                    val resetSlot = latestSelectedIndex.toFloat()
+                    scope.launch { pillAnim.snapTo(resetSlot) }
                   }
                 }
               }
@@ -1365,6 +1422,7 @@ fun GlassToolbarGroup(
     cornerRadius = 24.dp,
     elevation = GlassElevation.FLOATING,
     useBackdropBlur = true,
+    enableRefraction = true,
     modifier = modifier.height(48.dp),
   ) {
     Row(
@@ -1440,6 +1498,7 @@ fun GlassSearchField(
     cornerRadius = 28.dp,
     elevation = GlassElevation.FLOATING,
     useBackdropBlur = true,
+    enableRefraction = true,
     modifier = modifier.fillMaxWidth().height(54.dp).testTag("glass_search_field"),
   ) {
     Row(

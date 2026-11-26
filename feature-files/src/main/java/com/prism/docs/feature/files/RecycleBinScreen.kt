@@ -54,12 +54,10 @@ import androidx.compose.ui.unit.dp
 import com.prism.docs.core.data.db.RecycleBinEntryEntity
 import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSurface
-import com.prism.docs.core.ui.theme.LocalHazeState
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
 import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.theme.PrismDimens
-import dev.chrisbanes.haze.hazeSource
 import kotlin.math.ceil
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -76,7 +74,6 @@ fun RecycleBinSection(
   topContentPadding: Dp = 148.dp,
   listState: LazyListState = rememberLazyListState(),
 ) {
-  val hazeState = LocalHazeState.current
   val colorScheme = MaterialTheme.colorScheme
   val tokens = LocalPrismVisualTokens.current
   val haptics = rememberPrismHaptics()
@@ -101,7 +98,6 @@ fun RecycleBinSection(
     modifier =
       modifier
         .fillMaxSize()
-        .then(if (hazeState != null) Modifier.hazeSource(hazeState, zIndex = 1f) else Modifier)
         .testTag("recycle_bin_list"),
   ) {
     item {

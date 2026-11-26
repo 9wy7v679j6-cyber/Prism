@@ -77,6 +77,7 @@ data class PrismPreferences(
   val themeMode: ThemeMode = ThemeMode.LIGHT,
   val useDynamicColor: Boolean = false,
   val glassIntensity: GlassIntensity = GlassIntensity.STANDARD,
+  val glassClarity: Float = 0.35f,
   val reduceTransparency: Boolean = false,
   val reduceMotion: Boolean = false,
   val safFolderGrants: List<SafFolderGrant> = emptyList(),
@@ -138,6 +139,7 @@ data class DirectoryChangeEvent(
 data class FileListQuery(
   val category: DocumentCategory? = null,
   val otherCategoriesOnly: Boolean = false,
+  val documentsOnly: Boolean = true,
   val parentPath: String? = null,
   val collectionId: Long? = null,
   val tagId: Long? = null,

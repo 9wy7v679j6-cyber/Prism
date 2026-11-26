@@ -13,6 +13,11 @@ import com.prism.docs.core.data.storage.DocumentStorageGateway
 import com.prism.docs.core.data.storage.UnifiedDocumentStorageGateway
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * Performs incremental delta synchronization between [DocumentStorageGateway] and Room:
@@ -37,35 +42,152 @@ constructor(
     private const val DELETE_CHUNK_SIZE = 400
   }
 
+  private val syncMutex = Mutex()
+
   suspend fun runIncrementalSync(
     nowEpochMs: Long = System.currentTimeMillis(),
     onProgress: suspend (scannedCount: Int) -> Unit = {},
-  ): IndexSyncSummary {
-    val priorState = indexerStateDao.getState() ?: IndexerStateEntity()
-    indexerStateDao.upsert(priorState.copy(status = "SCANNING"))
+  ): IndexSyncSummary =
+    syncMutex.withLock {
+      val priorState = indexerStateDao.getState() ?: IndexerStateEntity()
+      indexerStateDao.upsert(priorState.copy(status = "SCANNING"))
 
-    val existingByUri = documentIndexDao.getAllSnapshots().associateBy { it.uriString }
-    val seenUris = HashSet<String>(existingByUri.size.coerceAtLeast(256))
+      try {
+        val existingByUri = documentIndexDao.getAllSnapshots().associateBy { it.uriString }
+        val seenUris = HashSet<String>(existingByUri.size.coerceAtLeast(256))
+        val seenCanonicalPaths = HashSet<String>(existingByUri.size.coerceAtLeast(256))
 
-    var scannedCount = 0
-    var insertedCount = 0
-    var updatedCount = 0
+        var scannedCount = 0
+        var insertedCount = 0
+        var updatedCount = 0
 
-    storageGateway.scanAccessibleDocuments(batchSize = 250) { batch ->
+        storageGateway.scanAccessibleDocuments(batchSize = 250) { batch ->
+          val toInsert = ArrayList<IndexedDocumentEntity>()
+          val toUpdate = ArrayList<Pair<Long, ScannedDocumentMetadata>>()
+
+          for (meta in batch) {
+            if (
+              meta.isDirectory ||
+                UnifiedDocumentStorageGateway.isDirectoryMimeType(meta.mimeType) ||
+                meta.displayName.startsWith(".") ||
+                UnifiedDocumentStorageGateway.isHiddenOrSystemPath(meta.parentPath)
+            ) {
+              continue
+            }
+            val canonicalKey =
+              UnifiedDocumentStorageGateway.canonicalPathKey(meta.parentPath, meta.displayName)
+            if (canonicalKey != null && !seenCanonicalPaths.add(canonicalKey)) continue
+            if (!seenUris.add(meta.uriString)) continue
+            scannedCount++
+            val existing = existingByUri[meta.uriString]
+            if (existing == null) {
+              toInsert.add(meta.toNewEntity(nowEpochMs))
+            } else if (
+              !existing.isTrashed &&
+                (existing.lastModifiedEpochMs != meta.lastModifiedEpochMs ||
+                  existing.sizeBytes != meta.sizeBytes)
+            ) {
+              toUpdate.add(existing.id to meta)
+            }
+          }
+
+          if (toInsert.isNotEmpty() || toUpdate.isNotEmpty()) {
+            database.withTransaction {
+              if (toInsert.isNotEmpty()) {
+                documentIndexDao.insertIgnoreAll(toInsert)
+              }
+              for ((id, meta) in toUpdate) {
+                documentIndexDao.updateScannedMetadata(
+                  id = id,
+                  displayName = meta.displayName,
+                  normalizedName = meta.displayName.lowercase(),
+                  parentPath = meta.parentPath,
+                  mimeType = meta.mimeType,
+                  extension = meta.extension,
+                  category = meta.category.name,
+                  sizeBytes = meta.sizeBytes,
+                  lastModifiedEpochMs = meta.lastModifiedEpochMs,
+                  sourceType = meta.sourceType.name,
+                  lastIndexedEpochMs = nowEpochMs,
+                )
+              }
+            }
+            insertedCount += toInsert.size
+            updatedCount += toUpdate.size
+          }
+
+          onProgress(scannedCount)
+        }
+
+        // Remove vanished non-trashed documents (including any stale directory rows no longer emitted)
+        val staleIds =
+          existingByUri.values
+            .filter { !it.isTrashed && it.uriString !in seenUris }
+            .map { it.id }
+
+        if (staleIds.isNotEmpty()) {
+          staleIds.chunked(DELETE_CHUNK_SIZE).forEach { chunk -> documentIndexDao.deleteByIds(chunk) }
+        }
+
+        // Enforce 30-day Recycle Bin expiry
+        val expiredPurged = documentRepository.purgeExpiredRecycleBin(nowEpochMs)
+        val finalCount = scannedCount.coerceAtLeast(0)
+
+        indexerStateDao.upsert(
+          IndexerStateEntity(
+            id = 1,
+            lastFullScanEpochMs = nowEpochMs,
+            indexedDocumentCount = finalCount,
+            lastInsertedCount = insertedCount,
+            lastUpdatedCount = updatedCount,
+            lastRemovedCount = staleIds.size,
+            status = "IDLE",
+          )
+        )
+
+        IndexSyncSummary(
+          scannedCount = scannedCount,
+          insertedCount = insertedCount,
+          updatedCount = updatedCount,
+          removedCount = staleIds.size,
+          expiredTrashPurged = expiredPurged,
+          completedAtEpochMs = nowEpochMs,
+        )
+      } catch (ce: CancellationException) {
+        withContext(NonCancellable) {
+          runCatching { indexerStateDao.upsert(priorState.copy(status = "IDLE")) }
+        }
+        throw ce
+      } catch (t: Throwable) {
+        runCatching { indexerStateDao.upsert(priorState.copy(status = "ERROR")) }
+        throw t
+      }
+    }
+
+  /**
+   * Fast non-recursive delta refresh for a single currently-open folder, invoked when
+   * [DocumentStorageGateway.observeOpenDirectory] reports a [FileObserver] or [ContentObserver] change.
+   */
+  suspend fun syncSingleDirectory(
+    directoryPathOrUri: String,
+    nowEpochMs: Long = System.currentTimeMillis(),
+  ): IndexSyncSummary =
+    syncMutex.withLock {
+      val existingByUri =
+        documentIndexDao.getSnapshotsInDirectory(directoryPathOrUri).associateBy { it.uriString }
+      val children =
+        storageGateway.listDirectoryChildren(directoryPathOrUri).filterNot {
+          it.isDirectory ||
+            UnifiedDocumentStorageGateway.isDirectoryMimeType(it.mimeType) ||
+            it.displayName.startsWith(".")
+        }
+      val seenUris = HashSet<String>(children.size)
+
       val toInsert = ArrayList<IndexedDocumentEntity>()
       val toUpdate = ArrayList<Pair<Long, ScannedDocumentMetadata>>()
 
-      for (meta in batch) {
-        if (
-          meta.isDirectory ||
-            UnifiedDocumentStorageGateway.isDirectoryMimeType(meta.mimeType) ||
-            meta.displayName.startsWith(".") ||
-            UnifiedDocumentStorageGateway.isHiddenOrSystemPath(meta.parentPath)
-        ) {
-          continue
-        }
-        if (!seenUris.add(meta.uriString)) continue
-        scannedCount++
+      for (meta in children) {
+        seenUris.add(meta.uriString)
         val existing = existingByUri[meta.uriString]
         if (existing == null) {
           toInsert.add(meta.toNewEntity(nowEpochMs))
@@ -78,143 +200,44 @@ constructor(
         }
       }
 
-      if (toInsert.isNotEmpty() || toUpdate.isNotEmpty()) {
-        database.withTransaction {
-          if (toInsert.isNotEmpty()) {
-            documentIndexDao.upsertAll(toInsert)
-          }
-          for ((id, meta) in toUpdate) {
-            documentIndexDao.updateScannedMetadata(
-              id = id,
-              displayName = meta.displayName,
-              normalizedName = meta.displayName.lowercase(),
-              parentPath = meta.parentPath,
-              mimeType = meta.mimeType,
-              extension = meta.extension,
-              category = meta.category.name,
-              sizeBytes = meta.sizeBytes,
-              lastModifiedEpochMs = meta.lastModifiedEpochMs,
-              sourceType = meta.sourceType.name,
-              lastIndexedEpochMs = nowEpochMs,
-            )
-          }
+      val staleIds =
+        existingByUri.values
+          .filter { !it.isTrashed && it.uriString !in seenUris }
+          .map { it.id }
+
+      database.withTransaction {
+        if (toInsert.isNotEmpty()) {
+          documentIndexDao.insertIgnoreAll(toInsert)
         }
-        insertedCount += toInsert.size
-        updatedCount += toUpdate.size
+        for ((id, meta) in toUpdate) {
+          documentIndexDao.updateScannedMetadata(
+            id = id,
+            displayName = meta.displayName,
+            normalizedName = meta.displayName.lowercase(),
+            parentPath = meta.parentPath,
+            mimeType = meta.mimeType,
+            extension = meta.extension,
+            category = meta.category.name,
+            sizeBytes = meta.sizeBytes,
+            lastModifiedEpochMs = meta.lastModifiedEpochMs,
+            sourceType = meta.sourceType.name,
+            lastIndexedEpochMs = nowEpochMs,
+          )
+        }
+        if (staleIds.isNotEmpty()) {
+          staleIds.chunked(DELETE_CHUNK_SIZE).forEach { chunk -> documentIndexDao.deleteByIds(chunk) }
+        }
       }
 
-      onProgress(scannedCount)
-    }
-
-    // Remove vanished non-trashed documents (including any stale directory rows no longer emitted)
-    val staleIds =
-      existingByUri.values
-        .filter { !it.isTrashed && it.uriString !in seenUris }
-        .map { it.id }
-
-    if (staleIds.isNotEmpty()) {
-      staleIds.chunked(DELETE_CHUNK_SIZE).forEach { chunk -> documentIndexDao.deleteByIds(chunk) }
-    }
-
-    // Enforce 30-day Recycle Bin expiry
-    val expiredPurged = documentRepository.purgeExpiredRecycleBin(nowEpochMs)
-    val finalCount = (scannedCount).coerceAtLeast(0)
-
-    indexerStateDao.upsert(
-      IndexerStateEntity(
-        id = 1,
-        lastFullScanEpochMs = nowEpochMs,
-        indexedDocumentCount = finalCount,
-        lastInsertedCount = insertedCount,
-        lastUpdatedCount = updatedCount,
-        lastRemovedCount = staleIds.size,
-        status = "IDLE",
+      IndexSyncSummary(
+        scannedCount = children.size,
+        insertedCount = toInsert.size,
+        updatedCount = toUpdate.size,
+        removedCount = staleIds.size,
+        expiredTrashPurged = 0,
+        completedAtEpochMs = nowEpochMs,
       )
-    )
-
-    return IndexSyncSummary(
-      scannedCount = scannedCount,
-      insertedCount = insertedCount,
-      updatedCount = updatedCount,
-      removedCount = staleIds.size,
-      expiredTrashPurged = expiredPurged,
-      completedAtEpochMs = nowEpochMs,
-    )
-  }
-
-  /**
-   * Fast non-recursive delta refresh for a single currently-open folder, invoked when
-   * [DocumentStorageGateway.observeOpenDirectory] reports a [FileObserver] or [ContentObserver] change.
-   */
-  suspend fun syncSingleDirectory(
-    directoryPathOrUri: String,
-    nowEpochMs: Long = System.currentTimeMillis(),
-  ): IndexSyncSummary {
-    val existingByUri =
-      documentIndexDao.getSnapshotsInDirectory(directoryPathOrUri).associateBy { it.uriString }
-    val children =
-      storageGateway.listDirectoryChildren(directoryPathOrUri).filterNot {
-        it.isDirectory ||
-          UnifiedDocumentStorageGateway.isDirectoryMimeType(it.mimeType) ||
-          it.displayName.startsWith(".")
-      }
-    val seenUris = HashSet<String>(children.size)
-
-    val toInsert = ArrayList<IndexedDocumentEntity>()
-    val toUpdate = ArrayList<Pair<Long, ScannedDocumentMetadata>>()
-
-    for (meta in children) {
-      seenUris.add(meta.uriString)
-      val existing = existingByUri[meta.uriString]
-      if (existing == null) {
-        toInsert.add(meta.toNewEntity(nowEpochMs))
-      } else if (
-        !existing.isTrashed &&
-          (existing.lastModifiedEpochMs != meta.lastModifiedEpochMs ||
-            existing.sizeBytes != meta.sizeBytes)
-      ) {
-        toUpdate.add(existing.id to meta)
-      }
     }
-
-    val staleIds =
-      existingByUri.values
-        .filter { !it.isTrashed && it.uriString !in seenUris }
-        .map { it.id }
-
-    database.withTransaction {
-      if (toInsert.isNotEmpty()) {
-        documentIndexDao.upsertAll(toInsert)
-      }
-      for ((id, meta) in toUpdate) {
-        documentIndexDao.updateScannedMetadata(
-          id = id,
-          displayName = meta.displayName,
-          normalizedName = meta.displayName.lowercase(),
-          parentPath = meta.parentPath,
-          mimeType = meta.mimeType,
-          extension = meta.extension,
-          category = meta.category.name,
-          sizeBytes = meta.sizeBytes,
-          lastModifiedEpochMs = meta.lastModifiedEpochMs,
-          sourceType = meta.sourceType.name,
-          lastIndexedEpochMs = nowEpochMs,
-        )
-      }
-      if (staleIds.isNotEmpty()) {
-        staleIds.chunked(DELETE_CHUNK_SIZE).forEach { chunk -> documentIndexDao.deleteByIds(chunk) }
-      }
-    }
-
-    return IndexSyncSummary(
-      scannedCount = children.size,
-      insertedCount = toInsert.size,
-      updatedCount = toUpdate.size,
-      removedCount = staleIds.size,
-      expiredTrashPurged = 0,
-      completedAtEpochMs = nowEpochMs,
-    )
-  }
 
   private fun ScannedDocumentMetadata.toNewEntity(indexedAtEpochMs: Long): IndexedDocumentEntity =
     IndexedDocumentEntity(

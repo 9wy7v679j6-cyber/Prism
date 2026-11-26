@@ -62,14 +62,19 @@ constructor(
           sampleDir.mkdirs()
         }
         val writtenFiles = createSampleFilesInDirectory(sampleDir, specs)
+        val mimeByName = specs.associate { it.fileName to it.mimeType }
+        val writtenMimeTypes = mutableListOf<String>()
         createdCount = writtenFiles.size
-        writtenFiles.forEach { writtenPaths += it.absolutePath }
+        writtenFiles.forEach { file ->
+          writtenPaths += file.absolutePath
+          writtenMimeTypes += mimeByName[file.name] ?: "application/octet-stream"
+        }
         if (writtenPaths.isNotEmpty()) {
           runCatching {
             MediaScannerConnection.scanFile(
               context,
               writtenPaths.toTypedArray(),
-              specs.map { it.mimeType }.toTypedArray(),
+              writtenMimeTypes.toTypedArray(),
               null,
             )
           }

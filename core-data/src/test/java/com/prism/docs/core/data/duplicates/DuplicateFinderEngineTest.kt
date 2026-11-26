@@ -216,10 +216,56 @@ class DuplicateFinderEngineTest {
     assertTrue(remainingGroups.isEmpty())
   }
 
+  @Test
+  fun scanExcludesNonDocumentMediaApkAndArchives() = runTest {
+    val payload = ByteArray(16_384) { idx -> (idx % 97).toByte() }
+    val pdfA = tempFolder.newFile("spec_v1.pdf").apply { writeBytes(payload) }
+    val pdfB = tempFolder.newFile("spec_v2.pdf").apply { writeBytes(payload) }
+    val zipA = tempFolder.newFile("prism-debug-apk (5).zip").apply { writeBytes(payload) }
+    val zipB = tempFolder.newFile("prism-debug-apk (5)-copy.zip").apply { writeBytes(payload) }
+    val imgA = tempFolder.newFile("photo_1.jpg").apply { writeBytes(payload) }
+    val imgB = tempFolder.newFile("photo_2.jpg").apply { writeBytes(payload) }
+    val mp4A = tempFolder.newFile("clip_1.mp4").apply { writeBytes(payload) }
+    val mp4B = tempFolder.newFile("clip_2.mp4").apply { writeBytes(payload) }
+    val mp3A = tempFolder.newFile("track_1.mp3").apply { writeBytes(payload) }
+    val mp3B = tempFolder.newFile("track_2.mp3").apply { writeBytes(payload) }
+    val apkA = tempFolder.newFile("app_1.apk").apply { writeBytes(payload) }
+    val apkB = tempFolder.newFile("app_2.apk").apply { writeBytes(payload) }
+
+    val dao = database.documentIndexDao()
+    dao.upsertAll(
+      listOf(
+        makeEntity(101L, pdfA, 1_000L, "application/pdf", "pdf", DocumentCategory.PDF),
+        makeEntity(102L, pdfB, 2_000L, "application/pdf", "pdf", DocumentCategory.PDF),
+        makeEntity(103L, zipA, 1_000L, "application/zip", "zip", DocumentCategory.ARCHIVES),
+        makeEntity(104L, zipB, 2_000L, "application/zip", "zip", DocumentCategory.ARCHIVES),
+        makeEntity(105L, imgA, 1_000L, "image/jpeg", "jpg", DocumentCategory.IMAGES),
+        makeEntity(106L, imgB, 2_000L, "image/jpeg", "jpg", DocumentCategory.IMAGES),
+        makeEntity(107L, mp4A, 1_000L, "video/mp4", "mp4", DocumentCategory.VIDEOS),
+        makeEntity(108L, mp4B, 2_000L, "video/mp4", "mp4", DocumentCategory.VIDEOS),
+        makeEntity(109L, mp3A, 1_000L, "audio/mpeg", "mp3", DocumentCategory.AUDIO),
+        makeEntity(110L, mp3B, 2_000L, "audio/mpeg", "mp3", DocumentCategory.AUDIO),
+        makeEntity(111L, apkA, 1_000L, "application/vnd.android.package-archive", "apk", DocumentCategory.ARCHIVES),
+        makeEntity(112L, apkB, 2_000L, "application/vnd.android.package-archive", "apk", DocumentCategory.ARCHIVES),
+      )
+    )
+
+    val engine = DuplicateFinderEngine(dao, realReader)
+    val result = engine.scanActiveDuplicates()
+
+    // Only the two PDFs are primary documents; ZIP, JPG, MP4, MP3, and APK duplicates must be excluded
+    assertEquals(2, result.sizeCandidateCount)
+    assertEquals(1, result.groups.size)
+    assertEquals(listOf(102L, 101L), result.groups.single().documents.map { it.id })
+  }
+
   private fun makeEntity(
     id: Long,
     file: File,
     lastModified: Long,
+    mimeType: String = "application/pdf",
+    extension: String = "pdf",
+    category: DocumentCategory = DocumentCategory.PDF,
   ): IndexedDocumentEntity =
     IndexedDocumentEntity(
       id = id,
@@ -227,9 +273,9 @@ class DuplicateFinderEngineTest {
       displayName = file.name,
       normalizedName = file.name.lowercase(),
       parentPath = file.parent.orEmpty(),
-      mimeType = "application/pdf",
-      extension = "pdf",
-      category = DocumentCategory.PDF.name,
+      mimeType = mimeType,
+      extension = extension,
+      category = category.name,
       sizeBytes = file.length(),
       lastModifiedEpochMs = lastModified,
     )

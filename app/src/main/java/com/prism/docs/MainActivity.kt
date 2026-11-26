@@ -20,7 +20,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.FilterNone
@@ -46,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -62,13 +65,21 @@ import com.prism.docs.core.data.model.DocumentCategory
 import com.prism.docs.core.data.model.IncomingDocumentRequest
 import com.prism.docs.core.data.model.ThemeMode
 import com.prism.docs.core.ui.glass.DriftingBlobsBackdrop
+import com.prism.docs.core.ui.glass.GlassDebugConfig
+import com.prism.docs.core.ui.glass.GlassDynamicsState
 import com.prism.docs.core.ui.glass.GlassFloatingTabBar
 import com.prism.docs.core.ui.glass.GlassNavigationRail
 import com.prism.docs.core.ui.glass.GlassSheetDetent
 import com.prism.docs.core.ui.glass.GlassTabItem
+import com.prism.docs.core.ui.glass.LocalGlassBackdrop
+import com.prism.docs.core.ui.glass.LocalGlassDebugConfig
+import com.prism.docs.core.ui.glass.LocalGlassDynamics
 import com.prism.docs.core.ui.glass.PrismBlobsDark
 import com.prism.docs.core.ui.glass.PrismBlobsLight
 import com.prism.docs.core.ui.glass.ProvideGlassMotion
+import com.prism.docs.core.ui.glass.glassBlobsCaptureSource
+import com.prism.docs.core.ui.glass.glassSceneCaptureSource
+import com.prism.docs.core.ui.glass.rememberRootGlassBackdropState
 import com.prism.docs.core.ui.glass.rememberTabBarNestedScrollConnection
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
 import com.prism.docs.core.ui.theme.LocalHazeState
@@ -108,7 +119,9 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
     requestHighestRefreshRate()
-    viewModel.handleIncomingIntent(intent)
+    if (savedInstanceState == null) {
+      viewModel.handleIncomingIntent(intent)
+    }
 
     setContent {
       val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -137,6 +150,7 @@ class MainActivity : ComponentActivity() {
         dynamicColor = uiState.preferences.useDynamicColor,
         blurScale = uiState.preferences.glassIntensity.blurScale,
         tintScale = uiState.preferences.glassIntensity.tintScale,
+        glassClarity = uiState.preferences.glassClarity,
         reduceTransparency = uiState.preferences.reduceTransparency,
         reduceMotion = uiState.preferences.reduceMotion,
       ) {
@@ -200,6 +214,9 @@ private fun PrismRootShell(
   val lifecycleOwner = LocalLifecycleOwner.current
   val navController = rememberNavController()
   val hazeState = rememberHazeState()
+  val rootBackdropState = rememberRootGlassBackdropState()
+  val glassDynamics = remember { GlassDynamicsState() }
+  var glassDebugConfig by remember { mutableStateOf(GlassDebugConfig()) }
 
   var isTabBarCollapsed by rememberSaveable { mutableStateOf(false) }
   var isBottomSearchExpanded by rememberSaveable { mutableStateOf(false) }
@@ -336,7 +353,7 @@ private fun PrismRootShell(
 
   val useRailLayout = windowWidthSizeClass != WindowWidthSizeClass.Compact
   val startDestination: Any =
-    if (uiState.preferences.onboardingCompleted) LibraryRoute else OnboardingRoute
+    remember { if (uiState.preferences.onboardingCompleted) LibraryRoute else OnboardingRoute }
 
   LaunchedEffect(isTopLevelDestination) {
     if (!isTopLevelDestination) {
@@ -356,47 +373,58 @@ private fun PrismRootShell(
   val backdropBlobs = if (env.isDark) PrismBlobsDark else PrismBlobsLight
   val backdropAlpha = if (env.reduceTransparency) 0f else if (env.isDark) 0.82f else 1f
 
-  CompositionLocalProvider(LocalHazeState provides hazeState) {
+  CompositionLocalProvider(
+    LocalHazeState provides hazeState,
+    LocalGlassBackdrop provides rootBackdropState,
+    LocalGlassDynamics provides glassDynamics,
+    LocalGlassDebugConfig provides glassDebugConfig,
+  ) {
     SharedTransitionLayout {
       Box(modifier = Modifier.fillMaxSize()) {
-        DriftingBlobsBackdrop(
-          modifier = Modifier.fillMaxSize().hazeSource(state = hazeState, zIndex = 0f),
-          base = backdropBase,
-          blobs = backdropBlobs,
-          blobAlpha = backdropAlpha,
-        )
-
-        Row(modifier = Modifier.fillMaxSize()) {
-          if (useRailLayout && isTopLevelDestination) {
-            GlassNavigationRail(
-              tabs = tabs,
-              selectedId = selectedTabId,
-              onSelectTab = selectTab,
-              onSearchClick = { navController.navigate(SearchRoute) },
-            )
-          }
-
-          Box(
+        // Single hazeSource on DriftingBlobsBackdrop (sibling to NavHost so screen-local
+        // floating bars never self-sample on API 26-32), plus root AGSL scene capture on the
+        // outer Box for root overlays (TabBar, Rail, SettingsSheet) on API 33+.
+        Box(
+          modifier =
+            Modifier.fillMaxSize()
+              .glassSceneCaptureSource(rootBackdropState),
+        ) {
+          DriftingBlobsBackdrop(
             modifier =
-              Modifier.weight(1f)
-                .fillMaxSize()
-                .then(
-                  if (!useRailLayout && isTopLevelDestination) {
-                    Modifier.nestedScroll(tabBarNestedScroll)
-                  } else {
-                    Modifier
-                  }
-                )
-          ) {
-            NavHost(
-              navController = navController,
-              startDestination = startDestination,
-              enterTransition = { fadeIn(animationSpec = tween(durationMillis = 160)) },
-              exitTransition = { fadeOut(animationSpec = tween(durationMillis = 120)) },
-              popEnterTransition = { fadeIn(animationSpec = tween(durationMillis = 160)) },
-              popExitTransition = { fadeOut(animationSpec = tween(durationMillis = 120)) },
-              modifier = Modifier.fillMaxSize(),
+              Modifier.fillMaxSize()
+                .glassBlobsCaptureSource(rootBackdropState)
+                .hazeSource(state = hazeState, zIndex = 0f),
+            base = backdropBase,
+            blobs = backdropBlobs,
+            blobAlpha = backdropAlpha,
+          )
+
+          Row(modifier = Modifier.fillMaxSize()) {
+            if (useRailLayout && isTopLevelDestination) {
+              Spacer(modifier = Modifier.width(88.dp))
+            }
+
+            Box(
+              modifier =
+                Modifier.weight(1f)
+                  .fillMaxSize()
+                  .then(
+                    if (!useRailLayout && isTopLevelDestination) {
+                      Modifier.nestedScroll(tabBarNestedScroll)
+                    } else {
+                      Modifier
+                    }
+                  )
             ) {
+              NavHost(
+                navController = navController,
+                startDestination = startDestination,
+                enterTransition = { fadeIn(animationSpec = tween(durationMillis = 160)) },
+                exitTransition = { fadeOut(animationSpec = tween(durationMillis = 120)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(durationMillis = 160)) },
+                popExitTransition = { fadeOut(animationSpec = tween(durationMillis = 120)) },
+                modifier = Modifier.fillMaxSize(),
+              ) {
               composable<OnboardingRoute> {
                 PrismOnboardingScreen(
                   storageAccessState = uiState.storageAccessState,
@@ -551,6 +579,8 @@ private fun PrismRootShell(
               composable<PdfToolsRoute> {
                 PdfToolsHubScreen(
                   onTabBarCollapsedChange = { isTabBarCollapsed = it },
+                  onOpenDuplicateFinder = { navController.navigate(DuplicateFinderRoute) },
+                  onOpenStorageAnalyzer = { navController.navigate(StorageAnalyzerRoute) },
                 )
               }
 
@@ -595,26 +625,37 @@ private fun PrismRootShell(
                 )
               }
             }
-
-            if (!useRailLayout && isTopLevelDestination) {
-              GlassFloatingTabBar(
-                tabs = tabs,
-                selectedId = selectedTabId,
-                onSelectTab = selectTab,
-                onSearchClick = openBottomSearch,
-                isCollapsed = isTabBarCollapsed,
-                onCollapsedChange = { isTabBarCollapsed = it },
-                isSearchExpanded = isBottomSearchExpanded,
-                searchQuery = bottomSearchQuery,
-                onSearchQueryChange = { bottomSearchQuery = it },
-                onSearchExpandedChange = { expanded ->
-                  if (expanded) openBottomSearch() else closeBottomSearch()
-                },
-                onSearchSubmit = {},
-                modifier = Modifier.align(Alignment.BottomCenter),
-              )
-            }
           }
+        }
+      }
+
+        if (useRailLayout && isTopLevelDestination) {
+          GlassNavigationRail(
+            tabs = tabs,
+            selectedId = selectedTabId,
+            onSelectTab = selectTab,
+            onSearchClick = { navController.navigate(SearchRoute) },
+            modifier = Modifier.align(Alignment.CenterStart),
+          )
+        }
+
+        if (!useRailLayout && isTopLevelDestination) {
+          GlassFloatingTabBar(
+            tabs = tabs,
+            selectedId = selectedTabId,
+            onSelectTab = selectTab,
+            onSearchClick = openBottomSearch,
+            isCollapsed = isTabBarCollapsed,
+            onCollapsedChange = { isTabBarCollapsed = it },
+            isSearchExpanded = isBottomSearchExpanded,
+            searchQuery = bottomSearchQuery,
+            onSearchQueryChange = { bottomSearchQuery = it },
+            onSearchExpandedChange = { expanded ->
+              if (expanded) openBottomSearch() else closeBottomSearch()
+            },
+            onSearchSubmit = {},
+            modifier = Modifier.align(Alignment.BottomCenter),
+          )
         }
 
         GlassSettingsSheet(
@@ -625,9 +666,12 @@ private fun PrismRootShell(
           preferences = uiState.preferences,
           onThemeModeChange = viewModel::setThemeMode,
           onDynamicColorChange = viewModel::setUseDynamicColor,
-          onGlassIntensityChange = viewModel::setGlassIntensity,
+          onGlassClarityPreview = viewModel::previewGlassClarity,
+          onGlassClarityCommit = viewModel::commitGlassClarity,
           onReduceTransparencyChange = viewModel::setReduceTransparency,
           onReduceMotionChange = viewModel::setReduceMotion,
+          debugConfig = glassDebugConfig,
+          onDebugConfigChange = { glassDebugConfig = it },
         )
       }
     }

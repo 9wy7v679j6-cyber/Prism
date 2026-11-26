@@ -1,0 +1,26 @@
+# Baseline Profile for Prism Docs (Job 4 — ART AOT compilation of hot UI, Paging & Room paths)
+# Format: HRF (Human-Readable Format) compiled by AGP into assets/dexopt/baseline.prof
+
+# Prism application & feature UI / data packages
+HSPLcom/prism/docs/**;->**(**)**
+Lcom/prism/docs/**;
+
+# Jetpack Compose runtime, UI, foundation, graphics, animation & Material 3
+HSPLandroidx/compose/runtime/**;->**(**)**
+HSPLandroidx/compose/ui/**;->**(**)**
+HSPLandroidx/compose/foundation/**;->**(**)**
+HSPLandroidx/compose/animation/**;->**(**)**
+HSPLandroidx/compose/material3/**;->**(**)**
+Landroidx/compose/runtime/**;
+Landroidx/compose/ui/**;
+Landroidx/compose/foundation/**;
+Landroidx/compose/animation/**;
+Landroidx/compose/material3/**;
+
+# Paging 3, Room & Haze rendering hot paths
+HSPLandroidx/paging/**;->**(**)**
+HSPLandroidx/room/**;->**(**)**
+HSPLdev/chrisbanes/haze/**;->**(**)**
+Landroidx/paging/**;
+Landroidx/room/**;
+Ldev/chrisbanes/haze/**;

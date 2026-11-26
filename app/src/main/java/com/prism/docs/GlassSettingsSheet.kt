@@ -22,9 +22,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.BlurOn
 import androidx.compose.material.icons.rounded.BrightnessAuto
 import androidx.compose.material.icons.rounded.Contrast
 import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.Flare
+import androidx.compose.material.icons.rounded.Layers
+import androidx.compose.material.icons.rounded.LensBlur
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material3.Icon
@@ -46,24 +50,27 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.TextUnitType
 import androidx.compose.ui.unit.dp
-import com.prism.docs.core.data.model.GlassIntensity
 import com.prism.docs.core.data.model.PrismPreferences
 import com.prism.docs.core.data.model.ThemeMode
 import com.prism.docs.core.ui.glass.ConnectedGlassCardSlice
 import com.prism.docs.core.ui.glass.GlassBottomSheet
+import com.prism.docs.core.ui.glass.GlassDebugConfig
 import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassMotionStatusText
-import com.prism.docs.core.ui.glass.GlassSegmentedControl
 import com.prism.docs.core.ui.glass.GlassSheetDetent
 import com.prism.docs.core.ui.glass.GlassSurface
 import com.prism.docs.core.ui.glass.GlassToggle
+import com.prism.docs.core.ui.glass.LiquidGlassClaritySlider
 import com.prism.docs.core.ui.glass.glassClickable
 import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.theme.LocalGlassEnvironment
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
 import com.prism.docs.core.ui.theme.PrismDimens
+import kotlin.math.roundToInt
 
 @Composable
 fun GlassSettingsSheet(
@@ -74,9 +81,12 @@ fun GlassSettingsSheet(
   preferences: PrismPreferences,
   onThemeModeChange: (ThemeMode) -> Unit,
   onDynamicColorChange: (Boolean) -> Unit,
-  onGlassIntensityChange: (GlassIntensity) -> Unit,
+  onGlassClarityPreview: (Float) -> Unit,
+  onGlassClarityCommit: (Float) -> Unit,
   onReduceTransparencyChange: (Boolean) -> Unit,
   onReduceMotionChange: (Boolean) -> Unit,
+  debugConfig: GlassDebugConfig = GlassDebugConfig(),
+  onDebugConfigChange: (GlassDebugConfig) -> Unit = {},
 ) {
   if (visible) {
     BackHandler(onBack = onDismiss)
@@ -107,19 +117,21 @@ fun GlassSettingsSheet(
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
-        Box(
-          modifier =
-            Modifier.clip(CircleShape)
-              .background(colorScheme.primary.copy(alpha = if (env.isDark) 0.22f else 0.12f))
-              .padding(horizontal = 10.dp, vertical = 3.dp),
-        ) {
-          Text(
-            text = env.capabilityTier.label,
-            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-            color = colorScheme.primary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-          )
+        if (BuildConfig.DEBUG) {
+          Box(
+            modifier =
+              Modifier.clip(CircleShape)
+                .background(colorScheme.primary.copy(alpha = if (env.isDark) 0.22f else 0.12f))
+                .padding(horizontal = 10.dp, vertical = 3.dp),
+          ) {
+            Text(
+              text = env.capabilityTier.label,
+              style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+              color = colorScheme.primary,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
         }
       }
       TextButton(
@@ -193,7 +205,7 @@ fun GlassSettingsSheet(
         }
       }
 
-      // Section 2: Liquid Glass Material & Accent
+      // Section 2: Liquid Glass Clarity Slider & Accent
       Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SettingsSectionLabel(title = "LIQUID GLASS MATERIAL")
 
@@ -205,37 +217,53 @@ fun GlassSettingsSheet(
         ) {
           Column(
             modifier = Modifier.fillMaxWidth().padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
           ) {
+            val clarityPct = (preferences.glassClarity * 100f).roundToInt().coerceIn(0, 100)
             Row(
               modifier = Modifier.fillMaxWidth(),
               horizontalArrangement = Arrangement.SpaceBetween,
               verticalAlignment = Alignment.CenterVertically,
             ) {
               Text(
-                text = "Glass Intensity",
+                text = "Glass clarity",
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                 color = colorScheme.onSurface,
               )
               Text(
-                text =
-                  when (preferences.glassIntensity) {
-                    GlassIntensity.SUBTLE -> "Subtle"
-                    GlassIntensity.STANDARD -> "Standard"
-                    GlassIntensity.RICH -> "Rich"
-                  },
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                text = if (preferences.reduceTransparency) "Opaque" else "$clarityPct%",
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
                 color = colorScheme.primary,
+                modifier = Modifier.testTag("glass_clarity_value_label"),
               )
             }
-            GlassSegmentedControl(
-              options = listOf("Subtle", "Standard", "Rich"),
-              selectedIndex = preferences.glassIntensity.ordinal,
-              onSelect = { idx ->
-                onGlassIntensityChange(GlassIntensity.entries[idx])
-              },
-              modifier = Modifier.fillMaxWidth(),
+            LiquidGlassClaritySlider(
+              value = preferences.glassClarity,
+              onValueChange = onGlassClarityPreview,
+              onValueChangeFinished = { onGlassClarityCommit(preferences.glassClarity) },
+              enabled = !preferences.reduceTransparency,
+              modifier = Modifier.fillMaxWidth().testTag("glass_clarity_slider"),
             )
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Text(
+                text = "Frosted",
+                style = MaterialTheme.typography.labelSmall,
+                color = colorScheme.onSurfaceVariant,
+              )
+              Text(
+                text = "Balanced",
+                style = MaterialTheme.typography.labelSmall,
+                color = colorScheme.onSurfaceVariant,
+              )
+              Text(
+                text = "Clear glass",
+                style = MaterialTheme.typography.labelSmall,
+                color = colorScheme.onSurfaceVariant,
+              )
+            }
           }
         }
 
@@ -265,7 +293,7 @@ fun GlassSettingsSheet(
         }
       }
 
-      // Section 3: Motion & Diagnostics
+      // Section 3: Motion & Accessibility
       Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SettingsSectionLabel(title = "MOTION & ACCESSIBILITY")
         GroupedSettingToggleRow(
@@ -280,21 +308,78 @@ fun GlassSettingsSheet(
           testTag = "toggle_reduce_motion",
         )
 
-        GlassSurface(
-          cornerRadius = 18.dp,
-          elevation = GlassElevation.SUBTLE,
-          useBackdropBlur = false,
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
-            ProvideTextStyle(
-              MaterialTheme.typography.labelSmall.copy(color = colorScheme.onSurfaceVariant)
-            ) {
-              GlassMotionStatusText(
-                appReduceMotion = preferences.reduceMotion,
-                modifier = Modifier.fillMaxWidth().testTag("glass_motion_status_text"),
-              )
+        if (BuildConfig.DEBUG) {
+          GlassSurface(
+            cornerRadius = 18.dp,
+            elevation = GlassElevation.SUBTLE,
+            useBackdropBlur = false,
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
+              ProvideTextStyle(
+                MaterialTheme.typography.labelSmall.copy(color = colorScheme.onSurfaceVariant)
+              ) {
+                GlassMotionStatusText(
+                  appReduceMotion = preferences.reduceMotion,
+                  modifier = Modifier.fillMaxWidth().testTag("glass_motion_status_text"),
+                )
+              }
             }
+          }
+        }
+      }
+
+      // Section 4: Debug-Only Bisect Toggles (Job 1.4 — strictly behind BuildConfig.DEBUG)
+      if (BuildConfig.DEBUG) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+          SettingsSectionLabel(title = "DEBUG GLASS BISECT")
+          Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+            GroupedSettingToggleRow(
+              icon = Icons.Rounded.BlurOn,
+              iconTint = colorScheme.primary,
+              title = "Backdrop Blur / Haze",
+              subtitle = "Toggle live backdrop blur pass on floating glass.",
+              checked = debugConfig.enableHaze,
+              onCheckedChange = { onDebugConfigChange(debugConfig.copy(enableHaze = it)) },
+              isFirst = true,
+              isLast = false,
+              testTag = "debug_toggle_haze",
+            )
+            GroupedSettingToggleRow(
+              icon = Icons.Rounded.Layers,
+              iconTint = tokens.warningAccent,
+              title = "Exterior Glass Shadow",
+              subtitle = "Toggle exterior ring shadow around floating glass.",
+              checked = debugConfig.enableShadow,
+              onCheckedChange = { onDebugConfigChange(debugConfig.copy(enableShadow = it)) },
+              isFirst = false,
+              isLast = false,
+              testTag = "debug_toggle_shadow",
+            )
+            GroupedSettingToggleRow(
+              icon = Icons.Rounded.LensBlur,
+              iconTint = colorScheme.secondary,
+              title = "AGSL Edge Refraction",
+              subtitle = "Toggle API 33+ backdrop bezel refraction & dispersion.",
+              checked = debugConfig.enableEdgeRefraction,
+              onCheckedChange = {
+                onDebugConfigChange(debugConfig.copy(enableEdgeRefraction = it))
+              },
+              isFirst = false,
+              isLast = false,
+              testTag = "debug_toggle_refraction",
+            )
+            GroupedSettingToggleRow(
+              icon = Icons.Rounded.Flare,
+              iconTint = tokens.successAccent,
+              title = "Specular Sheen",
+              subtitle = "Toggle angled shimmer sweep across glass surfaces.",
+              checked = debugConfig.enableSheen,
+              onCheckedChange = { onDebugConfigChange(debugConfig.copy(enableSheen = it)) },
+              isFirst = false,
+              isLast = true,
+              testTag = "debug_toggle_sheen",
+            )
           }
         }
       }
@@ -310,11 +395,12 @@ private fun LiveLiquidGlassPreviewCard(
   isDark: Boolean,
 ) {
   val colorScheme = MaterialTheme.colorScheme
+  val clarityPct = (preferences.glassClarity * 100f).roundToInt().coerceIn(0, 100)
   val bgColors =
     if (isDark) {
-      listOf(Color(0xFF171C3A), Color(0xFF281F4A), Color(0xFF142A48))
+      listOf(Color(0xFF1A2250), Color(0xFF3A2464), Color(0xFF15385C))
     } else {
-      listOf(Color(0xFFD6E3FF), Color(0xFFE7DAFF), Color(0xFFD2F1FF))
+      listOf(Color(0xFFC2D7FF), Color(0xFFE0CCFF), Color(0xFFBCEBFF))
     }
 
   Box(
@@ -324,11 +410,12 @@ private fun LiveLiquidGlassPreviewCard(
         .background(Brush.linearGradient(colors = bgColors))
         .padding(14.dp),
   ) {
+    // Non-blur translucent preview inside sheet (no nested hazeEffect)
     GlassSurface(
       cornerRadius = 20.dp,
-      elevation = GlassElevation.FLOATING,
+      elevation = GlassElevation.SUBTLE,
       useBackdropBlur = false,
-      enableRefraction = true,
+      enableRefraction = false,
       accentTint = colorScheme.primary.copy(alpha = if (isDark) 0.14f else 0.08f),
       modifier = Modifier.fillMaxWidth(),
     ) {
@@ -362,15 +449,15 @@ private fun LiveLiquidGlassPreviewCard(
             color = colorScheme.onSurface,
             maxLines = 1,
           )
-          val intensityName =
-            when (preferences.glassIntensity) {
-              GlassIntensity.SUBTLE -> "Subtle"
-              GlassIntensity.STANDARD -> "Standard"
-              GlassIntensity.RICH -> "Rich"
+          val clarityTier =
+            when {
+              clarityPct >= 80 -> "Clear"
+              clarityPct >= 35 -> "Balanced"
+              else -> "Frosted"
             }
           val modeLabel =
             if (preferences.reduceTransparency) "Opaque contrast mode"
-            else "$intensityName glass • ${if (isDark) "Dark" else "Light"}"
+            else "$clarityTier ($clarityPct%) • ${if (isDark) "Dark" else "Light"}"
           Text(
             text = modeLabel,
             style = MaterialTheme.typography.bodySmall,
@@ -391,7 +478,7 @@ private fun SettingsSectionLabel(title: String) {
     style =
       MaterialTheme.typography.labelMedium.copy(
         fontWeight = FontWeight.Bold,
-        letterSpacing = androidx.compose.ui.unit.TextUnit(0.8f, androidx.compose.ui.unit.TextUnitType.Sp),
+        letterSpacing = TextUnit(0.8f, TextUnitType.Sp),
       ),
     color = MaterialTheme.colorScheme.onSurfaceVariant,
     modifier = Modifier.padding(horizontal = 4.dp),
@@ -419,6 +506,7 @@ private fun ThemeModeCard(
       animationSpec = tween(180),
       label = "theme_card_tint_$label",
     )
+  val cardShape = RoundedCornerShape(20.dp)
 
   GlassSurface(
     cornerRadius = 20.dp,
@@ -428,12 +516,15 @@ private fun ThemeModeCard(
     modifier =
       modifier
         .defaultMinSize(minHeight = 76.dp)
-        .border(width = 1.6.dp, color = borderColor, shape = RoundedCornerShape(20.dp))
         .glassClickable(role = Role.RadioButton, hapticOnClick = false, onClick = onClick)
         .semantics { this.selected = selected },
   ) {
     Column(
-      modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 8.dp),
+      modifier =
+        Modifier.fillMaxWidth()
+          .clip(cardShape)
+          .border(width = 1.6.dp, color = borderColor, shape = cardShape)
+          .padding(vertical = 12.dp, horizontal = 8.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {

@@ -17,13 +17,21 @@ import com.prism.docs.core.data.preferences.PrismPreferencesRepository
 import com.prism.docs.core.data.storage.StoragePermissionManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlin.math.abs
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class PrismAppUiState(
   val isLoaded: Boolean = false,
@@ -50,27 +58,47 @@ constructor(
 
   private val permissionRefreshSignal = MutableStateFlow(0L)
   private val pendingIncoming = MutableStateFlow<IncomingDocumentRequest?>(null)
+  private val liveGlassClarity = MutableStateFlow<Float?>(null)
   private var lastKnownAccessLevel: StorageAccessLevel? = null
 
-  val uiState: StateFlow<PrismAppUiState> =
+  private val effectivePrefsFlow =
+    combine(preferencesRepository.preferencesFlow, liveGlassClarity) { prefs, overrideClarity ->
+      if (overrideClarity != null) prefs.copy(glassClarity = overrideClarity) else prefs
+    }
+
+  private val storageAccessStateFlow =
     combine(
-        preferencesRepository.preferencesFlow,
+        preferencesRepository.preferencesFlow
+          .map { it.safFolderGrants }
+          .distinctUntilChanged(),
         permissionRefreshSignal,
-        documentIndexScheduler.observeIndexStatus(),
-        pendingIncoming,
-      ) { prefs, _, indexStatus, incoming ->
-        val accessState = storagePermissionManager.computeAccessState(prefs.safFolderGrants)
+      ) { safGrants, _ ->
+        storagePermissionManager.computeAccessState(safGrants)
+      }
+      .flowOn(Dispatchers.IO)
+      .distinctUntilChanged()
+      .onEach { accessState ->
+        val previous = lastKnownAccessLevel
+        lastKnownAccessLevel = accessState.level
         if (
-          lastKnownAccessLevel != null &&
-            lastKnownAccessLevel != accessState.level &&
+          previous != null &&
+            previous != accessState.level &&
             accessState.level != StorageAccessLevel.LIMITED_NONE
         ) {
           documentIndexScheduler.triggerImmediateSync()
         }
-        lastKnownAccessLevel = accessState.level
+      }
+
+  val uiState: StateFlow<PrismAppUiState> =
+    combine(
+        effectivePrefsFlow,
+        storageAccessStateFlow,
+        documentIndexScheduler.observeIndexStatus(),
+        pendingIncoming,
+      ) { effectivePrefs, accessState, indexStatus, incoming ->
         PrismAppUiState(
           isLoaded = true,
-          preferences = prefs,
+          preferences = effectivePrefs,
           storageAccessState = accessState,
           indexStatus = indexStatus,
           pendingIncomingDocument = incoming,
@@ -129,6 +157,24 @@ constructor(
     viewModelScope.launch { preferencesRepository.setGlassIntensity(intensity) }
   }
 
+  fun previewGlassClarity(clarity: Float) {
+    liveGlassClarity.value = clarity.coerceIn(0f, 1f)
+  }
+
+  fun commitGlassClarity(clarity: Float) {
+    val clamped = clarity.coerceIn(0f, 1f)
+    liveGlassClarity.value = clamped
+    viewModelScope.launch {
+      preferencesRepository.setGlassClarity(clamped)
+      withTimeoutOrNull(500L) {
+        preferencesRepository.preferencesFlow.first { abs(it.glassClarity - clamped) < 0.001f }
+      }
+      if (liveGlassClarity.value == clamped) {
+        liveGlassClarity.value = null
+      }
+    }
+  }
+
   fun setReduceTransparency(enabled: Boolean) {
     viewModelScope.launch { preferencesRepository.setReduceTransparency(enabled) }
   }
@@ -144,6 +190,7 @@ constructor(
   fun handleIncomingIntent(intent: Intent?) {
     if (intent == null) return
     val action = intent.action ?: return
+    val explicitMimeType = intent.type
     val uri: Uri? =
       when (action) {
         Intent.ACTION_VIEW -> intent.data
@@ -153,13 +200,15 @@ constructor(
       }
 
     if (uri != null) {
-      val resolved =
-        storagePermissionManager.resolveIncomingDocument(
-          uri = uri,
-          explicitMimeType = intent.type,
-          sourceAction = action.substringAfterLast('.'),
-        )
-      pendingIncoming.value = resolved
+      viewModelScope.launch(Dispatchers.IO) {
+        val resolved =
+          storagePermissionManager.resolveIncomingDocument(
+            uri = uri,
+            explicitMimeType = explicitMimeType,
+            sourceAction = action.substringAfterLast('.'),
+          )
+        pendingIncoming.value = resolved
+      }
     }
   }
 

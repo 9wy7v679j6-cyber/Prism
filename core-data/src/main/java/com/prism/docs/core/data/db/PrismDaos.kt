@@ -6,7 +6,9 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.RawQuery
+import androidx.room.Transaction
 import androidx.sqlite.db.SupportSQLiteQuery
+import com.prism.docs.core.data.storage.DocumentCategoryClassifier
 import kotlinx.coroutines.flow.Flow
 
 data class DocumentIndexSnapshot(
@@ -90,6 +92,20 @@ interface DocumentIndexDao {
   @Query("UPDATE indexed_documents SET partialHash = NULL, contentHash = NULL WHERE isTrashed = 0")
   suspend fun clearActiveHashes()
 
+  @Transaction
+  suspend fun replaceActiveHashes(
+    partialById: Map<Long, String>,
+    fullById: Map<Long, String>,
+  ) {
+    clearActiveHashes()
+    val allIds = HashSet<Long>(partialById.size + fullById.size)
+    allIds.addAll(partialById.keys)
+    allIds.addAll(fullById.keys)
+    for (id in allIds) {
+      updateDocumentHashes(id = id, partialHash = partialById[id], contentHash = fullById[id])
+    }
+  }
+
   @Query(
     "SELECT * FROM indexed_documents WHERE isTrashed = 0 AND lastOpenedEpochMs IS NOT NULL ORDER BY lastOpenedEpochMs DESC LIMIT :limit"
   )
@@ -99,6 +115,41 @@ interface DocumentIndexDao {
     "SELECT * FROM indexed_documents WHERE isTrashed = 0 AND isFavorite = 1 ORDER BY lastModifiedEpochMs DESC"
   )
   fun observeFavoriteDocuments(): Flow<List<IndexedDocumentEntity>>
+
+  @Query(
+    "SELECT * FROM indexed_documents WHERE isTrashed = 0 AND " +
+      DocumentCategoryClassifier.PRIMARY_DOCUMENT_SQL_WHERE +
+      " ORDER BY sizeBytes DESC, lastModifiedEpochMs DESC LIMIT :limit"
+  )
+  fun observeLargestPrimaryDocuments(limit: Int = 40): Flow<List<IndexedDocumentEntity>>
+
+  @Query(
+    "SELECT parentPath, COUNT(*) AS itemCount, COALESCE(SUM(sizeBytes), 0) AS totalBytes " +
+      "FROM indexed_documents WHERE isTrashed = 0 AND " +
+      DocumentCategoryClassifier.PRIMARY_DOCUMENT_SQL_WHERE +
+      " GROUP BY parentPath ORDER BY totalBytes DESC LIMIT :limit"
+  )
+  fun observePrimaryDocumentFolderStorageStats(limit: Int = 25): Flow<List<FolderStorageStatRow>>
+
+  @Query(
+    "SELECT COUNT(*) FROM indexed_documents WHERE isTrashed = 0 AND " +
+      DocumentCategoryClassifier.PRIMARY_DOCUMENT_SQL_WHERE
+  )
+  fun observeActivePrimaryDocumentCount(): Flow<Int>
+
+  @Query(
+    "SELECT COALESCE(SUM(sizeBytes), 0) FROM indexed_documents WHERE isTrashed = 0 AND " +
+      DocumentCategoryClassifier.PRIMARY_DOCUMENT_SQL_WHERE
+  )
+  fun observeTotalPrimaryDocumentBytes(): Flow<Long>
+
+  @Query(
+    "SELECT category, COUNT(*) AS itemCount, COALESCE(SUM(sizeBytes), 0) AS totalBytes " +
+      "FROM indexed_documents WHERE isTrashed = 0 AND " +
+      DocumentCategoryClassifier.PRIMARY_DOCUMENT_SQL_WHERE +
+      " GROUP BY category"
+  )
+  fun observePrimaryDocumentCategoryCounts(): Flow<List<CategoryCountRow>>
 
   @Query("SELECT COUNT(*) FROM indexed_documents WHERE isTrashed = 0")
   fun observeActiveCount(): Flow<Int>
@@ -144,6 +195,9 @@ interface DocumentIndexDao {
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun upsertAll(items: List<IndexedDocumentEntity>)
+
+  @Insert(onConflict = OnConflictStrategy.IGNORE)
+  suspend fun insertIgnoreAll(items: List<IndexedDocumentEntity>): List<Long>
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun upsert(item: IndexedDocumentEntity): Long

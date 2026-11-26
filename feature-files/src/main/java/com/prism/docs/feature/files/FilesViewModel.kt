@@ -2,6 +2,7 @@ package com.prism.docs.feature.files
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
@@ -34,6 +35,7 @@ import com.prism.docs.core.data.thumbnail.DocumentThumbnailPipeline
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.io.File
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -57,6 +59,7 @@ enum class FilesSection {
   RECYCLE_BIN,
 }
 
+@Immutable
 data class BreadcrumbSegment(
   val label: String,
   val pathOrUri: String,
@@ -66,11 +69,13 @@ data class BreadcrumbSegment(
 /**
  * Live SAF directory file merged with its Room entity (matched strictly by exact URI, never label).
  */
+@Immutable
 data class LiveDirectoryFile(
   val meta: ScannedDocumentMetadata,
   val indexedEntity: IndexedDocumentEntity?,
 )
 
+@Immutable
 data class StorageBrowserState(
   val roots: List<StorageVolumeRoot> = emptyList(),
   val breadcrumbs: List<BreadcrumbSegment> = emptyList(),
@@ -83,6 +88,7 @@ data class StorageBrowserState(
     get() = breadcrumbs.lastOrNull()
 }
 
+@Immutable
 data class DestinationPickerState(
   val operationType: TransferOperationType,
   val targetDocumentIds: List<Long>,
@@ -95,18 +101,21 @@ data class DestinationPickerState(
     get() = breadcrumbs.lastOrNull()?.pathOrUri
 }
 
+@Immutable
 data class AssignSheetState(
   val targetDocumentIds: List<Long>,
   val collectionAssignedCounts: Map<Long, Int>,
   val tagAssignedCounts: Map<Long, Int>,
 )
 
+@Immutable
 data class FilesUiState(
   val section: FilesSection = FilesSection.LIBRARY,
   val isGridMode: Boolean = false,
   val query: FileListQuery = FileListQuery(),
   val selectedIds: Set<Long> = emptySet(),
   val isSelectionModeExplicit: Boolean = false,
+  val totalDocumentCount: Int = 0,
   val totalIndexedCount: Int = 0,
   val totalIndexedBytes: Long = 0L,
   val favoritesCount: Int = 0,
@@ -162,22 +171,27 @@ constructor(
   private val showManageLabelsSheetFlow = MutableStateFlow(false)
 
   private var openDirectoryObserverJob: Job? = null
+  private var directoryLoadJob: Job? = null
+  private var pickerLoadJob: Job? = null
 
   private val countsFlow =
     combine(
-      documentRepository.observeActiveCount(),
+      combine(
+        documentRepository.observeActivePrimaryDocumentCount(),
+        documentRepository.observeActiveCount(),
+      ) { docCount, activeCount -> docCount to activeCount },
       documentRepository.observeTotalIndexedBytes(),
       documentRepository.observeFavoriteCount(),
       documentRepository.observeRecentCount(),
       documentRepository.observeCategoryCounts(),
-    ) { active, bytes, favs, recents, catRows ->
+    ) { (docCount, active), bytes, favs, recents, catRows ->
       val byCategory =
         catRows.mapNotNull { row ->
             val cat = runCatching { DocumentCategory.valueOf(row.category) }.getOrNull()
             if (cat != null) cat to row else null
           }
           .toMap()
-      LibraryCounts(active, bytes, favs, recents, byCategory)
+      LibraryCounts(docCount, active, bytes, favs, recents, byCategory)
     }
 
   private val trashFlow =
@@ -267,6 +281,7 @@ constructor(
           query = controls.query,
           selectedIds = controls.selectedIds,
           isSelectionModeExplicit = controls.isSelectionModeExplicit,
+          totalDocumentCount = counts.primaryDocumentCount,
           totalIndexedCount = counts.activeCount,
           totalIndexedBytes = counts.totalBytes,
           favoritesCount = counts.favoritesCount,
@@ -377,12 +392,37 @@ constructor(
     resortLiveSafFiles()
   }
 
-  fun setCategoryFilter(category: DocumentCategory?) {
+  fun selectDocumentsScope() {
     queryFlow.update { current ->
       current.copy(
-        category = if (current.category == category && !current.otherCategoriesOnly) null else category,
+        category = null,
         otherCategoriesOnly = false,
+        documentsOnly = true,
       )
+    }
+  }
+
+  fun selectAllFilesScope() {
+    queryFlow.update { current ->
+      current.copy(
+        category = null,
+        otherCategoriesOnly = false,
+        documentsOnly = false,
+      )
+    }
+  }
+
+  fun setCategoryFilter(category: DocumentCategory?) {
+    queryFlow.update { current ->
+      if (category == null) {
+        current.copy(category = null, otherCategoriesOnly = false, documentsOnly = true)
+      } else {
+        val toggledOff = current.category == category && !current.otherCategoriesOnly
+        current.copy(
+          category = if (toggledOff) null else category,
+          otherCategoriesOnly = false,
+        )
+      }
     }
   }
 
@@ -393,6 +433,7 @@ constructor(
       current.copy(
         category = if (otherOnly) null else category,
         otherCategoriesOnly = otherOnly,
+        documentsOnly = if (otherOnly) false else current.documentsOnly,
       )
     }
   }
@@ -651,6 +692,8 @@ constructor(
   }
 
   fun dismissDestinationPicker() {
+    pickerLoadJob?.cancel()
+    pickerLoadJob = null
     destinationPickerFlow.value = null
   }
 
@@ -680,6 +723,8 @@ constructor(
   fun navigatePickerBreadcrumb(index: Int) {
     val picker = destinationPickerFlow.value ?: return
     if (index < 0) {
+      pickerLoadJob?.cancel()
+      pickerLoadJob = null
       destinationPickerFlow.update { it?.copy(breadcrumbs = emptyList(), subfolders = emptyList()) }
     } else if (index < picker.breadcrumbs.size) {
       navigatePickerBreadcrumbs(picker.breadcrumbs.take(index + 1))
@@ -688,14 +733,19 @@ constructor(
 
   private fun navigatePickerBreadcrumbs(breadcrumbs: List<BreadcrumbSegment>) {
     val target = breadcrumbs.lastOrNull() ?: return
+    pickerLoadJob?.cancel()
     destinationPickerFlow.update { it?.copy(breadcrumbs = breadcrumbs, subfolders = emptyList()) }
-    viewModelScope.launch {
-      val folders =
-        documentRepository.listDirectoryChildren(target.pathOrUri)
-          .filter { it.isDirectory }
-          .sortedBy { it.displayName.lowercase() }
-      destinationPickerFlow.update { it?.copy(subfolders = folders) }
-    }
+    pickerLoadJob =
+      viewModelScope.launch {
+        val folders =
+          documentRepository.listDirectoryChildren(target.pathOrUri)
+            .filter { it.isDirectory }
+            .sortedBy { it.displayName.lowercase() }
+        destinationPickerFlow.update { current ->
+          if (current?.currentPathOrUri == target.pathOrUri) current.copy(subfolders = folders)
+          else current
+        }
+      }
   }
 
   fun confirmDestinationPicker() {
@@ -826,6 +876,8 @@ constructor(
   private fun closeOpenDirectory() {
     openDirectoryObserverJob?.cancel()
     openDirectoryObserverJob = null
+    directoryLoadJob?.cancel()
+    directoryLoadJob = null
     storageBrowserFlow.update {
       it.copy(
         breadcrumbs = emptyList(),
@@ -840,6 +892,7 @@ constructor(
   private fun navigateToBreadcrumbs(breadcrumbs: List<BreadcrumbSegment>) {
     val target = breadcrumbs.lastOrNull() ?: return
     openDirectoryObserverJob?.cancel()
+    directoryLoadJob?.cancel()
     storageBrowserFlow.update {
       it.copy(
         breadcrumbs = breadcrumbs,
@@ -850,11 +903,13 @@ constructor(
       )
     }
 
-    viewModelScope.launch { refreshDirectoryContents(target) }
+    directoryLoadJob = viewModelScope.launch { refreshDirectoryContents(target) }
 
     openDirectoryObserverJob =
       viewModelScope.launch {
-        storageBrowserFlow.update { it.copy(isWatchingLiveDirectory = true) }
+        storageBrowserFlow.update { state ->
+          if (state.currentDirectory == target) state.copy(isWatchingLiveDirectory = true) else state
+        }
         documentRepository
           .observeOpenDirectory(target.pathOrUri)
           .debounce(350L)
@@ -864,6 +919,7 @@ constructor(
 
   private suspend fun refreshDirectoryContents(target: BreadcrumbSegment) {
     val children = documentRepository.listDirectoryChildren(target.pathOrUri)
+    if (storageBrowserFlow.value.currentDirectory != target) return
     val folders = children.filter { it.isDirectory }.sortedBy { it.displayName.lowercase() }
 
     if (target.isSaf) {
@@ -873,20 +929,41 @@ constructor(
         documentRepository.getDocumentsByUris(rawFiles.map { it.uriString }).associateBy {
           it.uriString
         }
+      if (storageBrowserFlow.value.currentDirectory != target) return
       val merged = rawFiles.map { LiveDirectoryFile(it, indexedByUri[it.uriString]) }
-      storageBrowserFlow.update {
-        it.copy(
-          subfolders = folders,
-          liveSafFiles = sortLiveSafFiles(merged, queryFlow.value.sortField, queryFlow.value.sortDirection),
-          isLoadingDirectory = false,
-        )
+      storageBrowserFlow.update { state ->
+        if (state.currentDirectory != target) {
+          state
+        } else {
+          state.copy(
+            subfolders = folders,
+            liveSafFiles = sortLiveSafFiles(merged, queryFlow.value.sortField, queryFlow.value.sortDirection),
+            isLoadingDirectory = false,
+          )
+        }
       }
-      runCatching { incrementalIndexer.syncSingleDirectory(target.pathOrUri) }
+      try {
+        incrementalIndexer.syncSingleDirectory(target.pathOrUri)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (_: Exception) {
+        // Non-fatal background refresh error for the opened directory
+      }
     } else {
-      storageBrowserFlow.update {
-        it.copy(subfolders = folders, liveSafFiles = emptyList(), isLoadingDirectory = false)
+      storageBrowserFlow.update { state ->
+        if (state.currentDirectory != target) {
+          state
+        } else {
+          state.copy(subfolders = folders, liveSafFiles = emptyList(), isLoadingDirectory = false)
+        }
       }
-      runCatching { incrementalIndexer.syncSingleDirectory(target.pathOrUri) }
+      try {
+        incrementalIndexer.syncSingleDirectory(target.pathOrUri)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (_: Exception) {
+        // Non-fatal background refresh error for the opened directory
+      }
     }
   }
 
@@ -918,10 +995,13 @@ constructor(
 
   override fun onCleared() {
     openDirectoryObserverJob?.cancel()
+    directoryLoadJob?.cancel()
+    pickerLoadJob?.cancel()
     super.onCleared()
   }
 
   private data class LibraryCounts(
+    val primaryDocumentCount: Int,
     val activeCount: Int,
     val totalBytes: Long,
     val favoritesCount: Int,

@@ -4,6 +4,7 @@ import androidx.sqlite.db.SimpleSQLiteQuery
 import com.prism.docs.core.data.model.FileListQuery
 import com.prism.docs.core.data.model.FileSortField
 import com.prism.docs.core.data.model.SortDirection
+import com.prism.docs.core.data.storage.DocumentCategoryClassifier
 
 /**
  * Builds strictly parameterized [SimpleSQLiteQuery] instances for Room Paging 3 file queries.
@@ -34,6 +35,8 @@ object FileQueryBuilder {
       args += query.category.name
     } else if (query.otherCategoriesOnly) {
       whereClauses += "d.category NOT IN ('PDF', 'DOCUMENTS', 'SPREADSHEETS', 'SLIDES', 'IMAGES')"
+    } else if (query.documentsOnly && query.collectionId == null && query.tagId == null) {
+      whereClauses += DocumentCategoryClassifier.primaryDocumentSqlClause("d")
     }
 
     if (!query.parentPath.isNullOrBlank()) {

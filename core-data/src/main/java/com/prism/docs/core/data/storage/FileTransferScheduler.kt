@@ -21,6 +21,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -203,8 +204,8 @@ constructor(
     activeWorkObserveJob?.cancel()
     activeWorkObserveJob =
       scope.launch {
-        workManager.getWorkInfoByIdFlow(request.id).collect { info ->
-          if (info == null) return@collect
+        workManager.getWorkInfoByIdFlow(request.id).first { info ->
+          if (info == null) return@first false
           when (info.state) {
             WorkInfo.State.ENQUEUED, WorkInfo.State.RUNNING, WorkInfo.State.BLOCKED -> {
               val p = info.progress
@@ -220,6 +221,7 @@ constructor(
                   isRunning = true,
                   isWorkManagerBacked = true,
                 )
+              false
             }
             WorkInfo.State.SUCCEEDED -> {
               val msg =
@@ -248,7 +250,7 @@ constructor(
                   message = msg,
                 )
               )
-              return@collect
+              true
             }
             WorkInfo.State.CANCELLED -> {
               _transferProgress.value =
@@ -258,7 +260,7 @@ constructor(
                   summaryMessage = "Background transfer cancelled",
                 )
               activeWorkBacked = false
-              return@collect
+              true
             }
             WorkInfo.State.FAILED -> {
               val msg =
@@ -271,7 +273,7 @@ constructor(
                 )
               activeWorkBacked = false
               onCompleted(FileOperationResult(success = false, message = msg))
-              return@collect
+              true
             }
           }
         }

@@ -368,50 +368,61 @@ internal fun SwipeableDocumentRowContainer(
               val startOffset = currentOffset()
               // Gentle lead-in rather than snapping the full slop jump
               var rawAccumulated = startOffset + totalDx * 0.25f
+              var settledNormally = false
               isDragging = true
-              val firstVisual = applyRubberBand(rawAccumulated)
-              liveOffsetPx = firstVisual
-              updateArmedStage(firstVisual)
+              try {
+                val firstVisual = applyRubberBand(rawAccumulated)
+                liveOffsetPx = firstVisual
+                updateArmedStage(firstVisual)
 
-              val completed =
-                horizontalDrag(lockedChange.id) { change ->
-                  val dx = change.positionChange().x
-                  change.consume()
-                  velocityTracker.addPosition(change.uptimeMillis, change.position)
-                  rawAccumulated += dx
-                  val visual = applyRubberBand(rawAccumulated)
-                  liveOffsetPx = visual
-                  updateArmedStage(visual)
-                }
-
-              val finalOffset = liveOffsetPx
-              val velocityX = if (completed) velocityTracker.calculateVelocity().x else 0f
-
-              when {
-                completed &&
-                  (finalOffset >= rightTriggerPx ||
-                    (velocityX > flingVelocityPx && finalOffset > rightTriggerPx * 0.62f)) -> {
-                  haptics.confirm()
-                  latestOnToggleFavorite()
-                  settleOffset(0f, velocityX)
-                }
-                completed &&
-                  (finalOffset <= -deepDeletePx ||
-                    (velocityX < -flingVelocityPx * 1.85f && finalOffset < -leftTrayPx * 0.92f)) -> {
-                  haptics.reject()
-                  settleOffset(0f, velocityX)
-                  latestOnTrash()
-                }
-                completed &&
-                  (finalOffset <= -leftTrayCommitPx ||
-                    (velocityX < -flingVelocityPx && finalOffset < -leftTrayPx * 0.46f)) -> {
-                  if (startOffset > -leftTrayPx * 0.5f) {
-                    haptics.segmentTick()
+                val completed =
+                  horizontalDrag(lockedChange.id) { change ->
+                    val dx = change.positionChange().x
+                    change.consume()
+                    velocityTracker.addPosition(change.uptimeMillis, change.position)
+                    rawAccumulated += dx
+                    val visual = applyRubberBand(rawAccumulated)
+                    liveOffsetPx = visual
+                    updateArmedStage(visual)
                   }
-                  settleOffset(-leftTrayPx, velocityX)
+
+                val finalOffset = liveOffsetPx
+                val velocityX = if (completed) velocityTracker.calculateVelocity().x else 0f
+
+                when {
+                  completed &&
+                    (finalOffset >= rightTriggerPx ||
+                      (velocityX > flingVelocityPx && finalOffset > rightTriggerPx * 0.62f)) -> {
+                    haptics.confirm()
+                    latestOnToggleFavorite()
+                    settleOffset(0f, velocityX)
+                  }
+                  completed &&
+                    (finalOffset <= -deepDeletePx ||
+                      (velocityX < -flingVelocityPx * 1.85f && finalOffset < -leftTrayPx * 0.92f)) -> {
+                    haptics.reject()
+                    settleOffset(0f, velocityX)
+                    latestOnTrash()
+                  }
+                  completed &&
+                    (finalOffset <= -leftTrayCommitPx ||
+                      (velocityX < -flingVelocityPx && finalOffset < -leftTrayPx * 0.46f)) -> {
+                    if (startOffset > -leftTrayPx * 0.5f) {
+                      haptics.segmentTick()
+                    }
+                    settleOffset(-leftTrayPx, velocityX)
+                  }
+                  else -> {
+                    settleOffset(0f, velocityX)
+                  }
                 }
-                else -> {
-                  settleOffset(0f, velocityX)
+                settledNormally = true
+              } finally {
+                if (!settledNormally) {
+                  armedStage = 0
+                  isDragging = false
+                  liveOffsetPx = 0f
+                  scope.launch { swipeAnim.snapTo(0f) }
                 }
               }
             }
