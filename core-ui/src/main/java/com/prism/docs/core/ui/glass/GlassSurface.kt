@@ -442,23 +442,27 @@ fun GlassSurface(
   // Dynamic rim brightness lift on floating bars when scrolling fast (draw-phase only)
   val dynamicRimModifier =
     if (isFloatingLayer && motion) {
-      Modifier.drawWithContent {
-        drawContent()
-        if (size.width < 2f || size.height < 2f) return@drawWithContent
-        val energy =
-          (if (elevation == GlassElevation.OVERLAY) dynamics.sheetDragEnergy else dynamics.scrollEnergy) +
-            (pressEnergyState?.value ?: 0f) * 0.45f
-        if (energy > 0.02f) {
-          val rimAlpha = (energy * if (isDark) 0.32f else 0.45f).coerceIn(0f, 0.55f)
-          val outline = shape.createOutline(size, layoutDirection, this)
-          drawOutline(
-            outline = outline,
-            brush =
-              Brush.verticalGradient(
-                colors = listOf(Color.White.copy(alpha = rimAlpha), Color.Transparent)
-              ),
-            style = Stroke(width = 1.25.dp.toPx()),
-          )
+      Modifier.drawWithCache {
+        val valid = size.width >= 2f && size.height >= 2f
+        val outline = if (valid) shape.createOutline(size, layoutDirection, this) else null
+        val rimStroke = Stroke(width = 1.25.dp.toPx())
+        onDrawWithContent {
+          drawContent()
+          if (outline == null) return@onDrawWithContent
+          val energy =
+            (if (elevation == GlassElevation.OVERLAY) dynamics.sheetDragEnergy else dynamics.scrollEnergy) +
+              (pressEnergyState?.value ?: 0f) * 0.45f
+          if (energy > 0.02f) {
+            val rimAlpha = (energy * if (isDark) 0.32f else 0.45f).coerceIn(0f, 0.55f)
+            drawOutline(
+              outline = outline,
+              brush =
+                Brush.verticalGradient(
+                  colors = listOf(Color.White.copy(alpha = rimAlpha), Color.Transparent)
+                ),
+              style = rimStroke,
+            )
+          }
         }
       }
     } else {

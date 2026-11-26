@@ -253,14 +253,16 @@ private fun PrismRootShell(
 
   val requestAllFilesAccess: () -> Unit = {
     val manager = viewModel.storagePermissionManager
-    if (manager.requiresLegacyStoragePermissions()) {
-      legacyStoragePermissionLauncher.launch(manager.legacyStoragePermissions())
-    } else {
-      allFilesSettingsLauncher.launch(manager.buildAllFilesAccessIntent())
+    runCatching {
+      if (manager.requiresLegacyStoragePermissions()) {
+        legacyStoragePermissionLauncher.launch(manager.legacyStoragePermissions())
+      } else {
+        allFilesSettingsLauncher.launch(manager.buildAllFilesAccessIntent())
+      }
     }
   }
 
-  val openSafPicker: () -> Unit = { safTreePickerLauncher.launch(null) }
+  val openSafPicker: () -> Unit = { runCatching { safTreePickerLauncher.launch(null) } }
 
   LaunchedEffect(uiState.pendingIncomingDocument) {
     val incoming = uiState.pendingIncomingDocument ?: return@LaunchedEffect

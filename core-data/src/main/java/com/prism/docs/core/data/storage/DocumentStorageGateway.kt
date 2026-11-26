@@ -100,26 +100,28 @@ constructor(
 
         // Discover removable SD cards / USB volumes via StorageManager on API 30+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-          val storageManager = context.getSystemService(StorageManager::class.java)
-          storageManager?.storageVolumes?.forEach { volume ->
-            val dir = volume.directory
-            if (
-              dir != null &&
-                dir.exists() &&
-                dir.absolutePath != primaryDir?.absolutePath &&
-                volume.state == Environment.MEDIA_MOUNTED
-            ) {
-              val (avail, total) = readStatFs(dir)
-              roots +=
-                StorageVolumeRoot(
-                  id = "vol_${volume.uuid ?: dir.name}",
-                  displayName = volume.getDescription(context) ?: dir.name,
-                  pathOrUri = dir.absolutePath,
-                  sourceType = StorageSourceType.FILESYSTEM,
-                  isRemovable = volume.isRemovable,
-                  availableBytes = avail,
-                  totalBytes = total,
-                )
+          runCatching {
+            val storageManager = context.getSystemService(StorageManager::class.java)
+            storageManager?.storageVolumes?.forEach { volume ->
+              val dir = volume.directory
+              if (
+                dir != null &&
+                  dir.exists() &&
+                  dir.absolutePath != primaryDir?.absolutePath &&
+                  volume.state == Environment.MEDIA_MOUNTED
+              ) {
+                val (avail, total) = readStatFs(dir)
+                roots +=
+                  StorageVolumeRoot(
+                    id = "vol_${volume.uuid ?: dir.name}",
+                    displayName = volume.getDescription(context) ?: dir.name,
+                    pathOrUri = dir.absolutePath,
+                    sourceType = StorageSourceType.FILESYSTEM,
+                    isRemovable = volume.isRemovable,
+                    availableBytes = avail,
+                    totalBytes = total,
+                  )
+              }
             }
           }
         }
@@ -280,10 +282,10 @@ constructor(
 
   private fun listFilesystemChildren(directory: File): List<ScannedDocumentMetadata> {
     if (!directory.exists() || !directory.isDirectory) return emptyList()
-    val children = directory.listFiles() ?: return emptyList()
+    val children = runCatching { directory.listFiles() }.getOrNull() ?: return emptyList()
     return children
       .filter { !it.name.startsWith(".") }
-      .map { file -> fileToMetadata(file) }
+      .mapNotNull { file -> runCatching { fileToMetadata(file) }.getOrNull() }
   }
 
   internal suspend fun walkFilesystemDirectory(
@@ -453,8 +455,9 @@ constructor(
             }
 
             val mime = DocumentCategoryClassifier.inferMimeType(name, rawMime)
-            val size = if (sizeCol >= 0) cursor.getLong(sizeCol) else 0L
-            val modSec = if (modCol >= 0) cursor.getLong(modCol) else 0L
+            val size = if (sizeCol >= 0) cursor.getLong(sizeCol).coerceAtLeast(0L) else 0L
+            val modRaw = if (modCol >= 0) cursor.getLong(modCol) else 0L
+            val modMs = safeMediaStoreEpochMs(modRaw)
 
             val contentUri = ContentUris.withAppendedId(collection, id)
             onFile(
@@ -466,7 +469,7 @@ constructor(
                 extension = DocumentCategoryClassifier.extractExtension(name),
                 category = DocumentCategoryClassifier.classify(mime, name),
                 sizeBytes = size,
-                lastModifiedEpochMs = modSec * 1000L,
+                lastModifiedEpochMs = modMs,
                 isDirectory = false,
                 sourceType = StorageSourceType.MEDIASTORE,
               )
@@ -538,23 +541,39 @@ constructor(
     onFile: suspend (ScannedDocumentMetadata) -> Unit,
   ) {
     val treeUri = runCatching { Uri.parse(grant.uriString) }.getOrNull() ?: return
-    val rootDoc = DocumentFile.fromTreeUri(context, treeUri) ?: return
-    if (!rootDoc.canRead()) return
+    val canRead = runCatching { DocumentFile.fromTreeUri(context, treeUri)?.canRead() == true }.getOrDefault(false)
+    if (!canRead) return
 
-    val queue = ArrayDeque<Uri>()
-    queue.add(treeUri)
+    val visitedUris = HashSet<String>(64)
+    visitedUris.add(treeUri.toString())
+    val queue = ArrayDeque<Pair<Uri, Int>>()
+    queue.add(treeUri to 0)
     while (queue.isNotEmpty()) {
-      val currentUri = queue.removeFirst()
+      val (currentUri, depth) = queue.removeFirst()
       val children = listSafChildren(currentUri)
       for (child in children) {
         if (child.isDirectory || isDirectoryMimeType(child.mimeType)) {
-          queue.add(Uri.parse(child.uriString))
+          if (depth < MAX_WALK_DEPTH && visitedUris.add(child.uriString)) {
+            runCatching { Uri.parse(child.uriString) }.getOrNull()?.let { childUri ->
+              queue.add(childUri to (depth + 1))
+            }
+          }
         } else {
           // parentPath is already canonical currentUri.toString() from listSafChildren
           onFile(child)
         }
       }
     }
+  }
+
+  private fun safeMediaStoreEpochMs(rawSecondsOrMs: Long): Long {
+    if (rawSecondsOrMs <= 0L) return 0L
+    // Values above 1e11 are already epoch milliseconds (corrupt providers), otherwise seconds.
+    val epochMs =
+      if (rawSecondsOrMs > 100_000_000_000L) rawSecondsOrMs
+      else if (rawSecondsOrMs > Long.MAX_VALUE / 1000L) 0L
+      else rawSecondsOrMs * 1000L
+    return epochMs.coerceIn(0L, 7_258_118_400_000L)
   }
 
   companion object {

@@ -99,10 +99,13 @@ constructor(
 
   fun computeAccessState(savedGrants: List<SafFolderGrant>): StorageAccessState {
     val activePersisted =
-      context.contentResolver.persistedUriPermissions
-        .filter { it.isReadPermission }
-        .map { it.uri.toString() }
-        .toSet()
+      runCatching {
+          context.contentResolver.persistedUriPermissions
+            .filter { it.isReadPermission }
+            .map { it.uri.toString() }
+            .toSet()
+        }
+        .getOrDefault(emptySet())
 
     val validGrants = savedGrants.filter { it.uriString in activePersisted }
     val fullAccess = hasAllFilesAccess()

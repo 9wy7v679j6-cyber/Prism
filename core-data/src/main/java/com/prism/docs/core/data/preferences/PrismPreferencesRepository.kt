@@ -2,6 +2,7 @@ package com.prism.docs.core.data.preferences
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -24,7 +25,10 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 private val Context.prismDataStore: DataStore<Preferences> by
-  preferencesDataStore(name = "prism_preferences")
+  preferencesDataStore(
+    name = "prism_preferences",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+  )
 
 @Singleton
 class PrismPreferencesRepository
@@ -66,6 +70,8 @@ constructor(
               GlassIntensity.STANDARD -> 0.35f
               GlassIntensity.RICH -> 0.14f
             }
+          val rawClarity = prefs[Keys.GLASS_CLARITY] ?: defaultClarity
+          val safeClarity = if (rawClarity.isFinite()) rawClarity.coerceIn(0f, 1f) else defaultClarity
           PrismPreferences(
             onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: false,
             themeMode =
@@ -73,7 +79,7 @@ constructor(
                 ?: ThemeMode.LIGHT,
             useDynamicColor = prefs[Keys.USE_DYNAMIC_COLOR] ?: false,
             glassIntensity = intensity,
-            glassClarity = (prefs[Keys.GLASS_CLARITY] ?: defaultClarity).coerceIn(0f, 1f),
+            glassClarity = safeClarity,
             reduceTransparency = prefs[Keys.REDUCE_TRANSPARENCY] ?: false,
             reduceMotion = prefs[Keys.REDUCE_MOTION] ?: false,
             safFolderGrants = decodeGrants(prefs[Keys.SAF_FOLDER_GRANTS]),
@@ -98,7 +104,7 @@ constructor(
   }
 
   suspend fun setGlassClarity(clarity: Float) {
-    val clamped = clarity.coerceIn(0f, 1f)
+    val clamped = if (clarity.isFinite()) clarity.coerceIn(0f, 1f) else 0.35f
     context.prismDataStore.edit { it[Keys.GLASS_CLARITY] = clamped }
   }
 

@@ -554,7 +554,7 @@ fun PrismTheme(
       }
     }
 
-  val clampedClarity = glassClarity.coerceIn(0f, 1f)
+  val clampedClarity = if (glassClarity.isFinite()) glassClarity.coerceIn(0f, 1f) else 0.35f
   val tier = remember(reduceTransparency) { resolveGlassCapabilityTier(reduceTransparency = reduceTransparency) }
   val glassEnv =
     remember(darkTheme, tier, clampedClarity, blurScale, tintScale, reduceTransparency, effectiveReduceMotion) {

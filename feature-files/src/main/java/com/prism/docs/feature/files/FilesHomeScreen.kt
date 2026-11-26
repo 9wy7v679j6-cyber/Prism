@@ -1004,14 +1004,22 @@ private fun LibraryPagingSection(
     pagedItems.loadState.refresh is LoadState.Loading && pagedItems.itemCount == 0
   val isAppending = pagedItems.loadState.append is LoadState.Loading
   val snapshotList = pagedItems.itemSnapshotList
+  val currentItemCount = pagedItems.itemCount
   val dateBoundaries = remember(snapshotList.size) { DateBucketBoundaries.current() }
   val sections =
-    remember(snapshotList, uiState.query.sortField, dateBoundaries) {
+    remember(snapshotList, uiState.query.sortField, dateBoundaries, currentItemCount) {
       buildLibrarySections(
-        pagedItems = pagedItems,
+        snapshotList = snapshotList,
         sortField = uiState.query.sortField,
         boundaries = dateBoundaries,
-      )
+      ).mapNotNull { section ->
+        if (section.startIndex >= currentItemCount) {
+          null
+        } else {
+          val clampedCount = (currentItemCount - section.startIndex).coerceIn(0, section.count)
+          if (clampedCount <= 0) null else section.copy(count = clampedCount)
+        }
+      }
     }
 
   val motionEnabled = LocalGlassMotion.current
@@ -1101,16 +1109,20 @@ private fun LibraryPagingSection(
             }
           }
 
+          val safeCount = (pagedItems.itemCount - section.startIndex).coerceIn(0, section.count)
           items(
-            count = section.count,
+            count = safeCount,
             key = { localIdx ->
               val globalIdx = section.startIndex + localIdx
-              pagedItems.peek(globalIdx)?.id ?: "lib_grid_placeholder_$globalIdx"
+              val peeked = if (globalIdx in 0 until pagedItems.itemCount) pagedItems.peek(globalIdx) else null
+              peeked?.id ?: "lib_grid_placeholder_${sectionIndex}_$globalIdx"
             },
             contentType = { "doc_grid_card" },
           ) { localIdx ->
             val globalIdx = section.startIndex + localIdx
-            val doc = pagedItems[globalIdx] ?: return@items
+            val doc =
+              if (globalIdx in 0 until pagedItems.itemCount) pagedItems[globalIdx] else null
+            if (doc == null) return@items
             DocumentGridCard(
               document = doc,
               thumbnailPipeline = thumbnailPipeline,
@@ -1256,20 +1268,24 @@ private fun LibraryPagingSection(
               }
             }
 
+            val safeCount = (pagedItems.itemCount - section.startIndex).coerceIn(0, section.count)
             items(
-              count = section.count,
+              count = safeCount,
               key = { localIdx ->
                 val globalIdx = section.startIndex + localIdx
-                pagedItems.peek(globalIdx)?.id ?: "lib_list_placeholder_$globalIdx"
+                val peeked = if (globalIdx in 0 until pagedItems.itemCount) pagedItems.peek(globalIdx) else null
+                peeked?.id ?: "lib_list_placeholder_${sectionIndex}_$globalIdx"
               },
               contentType = { "doc_list_row" },
             ) { localIdx ->
               val globalIdx = section.startIndex + localIdx
-              val doc = pagedItems[globalIdx] ?: return@items
+              val doc =
+                if (globalIdx in 0 until pagedItems.itemCount) pagedItems[globalIdx] else null
+              if (doc == null) return@items
               LibraryCardDocumentRow(
                 document = doc,
                 isFirst = localIdx == 0,
-                isLast = localIdx == section.count - 1,
+                isLast = localIdx == safeCount - 1,
                 isSelected = doc.id in uiState.selectedIds,
                 isSelectionMode = uiState.isSelectionMode,
                 entranceIndex = if (globalIdx < 8) globalIdx else null,

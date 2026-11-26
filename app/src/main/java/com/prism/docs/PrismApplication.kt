@@ -22,7 +22,9 @@ class PrismApplication : Application(), Configuration.Provider {
 
   override fun onCreate() {
     super.onCreate()
-    documentIndexScheduler.ensurePeriodicIndexingScheduled()
-    documentIndexScheduler.triggerStartupSync()
+    runCatching {
+      documentIndexScheduler.ensurePeriodicIndexingScheduled()
+      documentIndexScheduler.triggerStartupSync()
+    }
   }
 }

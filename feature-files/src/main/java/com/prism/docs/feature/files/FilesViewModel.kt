@@ -314,7 +314,16 @@ constructor(
 
   /** Paging 3 stream backing Home / Library with sort and filter. */
   val libraryPagingData: Flow<PagingData<IndexedDocumentEntity>> =
-    queryFlow
+    combine(
+        queryFlow.map { it.copy(namePrefix = null) }.distinctUntilChanged(),
+        queryFlow
+          .map { it.namePrefix }
+          .distinctUntilChanged()
+          .debounce { prefix -> if (prefix.isNullOrEmpty()) 0L else 180L },
+      ) { baseQuery, debouncedPrefix ->
+        baseQuery.copy(namePrefix = debouncedPrefix)
+      }
+      .distinctUntilChanged()
       .flatMapLatest { query -> documentRepository.pagedDocuments(query.copy(parentPath = null)) }
       .cachedIn(viewModelScope)
 
@@ -918,7 +927,17 @@ constructor(
   }
 
   private suspend fun refreshDirectoryContents(target: BreadcrumbSegment) {
-    val children = documentRepository.listDirectoryChildren(target.pathOrUri)
+    val children =
+      try {
+        documentRepository.listDirectoryChildren(target.pathOrUri)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (_: Exception) {
+        storageBrowserFlow.update { state ->
+          if (state.currentDirectory != target) state else state.copy(isLoadingDirectory = false)
+        }
+        return
+      }
     if (storageBrowserFlow.value.currentDirectory != target) return
     val folders = children.filter { it.isDirectory }.sortedBy { it.displayName.lowercase() }
 
@@ -926,8 +945,14 @@ constructor(
       // Live DocumentsContract listing for SAF folders; match Room metadata strictly by exact URI
       val rawFiles = children.filterNot { it.isDirectory }
       val indexedByUri =
-        documentRepository.getDocumentsByUris(rawFiles.map { it.uriString }).associateBy {
-          it.uriString
+        try {
+          documentRepository.getDocumentsByUris(rawFiles.map { it.uriString }).associateBy {
+            it.uriString
+          }
+        } catch (e: CancellationException) {
+          throw e
+        } catch (_: Exception) {
+          emptyMap()
         }
       if (storageBrowserFlow.value.currentDirectory != target) return
       val merged = rawFiles.map { LiveDirectoryFile(it, indexedByUri[it.uriString]) }

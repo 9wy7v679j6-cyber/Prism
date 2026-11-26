@@ -70,7 +70,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.paging.compose.LazyPagingItems
+import androidx.paging.ItemSnapshotList
 import com.prism.docs.core.data.db.IndexedDocumentEntity
 import com.prism.docs.core.data.model.FileSortField
 import com.prism.docs.core.ui.glass.ConnectedGlassCardSlice
@@ -101,14 +101,28 @@ data class DateBucketBoundaries(
 ) {
   companion object {
     fun current(nowEpochMs: Long = System.currentTimeMillis()): DateBucketBoundaries {
-      val zone = ZoneId.systemDefault()
-      val today = Instant.ofEpochMilli(nowEpochMs).atZone(zone).toLocalDate()
-      return DateBucketBoundaries(
-        todayStartMs = today.atStartOfDay(zone).toInstant().toEpochMilli(),
-        yesterdayStartMs = today.minusDays(1).atStartOfDay(zone).toInstant().toEpochMilli(),
-        thisWeekStartMs = today.minusDays(6).atStartOfDay(zone).toInstant().toEpochMilli(),
-      )
+      val safeNow = nowEpochMs.coerceIn(MIN_VALID_EPOCH_MS, MAX_VALID_EPOCH_MS)
+      return runCatching {
+          val zone = ZoneId.systemDefault()
+          val today = Instant.ofEpochMilli(safeNow).atZone(zone).toLocalDate()
+          DateBucketBoundaries(
+            todayStartMs = today.atStartOfDay(zone).toInstant().toEpochMilli(),
+            yesterdayStartMs = today.minusDays(1).atStartOfDay(zone).toInstant().toEpochMilli(),
+            thisWeekStartMs = today.minusDays(6).atStartOfDay(zone).toInstant().toEpochMilli(),
+          )
+        }
+        .getOrElse {
+          val dayMs = 86_400_000L
+          DateBucketBoundaries(
+            todayStartMs = (safeNow - dayMs).coerceAtLeast(0L),
+            yesterdayStartMs = (safeNow - 2L * dayMs).coerceAtLeast(0L),
+            thisWeekStartMs = (safeNow - 7L * dayMs).coerceAtLeast(0L),
+          )
+        }
     }
+
+    private const val MIN_VALID_EPOCH_MS = 86_400_000L // 1970-01-02 (avoids negative start-of-day underflow)
+    private const val MAX_VALID_EPOCH_MS = 7_258_118_400_000L // 2200-01-01
   }
 }
 
@@ -121,6 +135,7 @@ data class LibraryDateSection(
 
 fun resolveDateBucket(epochMs: Long, boundaries: DateBucketBoundaries): DateBucket =
   when {
+    epochMs <= 0L -> DateBucket.EARLIER
     epochMs >= boundaries.todayStartMs -> DateBucket.TODAY
     epochMs >= boundaries.yesterdayStartMs -> DateBucket.YESTERDAY
     epochMs >= boundaries.thisWeekStartMs -> DateBucket.THIS_WEEK
@@ -128,11 +143,11 @@ fun resolveDateBucket(epochMs: Long, boundaries: DateBucketBoundaries): DateBuck
   }
 
 fun buildLibrarySections(
-  pagedItems: LazyPagingItems<IndexedDocumentEntity>,
+  snapshotList: ItemSnapshotList<IndexedDocumentEntity>,
   sortField: FileSortField,
   boundaries: DateBucketBoundaries,
 ): List<LibraryDateSection> {
-  val total = pagedItems.itemCount
+  val total = snapshotList.size
   if (total <= 0) return emptyList()
   if (sortField != FileSortField.DATE_MODIFIED) {
     return listOf(LibraryDateSection(bucket = DateBucket.ALL, startIndex = 0, count = total))
@@ -143,7 +158,7 @@ fun buildLibrarySections(
   var currentStart = 0
 
   for (i in 0 until total) {
-    val item = pagedItems.peek(i)
+    val item = snapshotList[i]
     val bucket =
       if (item != null) {
         resolveDateBucket(item.lastModifiedEpochMs, boundaries)

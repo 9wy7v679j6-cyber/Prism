@@ -512,35 +512,46 @@ fun rememberFormattedByteSize(bytes: Long): String {
   return stringResource(R.string.format_bytes_gb, gb)
 }
 
+private const val MIN_VALID_EPOCH_MS = 1L
+private const val MAX_VALID_EPOCH_MS = 7_258_118_400_000L // 2200-01-01T00:00:00Z
+
 private val WEEKDAY_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("EEEE")
 private val DAY_MONTH_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM")
 private val FULL_DATE_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy")
 
+private fun safeFormatEpoch(
+  epochMs: Long,
+  formatter: DateTimeFormatter,
+  fallback: String,
+): String {
+  if (epochMs < MIN_VALID_EPOCH_MS || epochMs > MAX_VALID_EPOCH_MS) return fallback
+  return runCatching {
+      formatter
+        .withLocale(Locale.getDefault())
+        .format(Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()))
+    }
+    .getOrDefault(fallback)
+}
+
 @Composable
 fun rememberFormattedRelativeDay(epochMs: Long): String {
-  if (epochMs <= 0L) return stringResource(R.string.format_unknown_date)
+  val unknownLabel = stringResource(R.string.format_unknown_date)
+  if (epochMs < MIN_VALID_EPOCH_MS || epochMs > MAX_VALID_EPOCH_MS) return unknownLabel
   val dayDiff = remember(epochMs) { computeDayDifference(epochMs) }
   return when {
     dayDiff <= 0 -> stringResource(R.string.format_day_today)
     dayDiff == 1 -> stringResource(R.string.format_day_yesterday)
     dayDiff in 2..6 ->
-      remember(epochMs) {
-        WEEKDAY_FORMATTER
-          .withLocale(Locale.getDefault())
-          .format(Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()))
-      }
+      remember(epochMs, unknownLabel) { safeFormatEpoch(epochMs, WEEKDAY_FORMATTER, unknownLabel) }
     else ->
-      remember(epochMs) {
-        DAY_MONTH_FORMATTER
-          .withLocale(Locale.getDefault())
-          .format(Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()))
-      }
+      remember(epochMs, unknownLabel) { safeFormatEpoch(epochMs, DAY_MONTH_FORMATTER, unknownLabel) }
   }
 }
 
 @Composable
 fun rememberFormattedModifiedTimestamp(epochMs: Long): String {
-  if (epochMs <= 0L) return stringResource(R.string.format_unknown_date_title)
+  val unknownLabel = stringResource(R.string.format_unknown_date_title)
+  if (epochMs < MIN_VALID_EPOCH_MS || epochMs > MAX_VALID_EPOCH_MS) return unknownLabel
   val now = remember(epochMs) { System.currentTimeMillis() }
   val diff = (now - epochMs).coerceAtLeast(0L)
   val oneDay = 24L * 60L * 60L * 1000L
@@ -559,49 +570,44 @@ fun rememberFormattedModifiedTimestamp(epochMs: Long): String {
       pluralStringResource(R.plurals.format_days_ago, days, days)
     }
     else ->
-      remember(epochMs) {
-        FULL_DATE_FORMATTER
-          .withLocale(Locale.getDefault())
-          .format(Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()))
-      }
+      remember(epochMs, unknownLabel) { safeFormatEpoch(epochMs, FULL_DATE_FORMATTER, unknownLabel) }
   }
 }
 
 private fun computeDayDifference(epochMs: Long): Int {
-  val zone = ZoneId.systemDefault()
-  val today = Instant.now().atZone(zone).toLocalDate()
-  val target = Instant.ofEpochMilli(epochMs).atZone(zone).toLocalDate()
-  return ChronoUnit.DAYS.between(target, today).toInt()
+  val clamped = epochMs.coerceIn(MIN_VALID_EPOCH_MS, MAX_VALID_EPOCH_MS)
+  return runCatching {
+      val zone = ZoneId.systemDefault()
+      val today = Instant.now().atZone(zone).toLocalDate()
+      val target = Instant.ofEpochMilli(clamped).atZone(zone).toLocalDate()
+      ChronoUnit.DAYS.between(target, today)
+        .coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong())
+        .toInt()
+    }
+    .getOrDefault(0)
 }
 
 fun formatRelativeDay(epochMs: Long): String {
-  if (epochMs <= 0L) return "unknown date"
+  if (epochMs < MIN_VALID_EPOCH_MS || epochMs > MAX_VALID_EPOCH_MS) return "unknown date"
   val dayDiff = computeDayDifference(epochMs)
-  val zone = ZoneId.systemDefault()
-  val locale = Locale.getDefault()
   return when {
     dayDiff <= 0 -> "today"
     dayDiff == 1 -> "yesterday"
-    dayDiff in 2..6 ->
-      WEEKDAY_FORMATTER.withLocale(locale).format(Instant.ofEpochMilli(epochMs).atZone(zone))
-    else ->
-      DAY_MONTH_FORMATTER.withLocale(locale).format(Instant.ofEpochMilli(epochMs).atZone(zone))
+    dayDiff in 2..6 -> safeFormatEpoch(epochMs, WEEKDAY_FORMATTER, "unknown date")
+    else -> safeFormatEpoch(epochMs, DAY_MONTH_FORMATTER, "unknown date")
   }
 }
 
 fun formatModifiedTimestamp(epochMs: Long): String {
-  if (epochMs <= 0L) return "Unknown date"
+  if (epochMs < MIN_VALID_EPOCH_MS || epochMs > MAX_VALID_EPOCH_MS) return "Unknown date"
   val now = System.currentTimeMillis()
   val diff = (now - epochMs).coerceAtLeast(0L)
   val oneDay = 24L * 60L * 60L * 1000L
   return when {
     diff < 60_000L -> "Just now"
-    diff < 3_600_000L -> "${diff / 60_000L}m ago"
-    diff < oneDay -> "${diff / 3_600_000L}h ago"
-    diff < 7L * oneDay -> "${diff / oneDay}d ago"
-    else ->
-      FULL_DATE_FORMATTER
-        .withLocale(Locale.getDefault())
-        .format(Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()))
+    diff < 3_600_000L -> "${(diff / 60_000L).coerceAtLeast(1L)}m ago"
+    diff < oneDay -> "${(diff / 3_600_000L).coerceAtLeast(1L)}h ago"
+    diff < 7L * oneDay -> "${(diff / oneDay).coerceAtLeast(1L)}d ago"
+    else -> safeFormatEpoch(epochMs, FULL_DATE_FORMATTER, "Unknown date")
   }
 }

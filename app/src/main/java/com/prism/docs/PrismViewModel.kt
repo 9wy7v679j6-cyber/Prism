@@ -22,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -87,6 +88,16 @@ constructor(
         ) {
           documentIndexScheduler.triggerImmediateSync()
         }
+      }
+      .catch {
+        emit(
+          StorageAccessState(
+            level = StorageAccessLevel.LIMITED_NONE,
+            sdkInt = Build.VERSION.SDK_INT,
+            hasAllFilesPermission = false,
+            safFolders = emptyList(),
+          )
+        )
       }
 
   val uiState: StateFlow<PrismAppUiState> =
@@ -158,11 +169,11 @@ constructor(
   }
 
   fun previewGlassClarity(clarity: Float) {
-    liveGlassClarity.value = clarity.coerceIn(0f, 1f)
+    liveGlassClarity.value = if (clarity.isFinite()) clarity.coerceIn(0f, 1f) else 0.35f
   }
 
   fun commitGlassClarity(clarity: Float) {
-    val clamped = clarity.coerceIn(0f, 1f)
+    val clamped = if (clarity.isFinite()) clarity.coerceIn(0f, 1f) else 0.35f
     liveGlassClarity.value = clamped
     viewModelScope.launch {
       preferencesRepository.setGlassClarity(clamped)

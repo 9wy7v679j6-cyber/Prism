@@ -558,7 +558,7 @@ private fun StorageRingHeroCard(
   val motionEnabled = LocalGlassMotion.current
   val haptics = rememberPrismHaptics()
 
-  var revealTarget by remember { mutableStateOf(0f) }
+  var revealTarget by androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
   LaunchedEffect(segments) { revealTarget = 1f }
   val sweepReveal by
     animateFloatAsState(
@@ -671,10 +671,12 @@ private fun StorageRingHeroCard(
               }
               .testTag("analyzer_ring_canvas"),
         ) {
+          if (size.width < 2f || size.height < 2f) return@Canvas
           val strokeWidth = 26.dp.toPx()
-          val diameter = minOf(size.width, size.height) - strokeWidth - 6.dp.toPx()
+          val diameter = (minOf(size.width, size.height) - strokeWidth - 6.dp.toPx()).coerceAtLeast(2f)
           val topLeft = Offset((size.width - diameter) / 2f, (size.height - diameter) / 2f)
           val arcSize = Size(diameter, diameter)
+          val glowRadius = (diameter * 0.44f).coerceAtLeast(1f)
 
           // Soft inner halo
           drawCircle(
@@ -682,9 +684,9 @@ private fun StorageRingHeroCard(
               Brush.radialGradient(
                 colors = listOf(innerGlowColor, Color.Transparent),
                 center = center,
-                radius = diameter * 0.44f,
+                radius = glowRadius,
               ),
-            radius = diameter * 0.44f,
+            radius = glowRadius,
             center = center,
           )
 

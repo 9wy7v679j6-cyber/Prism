@@ -21,6 +21,8 @@
 }
 -keep class com.prism.docs.core.data.indexer.DocumentIndexWorker { *; }
 -keep class com.prism.docs.core.data.storage.FileTransferWorker { *; }
+-keep class com.prism.docs.core.data.duplicates.DuplicateScanWorker { *; }
+-keep @androidx.hilt.work.HiltWorker class * { *; }
 
 # Room generated database implementation & DAOs
 -keep class * extends androidx.room.RoomDatabase { *; }

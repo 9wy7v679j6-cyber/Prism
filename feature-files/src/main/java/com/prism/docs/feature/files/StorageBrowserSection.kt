@@ -240,8 +240,11 @@ fun StorageBrowserSection(
           }
         }
       } else {
-        items(storageState.roots.size, key = { storageState.roots[it].id }) { idx ->
-          val root = storageState.roots[idx]
+        items(
+          count = storageState.roots.size,
+          key = { idx -> "${idx}_${storageState.roots[idx].id}" },
+        ) { idx ->
+          val root = storageState.roots.getOrNull(idx) ?: return@items
           StorageVolumeRootCard(
             root = root,
             onClick = { onOpenRoot(root) },
@@ -319,20 +322,23 @@ fun StorageBrowserSection(
         )
       }
 
-      items(storageState.subfolders.size, key = { "dir_${storageState.subfolders[it].uriString}" }) {
-        idx ->
+      items(
+        count = storageState.subfolders.size,
+        key = { idx -> "dir_${idx}_${storageState.subfolders[idx].uriString}" },
+      ) { idx ->
+        val folder = storageState.subfolders.getOrNull(idx) ?: return@items
         FolderGridTile(
-          folder = storageState.subfolders[idx],
-          onClick = { onOpenSubfolder(storageState.subfolders[idx]) },
+          folder = folder,
+          onClick = { onOpenSubfolder(folder) },
         )
       }
 
       if (isSafOpen) {
         items(
-          storageState.liveSafFiles.size,
-          key = { "saf_${storageState.liveSafFiles[it].meta.uriString}" },
+          count = storageState.liveSafFiles.size,
+          key = { idx -> "saf_${idx}_${storageState.liveSafFiles[idx].meta.uriString}" },
         ) { idx ->
-          val item = storageState.liveSafFiles[idx]
+          val item = storageState.liveSafFiles.getOrNull(idx) ?: return@items
           val entity = item.indexedEntity
           if (entity != null) {
             DocumentGridCard(
@@ -374,9 +380,13 @@ fun StorageBrowserSection(
       } else {
         items(
           count = pagedLocalFiles.itemCount,
-          key = { idx -> pagedLocalFiles.peek(idx)?.id ?: "local_grid_$idx" },
+          key = { idx ->
+            val peeked = if (idx in 0 until pagedLocalFiles.itemCount) pagedLocalFiles.peek(idx) else null
+            peeked?.id ?: "local_grid_$idx"
+          },
         ) { idx ->
-          val doc = pagedLocalFiles[idx] ?: return@items
+          val doc = if (idx in 0 until pagedLocalFiles.itemCount) pagedLocalFiles[idx] else null
+          if (doc == null) return@items
           DocumentGridCard(
             document = doc,
             thumbnailPipeline = thumbnailPipeline,
@@ -433,21 +443,24 @@ fun StorageBrowserSection(
         )
       }
 
-      items(storageState.subfolders.size, key = { "dir_${storageState.subfolders[it].uriString}" }) {
-        idx ->
+      items(
+        count = storageState.subfolders.size,
+        key = { idx -> "dir_${idx}_${storageState.subfolders[idx].uriString}" },
+      ) { idx ->
+        val folder = storageState.subfolders.getOrNull(idx) ?: return@items
         FolderListRow(
-          folder = storageState.subfolders[idx],
-          onClick = { onOpenSubfolder(storageState.subfolders[idx]) },
+          folder = folder,
+          onClick = { onOpenSubfolder(folder) },
           modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
         )
       }
 
       if (isSafOpen) {
         items(
-          storageState.liveSafFiles.size,
-          key = { "saf_${storageState.liveSafFiles[it].meta.uriString}" },
+          count = storageState.liveSafFiles.size,
+          key = { idx -> "saf_${idx}_${storageState.liveSafFiles[idx].meta.uriString}" },
         ) { idx ->
-          val item = storageState.liveSafFiles[idx]
+          val item = storageState.liveSafFiles.getOrNull(idx) ?: return@items
           val entity = item.indexedEntity
           if (entity != null) {
             DocumentListRow(
@@ -491,9 +504,13 @@ fun StorageBrowserSection(
       } else {
         items(
           count = pagedLocalFiles.itemCount,
-          key = { idx -> pagedLocalFiles.peek(idx)?.id ?: "local_list_$idx" },
+          key = { idx ->
+            val peeked = if (idx in 0 until pagedLocalFiles.itemCount) pagedLocalFiles.peek(idx) else null
+            peeked?.id ?: "local_list_$idx"
+          },
         ) { idx ->
-          val doc = pagedLocalFiles[idx] ?: return@items
+          val doc = if (idx in 0 until pagedLocalFiles.itemCount) pagedLocalFiles[idx] else null
+          if (doc == null) return@items
           DocumentListRow(
             document = doc,
             thumbnailPipeline = thumbnailPipeline,
@@ -1027,7 +1044,10 @@ fun DocumentListRow(
   val motionEnabled = LocalGlassMotion.current
   val haptics = rememberPrismHaptics()
   val coordinator = LocalListRowSwipeCoordinator.current
-  val request = document.toThumbnailRequest(targetSizePx = 224)
+  val request =
+    remember(document.uriString, document.lastModifiedEpochMs, document.sizeBytes) {
+      document.toThumbnailRequest(targetSizePx = 224)
+    }
   val (badgeLabel, badgeColor) =
     remember(document.displayName, document.category) {
       resolveFileTypeBadge(document.displayName, document.resolvedCategory())
@@ -1328,7 +1348,10 @@ fun DocumentGridCard(
   val tokens = LocalPrismVisualTokens.current
   val motionEnabled = LocalGlassMotion.current
   val haptics = rememberPrismHaptics()
-  val request = document.toThumbnailRequest(targetSizePx = 360)
+  val request =
+    remember(document.uriString, document.lastModifiedEpochMs, document.sizeBytes) {
+      document.toThumbnailRequest(targetSizePx = 360)
+    }
   var menuExpanded by remember { mutableStateOf(false) }
   val interactionSource = remember { MutableInteractionSource() }
 

@@ -7,6 +7,7 @@ import androidx.work.WorkManager
 import com.prism.docs.core.data.model.FileOperationResult
 import com.prism.docs.core.data.storage.FileOperationsManager
 import javax.inject.Inject
+import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -19,10 +20,12 @@ import kotlinx.coroutines.flow.combine
 class DuplicateScanScheduler
 @Inject
 constructor(
-  private val workManager: WorkManager,
+  private val workManagerProvider: Provider<WorkManager>,
   private val duplicateFinderEngine: DuplicateFinderEngine,
   private val fileOperationsManager: FileOperationsManager,
 ) {
+  private val workManager: WorkManager
+    get() = workManagerProvider.get()
 
   fun startScan() {
     val request = OneTimeWorkRequestBuilder<DuplicateScanWorker>().build()

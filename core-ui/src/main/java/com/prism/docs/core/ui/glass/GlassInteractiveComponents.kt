@@ -546,7 +546,7 @@ fun LiquidGlassClaritySlider(
   val debugConfig = LocalGlassDebugConfig.current
   val colorScheme = MaterialTheme.colorScheme
   val haptics = rememberPrismHaptics()
-  val clamped = value.coerceIn(0f, 1f)
+  val clamped = if (value.isFinite()) value.coerceIn(0f, 1f) else 0.35f
 
   val latestValue by rememberUpdatedState(clamped)
   val latestOnChange by rememberUpdatedState(onValueChange)
@@ -563,6 +563,7 @@ fun LiquidGlassClaritySlider(
     )
 
   val trackLayer = rememberGraphicsLayer()
+  var hasRecordedTrack by remember { mutableStateOf(false) }
   val thumbPath = remember { Path() }
   val lensEffect =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -645,8 +646,7 @@ fun LiquidGlassClaritySlider(
         .semantics {
           contentDescription = "Glass clarity slider"
           stateDescription = "$percent%"
-        }
-        .testTag("liquid_glass_clarity_slider"),
+        },
     contentAlignment = Alignment.Center,
   ) {
     // 1. Track layer recorded into GraphicsLayer so the glass thumb can genuinely refract it
@@ -670,51 +670,61 @@ fun LiquidGlassClaritySlider(
             val corner = CornerRadius(trackH * 0.5f, trackH * 0.5f)
             val fillW = (trackW * clamped).coerceAtLeast(trackH * 0.5f)
 
-            trackLayer.record {
-              // Frosted recess track
-              drawRoundRect(
-                color =
-                  if (env.isDark) Color.White.copy(alpha = 0.14f)
-                  else Color(0xFF1A2C56).copy(alpha = 0.12f),
-                topLeft = Offset(padX, trackTop),
-                size = Size(trackW, trackH),
-                cornerRadius = corner,
-              )
-              // Prism optical active fill
-              drawRoundRect(
-                brush =
-                  Brush.horizontalGradient(
-                    colors = listOf(PrismColors.IndigoBlue, colorScheme.primary, PrismColors.IceCyan),
-                    startX = padX,
-                    endX = padX + trackW,
-                  ),
-                topLeft = Offset(padX, trackTop),
-                size = Size(fillW.coerceAtMost(trackW), trackH),
-                cornerRadius = corner,
-              )
-              // 0 / 25 / 50 / 75 / 100% tick notches along track
-              for (i in 0..4) {
-                val frac = i / 4f
-                val tx = padX + trackW * frac
-                val isFilled = clamped >= frac - 0.01f
-                drawCircle(
-                  color =
-                    if (isFilled) Color.White.copy(alpha = 0.85f)
-                    else colorScheme.onSurface.copy(alpha = if (env.isDark) 0.34f else 0.28f),
-                  radius = 2.dp.toPx(),
-                  center = Offset(tx, size.height * 0.5f),
-                )
-              }
-              // Hairline glass border around track
-              drawRoundRect(
-                color = Color.White.copy(alpha = if (env.isDark) 0.24f else 0.72f),
-                topLeft = Offset(padX, trackTop),
-                size = Size(trackW, trackH),
-                cornerRadius = corner,
-                style = Stroke(width = 0.85.dp.toPx()),
-              )
+            val recorded =
+              runCatching {
+                  GlassBackdropRecordingGuard.withRecording {
+                    trackLayer.record {
+                      // Frosted recess track
+                      drawRoundRect(
+                        color =
+                          if (env.isDark) Color.White.copy(alpha = 0.14f)
+                          else Color(0xFF1A2C56).copy(alpha = 0.12f),
+                        topLeft = Offset(padX, trackTop),
+                        size = Size(trackW, trackH),
+                        cornerRadius = corner,
+                      )
+                      // Prism optical active fill
+                      drawRoundRect(
+                        brush =
+                          Brush.horizontalGradient(
+                            colors = listOf(PrismColors.IndigoBlue, colorScheme.primary, PrismColors.IceCyan),
+                            startX = padX,
+                            endX = padX + trackW,
+                          ),
+                        topLeft = Offset(padX, trackTop),
+                        size = Size(fillW.coerceAtMost(trackW), trackH),
+                        cornerRadius = corner,
+                      )
+                      // 0 / 25 / 50 / 75 / 100% tick notches along track
+                      for (i in 0..4) {
+                        val frac = i / 4f
+                        val tx = padX + trackW * frac
+                        val isFilled = clamped >= frac - 0.01f
+                        drawCircle(
+                          color =
+                            if (isFilled) Color.White.copy(alpha = 0.85f)
+                            else colorScheme.onSurface.copy(alpha = if (env.isDark) 0.34f else 0.28f),
+                          radius = 2.dp.toPx(),
+                          center = Offset(tx, size.height * 0.5f),
+                        )
+                      }
+                      // Hairline glass border around track
+                      drawRoundRect(
+                        color = Color.White.copy(alpha = if (env.isDark) 0.24f else 0.72f),
+                        topLeft = Offset(padX, trackTop),
+                        size = Size(trackW, trackH),
+                        cornerRadius = corner,
+                        style = Stroke(width = 0.85.dp.toPx()),
+                      )
+                    }
+                  }
+                  true
+                }
+                .getOrDefault(false)
+            hasRecordedTrack = recorded
+            if (recorded && !trackLayer.isReleased) {
+              runCatching { drawLayer(trackLayer) }
             }
-            drawLayer(trackLayer)
             drawContent()
           }
     )
@@ -780,8 +790,8 @@ fun LiquidGlassClaritySlider(
                 )
               )
               clipPath(thumbPath) {
-                if (!GlassBackdropRecordingGuard.isRecording() && !trackLayer.isReleased) {
-                  drawLayer(trackLayer)
+                if (hasRecordedTrack && !GlassBackdropRecordingGuard.isRecording() && !trackLayer.isReleased) {
+                  runCatching { drawLayer(trackLayer) }
                 }
                 // Translucent crystalline body over the refracted track
                 drawRoundRect(

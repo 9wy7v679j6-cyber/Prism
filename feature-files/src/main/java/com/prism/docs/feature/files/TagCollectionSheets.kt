@@ -77,9 +77,18 @@ internal val PrismAccentHexPalette =
     "#54B4FF", // Glacier Blue
   )
 
+private val PARSED_HEX_COLOR_CACHE = java.util.concurrent.ConcurrentHashMap<String, Color>(16)
+
 internal fun parseHexColorOrDefault(hex: String?, fallback: Color): Color {
   if (hex.isNullOrBlank()) return fallback
-  return runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrDefault(fallback)
+  val key = hex.trim()
+  PARSED_HEX_COLOR_CACHE[key]?.let { return it }
+  val parsed = runCatching { Color(android.graphics.Color.parseColor(key)) }.getOrNull()
+  if (parsed != null) {
+    PARSED_HEX_COLOR_CACHE[key] = parsed
+    return parsed
+  }
+  return fallback
 }
 
 internal enum class LabelKind {

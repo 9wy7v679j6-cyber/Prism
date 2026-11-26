@@ -12,6 +12,7 @@ import com.prism.docs.core.data.model.TransferProgress
 import com.prism.docs.core.data.paging.DocumentRepository
 import java.util.UUID
 import javax.inject.Inject
+import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -32,10 +33,12 @@ import kotlinx.coroutines.launch
 class FileTransferScheduler
 @Inject
 constructor(
-  private val workManager: WorkManager,
+  private val workManagerProvider: Provider<WorkManager>,
   private val documentRepository: DocumentRepository,
   private val fileOperationsManager: FileOperationsManager,
 ) {
+  private val workManager: WorkManager
+    get() = workManagerProvider.get()
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
   private val _transferProgress = MutableStateFlow<TransferProgress?>(null)

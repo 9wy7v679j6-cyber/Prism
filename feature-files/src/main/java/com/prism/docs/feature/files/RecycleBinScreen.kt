@@ -300,8 +300,11 @@ private fun RecycleBinItemRow(
 ) {
   val colorScheme = MaterialTheme.colorScheme
   val tokens = LocalPrismVisualTokens.current
-  val remainingMs = (entry.expiresAtEpochMs - System.currentTimeMillis()).coerceAtLeast(0L)
-  val daysLeft = ceil(remainingMs / (24.0 * 60.0 * 60.0 * 1000.0)).toInt().coerceAtLeast(0)
+  val daysLeft =
+    remember(entry.expiresAtEpochMs) {
+      val remainingMs = (entry.expiresAtEpochMs - System.currentTimeMillis()).coerceAtLeast(0L)
+      ceil(remainingMs / (24.0 * 60.0 * 60.0 * 1000.0)).coerceIn(0.0, 36500.0).toInt()
+    }
   val formattedSize = rememberFormattedByteSize(entry.sizeBytes)
 
   GlassSurface(

@@ -219,7 +219,8 @@ fun GlassSettingsSheet(
             modifier = Modifier.fillMaxWidth().padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
           ) {
-            val clarityPct = (preferences.glassClarity * 100f).roundToInt().coerceIn(0, 100)
+            val safeClarity = if (preferences.glassClarity.isFinite()) preferences.glassClarity.coerceIn(0f, 1f) else 0.35f
+            val clarityPct = (safeClarity * 100f).roundToInt().coerceIn(0, 100)
             Row(
               modifier = Modifier.fillMaxWidth(),
               horizontalArrangement = Arrangement.SpaceBetween,
@@ -395,7 +396,8 @@ private fun LiveLiquidGlassPreviewCard(
   isDark: Boolean,
 ) {
   val colorScheme = MaterialTheme.colorScheme
-  val clarityPct = (preferences.glassClarity * 100f).roundToInt().coerceIn(0, 100)
+  val safeClarity = if (preferences.glassClarity.isFinite()) preferences.glassClarity.coerceIn(0f, 1f) else 0.35f
+  val clarityPct = (safeClarity * 100f).roundToInt().coerceIn(0, 100)
   val bgColors =
     if (isDark) {
       listOf(Color(0xFF1A2250), Color(0xFF3A2464), Color(0xFF15385C))

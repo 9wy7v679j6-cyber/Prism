@@ -12,17 +12,21 @@ import com.prism.docs.core.data.db.IndexerStateDao
 import com.prism.docs.core.data.model.IndexWorkStatus
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
+import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 
 @Singleton
 class DocumentIndexScheduler
 @Inject
 constructor(
-  private val workManager: WorkManager,
+  private val workManagerProvider: Provider<WorkManager>,
   private val indexerStateDao: IndexerStateDao,
 ) {
+  private val workManager: WorkManager
+    get() = workManagerProvider.get()
   companion object {
     const val UNIQUE_PERIODIC_WORK_NAME = "prism_periodic_document_index"
     const val UNIQUE_ON_DEMAND_WORK_NAME = "prism_on_demand_document_index"
@@ -103,6 +107,8 @@ constructor(
         totalIndexedCount = stateEntity?.indexedDocumentCount ?: 0,
         phaseLabel = phaseLabel,
       )
+    }.catch {
+      emit(IndexWorkStatus())
     }
   }
 }

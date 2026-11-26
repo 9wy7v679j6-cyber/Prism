@@ -108,6 +108,19 @@ class StoragePermissionAndPreferencesTest {
     assertTrue(loaded.fullAccessBannerDismissed)
     assertEquals(listOf(grant), loaded.safFolderGrants)
 
+    repo.setGlassClarity(Float.NaN)
+    val afterNan = repo.preferencesFlow.first()
+    assertTrue(afterNan.glassClarity.isFinite())
+    assertEquals(0.35f, afterNan.glassClarity, 0.001f)
+
+    repo.setGlassClarity(Float.POSITIVE_INFINITY)
+    val afterInf = repo.preferencesFlow.first()
+    assertTrue(afterInf.glassClarity.isFinite())
+    assertEquals(0.35f, afterInf.glassClarity, 0.001f)
+
+    repo.setGlassClarity(1.8f)
+    assertEquals(1f, repo.preferencesFlow.first().glassClarity, 0.001f)
+
     repo.removeSafFolderGrant(grant.uriString)
     val afterRemove = repo.preferencesFlow.first()
     assertTrue(afterRemove.safFolderGrants.isEmpty())
