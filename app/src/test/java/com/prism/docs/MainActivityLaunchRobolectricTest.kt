@@ -118,6 +118,19 @@ class MainActivityLaunchRobolectricTest {
     composeTestRule.onAllNodesWithTag("glass_segment_0")[0].performClick()
     composeTestRule.waitForIdle()
 
+    // Expand bottom search bar and verify quick filtering options appear right above it
+    composeTestRule.onNodeWithTag("glass_search_orb_button").performClick()
+    composeTestRule.waitUntil(timeoutMillis = 5_000L) {
+      composeTestRule.onAllNodesWithTag("glass_bottom_search_bar").fetchSemanticsNodes().isNotEmpty() &&
+        composeTestRule.onAllNodesWithTag("bottom_search_quick_filters").fetchSemanticsNodes().isNotEmpty()
+    }
+    composeTestRule.onNodeWithTag("bottom_search_filter_cat_PDF").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("glass_bottom_search_close_button").performClick()
+    composeTestRule.waitUntil(timeoutMillis = 5_000L) {
+      composeTestRule.onAllNodesWithTag("glass_search_orb_button").fetchSemanticsNodes().isNotEmpty()
+    }
+
     // Exercise top-level tab switching: Scan -> Tools -> Duplicate Finder -> Storage Analyzer -> Back
     composeTestRule.onNodeWithTag("tab_scan").performClick()
     composeTestRule.waitForIdle()

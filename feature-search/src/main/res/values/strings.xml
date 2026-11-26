@@ -1,0 +1,32 @@
+<resources>
+    <string name="search_title">Search</string>
+    <string name="search_back_cd">Back from search</string>
+    <string name="search_input_placeholder">Search documents, PDFs, tags…</string>
+    <string name="search_quick_filters_cd">Quick filters</string>
+    <string name="search_clear_filters">Clear filters</string>
+    <string name="search_filter_all">All</string>
+    <string name="search_filter_docs">Docs</string>
+    <string name="search_filter_favorites">Favorites</string>
+    <string name="search_filter_recents">Recents</string>
+    <string name="search_filter_this_week">This Week</string>
+    <string name="search_filter_pdf">PDF</string>
+    <string name="search_filter_word">Word</string>
+    <string name="search_filter_excel">Excel</string>
+    <string name="search_filter_slides">Slides</string>
+    <string name="search_filter_images">Images</string>
+    <string name="search_filter_code">Code</string>
+    <string name="search_filter_books">Books</string>
+    <string name="search_empty_prompt_title">Find any document</string>
+    <string name="search_empty_prompt_body">Type a filename or tap a quick filter right above your keyboard to narrow results.</string>
+    <string name="search_empty_no_matches_title">No matching documents</string>
+    <string name="search_empty_no_matches_body">Try another keyword or clear active quick filters.</string>
+    <string name="search_loading">Searching documents…</string>
+    <string name="search_favorite_add_cd">Add %1$s to favorites</string>
+    <string name="search_favorite_remove_cd">Remove %1$s from favorites</string>
+    <plurals name="search_match_count">
+        <item quantity="one">%d match</item>
+        <item quantity="other">%d matches</item>
+    </plurals>
+    <string name="search_tag_format">#%1$s</string>
+    <string name="search_row_meta_format">%1$s • %2$s</string>
+</resources>

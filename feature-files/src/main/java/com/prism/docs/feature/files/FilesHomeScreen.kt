@@ -46,6 +46,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -175,6 +176,7 @@ fun FilesHomeScreen(
   onOpenCollectionDetail: (Long) -> Unit = {},
   isDebugBuild: Boolean = false,
   hasBottomTabBar: Boolean = true,
+  isBottomSearchExpanded: Boolean = false,
   viewModel: FilesViewModel = hiltViewModel(),
 ) {
   val context = LocalContext.current
@@ -307,6 +309,19 @@ fun FilesHomeScreen(
     onTabBarCollapsedChange(false)
   }
 
+  LaunchedEffect(isBottomSearchExpanded) {
+    if (isBottomSearchExpanded) {
+      if (uiState.section != FilesSection.LIBRARY) {
+        viewModel.setSection(FilesSection.LIBRARY)
+      }
+      if (uiState.isGridMode) {
+        libraryGridState.scrollToItem(0)
+      } else {
+        libraryListState.scrollToItem(0)
+      }
+    }
+  }
+
   when (uiState.section) {
     FilesSection.STORAGE -> {
       val activeStorageList =
@@ -388,6 +403,7 @@ fun FilesHomeScreen(
             topContentPadding = animatedTopPadding,
             headerScrollProgress = headerScrollProgress,
             hasActiveSecondaryFilters = hasActiveSecondaryFilters,
+            isBottomSearchExpanded = isBottomSearchExpanded,
             isDebugBuild = isDebugBuild,
             preferences = preferences,
             storageAccessState = storageAccessState,
@@ -965,6 +981,7 @@ private fun LibraryPagingSection(
   topContentPadding: Dp,
   headerScrollProgress: androidx.compose.runtime.State<Float>,
   hasActiveSecondaryFilters: Boolean,
+  isBottomSearchExpanded: Boolean,
   isDebugBuild: Boolean,
   preferences: PrismPreferences,
   storageAccessState: StorageAccessState,
@@ -998,6 +1015,11 @@ private fun LibraryPagingSection(
 ) {
   val density = LocalDensity.current
   val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+  val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
+  val listBottomPadding =
+    maxOf(navBarBottom, imeBottom) +
+      PrismDimens.ListBottomContentPadding +
+      if (isBottomSearchExpanded) 64.dp else 0.dp
   val showAccessBanner = storageAccessState.isDegradedMode && !preferences.fullAccessBannerDismissed
   val hasAnyFilter = hasActiveSecondaryFilters || uiState.query.category != null
   val isInitialLoading =
@@ -1044,7 +1066,7 @@ private fun LibraryPagingSection(
       contentPadding =
         PaddingValues(
           top = topContentPadding,
-          bottom = navBarBottom + PrismDimens.ListBottomContentPadding,
+          bottom = listBottomPadding,
           start = PrismDimens.ScreenHorizontalPadding,
           end = PrismDimens.ScreenHorizontalPadding,
         ),
@@ -1064,6 +1086,7 @@ private fun LibraryPagingSection(
           headerScrollProgress = headerScrollProgress,
           isInitialLoading = isInitialLoading,
           hasActiveSecondaryFilters = hasActiveSecondaryFilters,
+          isBottomSearchExpanded = isBottomSearchExpanded,
           showAccessBanner = showAccessBanner,
           thumbnailPipeline = thumbnailPipeline,
           onOpenSearch = onOpenSearch,
@@ -1201,7 +1224,7 @@ private fun LibraryPagingSection(
         contentPadding =
           PaddingValues(
             top = topContentPadding,
-            bottom = navBarBottom + PrismDimens.ListBottomContentPadding,
+            bottom = listBottomPadding,
             start = PrismDimens.ScreenHorizontalPadding,
             end = PrismDimens.ScreenHorizontalPadding,
           ),
@@ -1217,6 +1240,7 @@ private fun LibraryPagingSection(
             headerScrollProgress = headerScrollProgress,
             isInitialLoading = isInitialLoading,
             hasActiveSecondaryFilters = hasActiveSecondaryFilters,
+            isBottomSearchExpanded = isBottomSearchExpanded,
             showAccessBanner = showAccessBanner,
             thumbnailPipeline = thumbnailPipeline,
             onOpenSearch = onOpenSearch,
@@ -1445,6 +1469,7 @@ private fun LibraryHeroStack(
   headerScrollProgress: androidx.compose.runtime.State<Float>,
   isInitialLoading: Boolean,
   hasActiveSecondaryFilters: Boolean,
+  isBottomSearchExpanded: Boolean,
   showAccessBanner: Boolean,
   thumbnailPipeline: DocumentThumbnailPipeline,
   onOpenSearch: () -> Unit,
@@ -1474,144 +1499,146 @@ private fun LibraryHeroStack(
   val colorScheme = MaterialTheme.colorScheme
 
   Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSection)) {
-    // Large "Library" title collapsing smoothly into the centered small glass top bar
-    Text(
-      text = sectionTitle,
-      style = MaterialTheme.typography.displaySmall,
-      color = colorScheme.onSurface,
-      maxLines = 1,
-      overflow = TextOverflow.Ellipsis,
-      modifier =
-        Modifier.graphicsLayer {
-            val p = headerScrollProgress.value
-            alpha = (1f - p * 1.45f).coerceIn(0f, 1f)
-            translationY = -p * 8.dp.toPx()
-          }
-          .testTag("library_expanded_title"),
-    )
+    if (!isBottomSearchExpanded) {
+      // Large "Library" title collapsing smoothly into the centered small glass top bar
+      Text(
+        text = sectionTitle,
+        style = MaterialTheme.typography.displaySmall,
+        color = colorScheme.onSurface,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier =
+          Modifier.graphicsLayer {
+              val p = headerScrollProgress.value
+              alpha = (1f - p * 1.45f).coerceIn(0f, 1f)
+              translationY = -p * 8.dp.toPx()
+            }
+            .testTag("library_expanded_title"),
+      )
 
-    SectionSwitcherBar(
-      section = uiState.section,
-      recycleBinCount = uiState.recycleBinCount,
-      animateFromIndex = animateSwitcherFromIndex,
-      onSelectSection = onSelectSection,
-    )
+      SectionSwitcherBar(
+        section = uiState.section,
+        recycleBinCount = uiState.recycleBinCount,
+        animateFromIndex = animateSwitcherFromIndex,
+        onSelectSection = onSelectSection,
+      )
 
-    if (showAccessBanner) {
-      GlassSurface(
-        cornerRadius = PrismDimens.BannerCornerRadius,
-        elevation = GlassElevation.SUBTLE,
-        accentTint = colorScheme.primary,
-        modifier = Modifier.fillMaxWidth().testTag("grant_full_access_banner"),
-      ) {
-        Column(
-          modifier = Modifier.padding(PrismDimens.SpaceSection),
-          verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge),
+      if (showAccessBanner) {
+        GlassSurface(
+          cornerRadius = PrismDimens.BannerCornerRadius,
+          elevation = GlassElevation.SUBTLE,
+          accentTint = colorScheme.primary,
+          modifier = Modifier.fillMaxWidth().testTag("grant_full_access_banner"),
         ) {
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge),
+          Column(
+            modifier = Modifier.padding(PrismDimens.SpaceSection),
+            verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge),
           ) {
-            Icon(
-              imageVector = Icons.Rounded.Shield,
-              contentDescription = null,
-              tint = colorScheme.primary,
-            )
-            Column(modifier = Modifier.weight(1f)) {
-              Text(
-                text = stringResource(R.string.access_banner_title),
-                style = MaterialTheme.typography.titleSmall,
-                color = colorScheme.onSurface,
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge),
+            ) {
+              Icon(
+                imageVector = Icons.Rounded.Shield,
+                contentDescription = null,
+                tint = colorScheme.primary,
               )
-              Text(
-                text = stringResource(R.string.access_banner_body),
-                style = MaterialTheme.typography.bodySmall,
-                color = colorScheme.onSurfaceVariant,
-              )
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = stringResource(R.string.access_banner_title),
+                  style = MaterialTheme.typography.titleSmall,
+                  color = colorScheme.onSurface,
+                )
+                Text(
+                  text = stringResource(R.string.access_banner_body),
+                  style = MaterialTheme.typography.bodySmall,
+                  color = colorScheme.onSurfaceVariant,
+                )
+              }
+              TextButton(
+                onClick = onDismissAccessBanner,
+                modifier = Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin),
+              ) {
+                Text(stringResource(R.string.access_banner_hide))
+              }
             }
-            TextButton(
-              onClick = onDismissAccessBanner,
-              modifier = Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin),
+            FlowRow(
+              horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge),
+              verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmall),
             ) {
-              Text(stringResource(R.string.access_banner_hide))
-            }
-          }
-          FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(PrismDimens.SpaceMediumLarge),
-            verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSmall),
-          ) {
-            Button(
-              onClick = onRequestAllFilesAccess,
-              modifier =
-                Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
-                  .testTag("banner_grant_full_access_button"),
-            ) {
-              Text(stringResource(R.string.access_banner_grant))
-            }
-            OutlinedButton(
-              onClick = onAddSafFolder,
-              modifier =
-                Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
-                  .testTag("banner_add_saf_folder_button"),
-            ) {
-              Text(stringResource(R.string.access_banner_add_folder))
+              Button(
+                onClick = onRequestAllFilesAccess,
+                modifier =
+                  Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+                    .testTag("banner_grant_full_access_button"),
+              ) {
+                Text(stringResource(R.string.access_banner_grant))
+              }
+              OutlinedButton(
+                onClick = onAddSafFolder,
+                modifier =
+                  Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+                    .testTag("banner_add_saf_folder_button"),
+              ) {
+                Text(stringResource(R.string.access_banner_add_folder))
+              }
             }
           }
         }
       }
-    }
 
-    if (uiState.recentDocuments.isNotEmpty()) {
-      RecentDocumentsCarousel(
-        recentDocuments = uiState.recentDocuments,
-        selectedIds = uiState.selectedIds,
-        isSelectionMode = uiState.isSelectionMode,
-        thumbnailPipeline = thumbnailPipeline,
-        onSeeAllClick = onSeeAllRecents,
-        onOpenDocument = onOpenDocument,
-        onToggleSelection = onToggleSelection,
-        onToggleFavorite = onToggleFavorite,
-        onRenameDocument = onRenameDocument,
-        onCopyDocument = onCopyDocument,
-        onMoveDocument = onMoveDocument,
-        onShareDocument = onShareDocument,
-        onTrashDocument = onTrashDocument,
-        onManageDocumentTagsCollections = onManageDocumentTagsCollections,
+      if (uiState.recentDocuments.isNotEmpty()) {
+        RecentDocumentsCarousel(
+          recentDocuments = uiState.recentDocuments,
+          selectedIds = uiState.selectedIds,
+          isSelectionMode = uiState.isSelectionMode,
+          thumbnailPipeline = thumbnailPipeline,
+          onSeeAllClick = onSeeAllRecents,
+          onOpenDocument = onOpenDocument,
+          onToggleSelection = onToggleSelection,
+          onToggleFavorite = onToggleFavorite,
+          onRenameDocument = onRenameDocument,
+          onCopyDocument = onCopyDocument,
+          onMoveDocument = onMoveDocument,
+          onShareDocument = onShareDocument,
+          onTrashDocument = onTrashDocument,
+          onManageDocumentTagsCollections = onManageDocumentTagsCollections,
+        )
+      } else if (isInitialLoading) {
+        LibraryRecentSkeletonRow()
+      }
+
+      // Show Collections section ONLY when user has real collections (Job 5 screenshot fix)
+      if (uiState.collectionsWithStats.isNotEmpty()) {
+        CollectionsGlassSection(
+          collections = uiState.collectionsWithStats,
+          onOpenCollection = onOpenCollectionDetail,
+          onManageCollections = onOpenManageTagsCollections,
+        )
+      }
+
+      // Properly titled "Filters" section (Documents default + All files + types + tags)
+      FiltersHeaderRow(
+        onManageTags = onOpenManageTagsCollections,
+        showManageAction = uiState.collectionsWithStats.isEmpty(),
       )
-    } else if (isInitialLoading) {
-      LibraryRecentSkeletonRow()
-    }
 
-    // Show Collections section ONLY when user has real collections (Job 5 screenshot fix)
-    if (uiState.collectionsWithStats.isNotEmpty()) {
-      CollectionsGlassSection(
-        collections = uiState.collectionsWithStats,
-        onOpenCollection = onOpenCollectionDetail,
-        onManageCollections = onOpenManageTagsCollections,
+      CategoryGlassChipRow(
+        documentsOnly = uiState.query.documentsOnly,
+        selectedCategory = uiState.query.category,
+        otherCategoriesOnly = uiState.query.otherCategoriesOnly,
+        onSelectDocumentsOnly = onSelectDocumentsOnly,
+        onSelectAllFiles = onSelectAllFiles,
+        onCategorySelected = onCategorySelected,
+      )
+
+      TagFilterChipRow(
+        tags = uiState.tagsWithStats,
+        selectedTagId = uiState.query.tagId,
+        onTagSelected = onTagSelected,
+        onManageTags = onOpenManageTagsCollections,
       )
     }
-
-    // Properly titled "Filters" section (Documents default + All files + types + tags)
-    FiltersHeaderRow(
-      onManageTags = onOpenManageTagsCollections,
-      showManageAction = uiState.collectionsWithStats.isEmpty(),
-    )
-
-    CategoryGlassChipRow(
-      documentsOnly = uiState.query.documentsOnly,
-      selectedCategory = uiState.query.category,
-      otherCategoriesOnly = uiState.query.otherCategoriesOnly,
-      onSelectDocumentsOnly = onSelectDocumentsOnly,
-      onSelectAllFiles = onSelectAllFiles,
-      onCategorySelected = onCategorySelected,
-    )
-
-    TagFilterChipRow(
-      tags = uiState.tagsWithStats,
-      selectedTagId = uiState.query.tagId,
-      onTagSelected = onTagSelected,
-      onManageTags = onOpenManageTagsCollections,
-    )
 
     AnimatedVisibility(
       visible = hasActiveSecondaryFilters,

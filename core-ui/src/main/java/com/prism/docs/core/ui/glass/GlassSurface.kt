@@ -164,6 +164,7 @@ fun GlassSurface(
   enableRefraction: Boolean = false,
   enableTopSheen: Boolean = true,
   enableAnimatedSheen: Boolean = false,
+  allowLiquidGlass: Boolean = false,
   onClick: (() -> Unit)? = null,
   clickRole: Role? = null,
   hapticOnClick: Boolean = true,
@@ -176,13 +177,16 @@ fun GlassSurface(
   val dynamics = LocalGlassDynamics.current
   val motion = LocalGlassMotion.current
   val colorScheme = MaterialTheme.colorScheme
-  val tier = env.capabilityTier
+  val tier =
+    if (allowLiquidGlass && !env.reduceTransparency) env.capabilityTier
+    else GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY
+  val isSolidMode = tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY
   val isDark = env.isDark
   val clarity = env.clarity.coerceIn(0f, 1f)
 
   // Only top-level floating overlays (never SUBTLE cards or children inside floating glass)
   val isFloatingLayer =
-    useBackdropBlur && elevation != GlassElevation.SUBTLE && !insideFloatingGlass && !env.reduceTransparency
+    useBackdropBlur && elevation != GlassElevation.SUBTLE && !insideFloatingGlass && !isSolidMode
 
   // Clarity mapping: 0% = frosted, 100% = nearly clear (blur 0–4dp, tint 0–4%)
   val baseSurfaceColor = if (isDark) PrismColors.DarkGlassTint else PrismColors.LightGlassBase
@@ -201,11 +205,25 @@ fun GlassSurface(
     }
   val adaptiveTintAlpha = lerpFloat(frostedTintAlpha, clearTintAlpha, clarity)
 
+  val solidSurfaceColor =
+    remember(colorScheme.surface, accentTint) {
+      if (accentTint != null && accentTint.alpha > 0f) {
+        val tintWeight = (accentTint.alpha * 0.14f).coerceIn(0.05f, 0.14f)
+        Color(
+          red = colorScheme.surface.red * (1f - tintWeight) + accentTint.red * tintWeight,
+          green = colorScheme.surface.green * (1f - tintWeight) + accentTint.green * tintWeight,
+          blue = colorScheme.surface.blue * (1f - tintWeight) + accentTint.blue * tintWeight,
+          alpha = 1f,
+        )
+      } else {
+        colorScheme.surface
+      }
+    }
+
   val tintColor =
-    remember(baseSurfaceColor, accentTint, tier, adaptiveTintAlpha, isDark) {
+    remember(baseSurfaceColor, solidSurfaceColor, accentTint, tier, adaptiveTintAlpha) {
       if (tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY) {
-        if (isDark) PrismColors.DarkSurface.copy(alpha = 0.98f)
-        else PrismColors.LightSurface.copy(alpha = 0.98f)
+        solidSurfaceColor
       } else if (accentTint != null && accentTint.alpha > 0f) {
         Color(
           red = baseSurfaceColor.red * 0.82f + accentTint.red * 0.18f,
@@ -377,8 +395,8 @@ fun GlassSurface(
   // Non-AGSL background pass (Haze with TRANSPARENT backgroundColor, or clean translucent fill)
   val baseBackgroundModifier =
     when {
-      tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY ->
-        Modifier.background(color = colorScheme.surface)
+      isSolidMode ->
+        Modifier.background(color = solidSurfaceColor)
       canSampleBackdrop ->
         Modifier // Backdrop is drawn in dedicated child layer below content() so foreground text stays sharp!
       shouldUseHazeFallback && hazeState != null ->
@@ -472,8 +490,8 @@ fun GlassSurface(
   // Legibility guard for high-clarity glass: subtle text shadow keeps contrast >= 4.5:1
   val currentTextStyle = LocalTextStyle.current
   val guardedTextStyle =
-    remember(currentTextStyle, clarity, isDark, env.reduceTransparency, isFloatingLayer) {
-      if (env.reduceTransparency || clarity <= 0.45f) {
+    remember(currentTextStyle, clarity, isDark, isSolidMode, isFloatingLayer) {
+      if (isSolidMode || clarity <= 0.45f) {
         currentTextStyle
       } else {
         val boost = ((clarity - 0.45f) / 0.55f).coerceIn(0f, 1f) * if (isFloatingLayer) 1f else 0.65f
@@ -642,11 +660,14 @@ fun ConnectedGlassCardSlice(
   fullBorderProgress: Float = 0f,
   hazeState: HazeState? = LocalHazeState.current,
   accentTint: Color? = null,
+  allowLiquidGlass: Boolean = false,
   content: @Composable BoxScope.() -> Unit,
 ) {
   val env = LocalGlassEnvironment.current
   val colorScheme = MaterialTheme.colorScheme
-  val tier = env.capabilityTier
+  val tier =
+    if (allowLiquidGlass && !env.reduceTransparency) env.capabilityTier
+    else GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY
   val isDark = env.isDark
   val clarity = env.clarity.coerceIn(0f, 1f)
 
@@ -674,11 +695,25 @@ fun ConnectedGlassCardSlice(
       lerpFloat((0.72f * env.tintScale).coerceIn(0.56f, 0.88f), 0.24f, clarity)
     }
 
+  val solidSurfaceColor =
+    remember(colorScheme.surface, accentTint) {
+      if (accentTint != null && accentTint.alpha > 0f) {
+        val tintWeight = (accentTint.alpha * 0.14f).coerceIn(0.05f, 0.14f)
+        Color(
+          red = colorScheme.surface.red * (1f - tintWeight) + accentTint.red * tintWeight,
+          green = colorScheme.surface.green * (1f - tintWeight) + accentTint.green * tintWeight,
+          blue = colorScheme.surface.blue * (1f - tintWeight) + accentTint.blue * tintWeight,
+          alpha = 1f,
+        )
+      } else {
+        colorScheme.surface
+      }
+    }
+
   val tintColor =
-    remember(baseSurfaceColor, accentTint, tier, adaptiveTintAlpha, isDark) {
+    remember(baseSurfaceColor, solidSurfaceColor, accentTint, tier, adaptiveTintAlpha) {
       if (tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY) {
-        if (isDark) PrismColors.DarkSurface.copy(alpha = 0.98f)
-        else PrismColors.LightSurface.copy(alpha = 0.98f)
+        solidSurfaceColor
       } else if (accentTint != null && accentTint.alpha > 0f) {
         Color(
           red = baseSurfaceColor.red * 0.82f + accentTint.red * 0.18f,
@@ -693,7 +728,7 @@ fun ConnectedGlassCardSlice(
 
   val fillModifier =
     if (tier == GlassCapabilityTier.SOLID_REDUCED_TRANSPARENCY) {
-      Modifier.background(color = colorScheme.surface)
+      Modifier.background(color = solidSurfaceColor)
     } else if (isFirst || fullBorderProgress > 0.08f) {
       val topHighlight =
         remember(tintColor, isDark, clarity) {

@@ -18,4 +18,5 @@
     <string name="glass_minimized_nav_state">Minimized. Double-tap or swipe up to expand, swipe left or right to switch tabs</string>
     <string name="glass_bottom_search_placeholder">Search documents…</string>
     <string name="glass_close_search_cd">Close search bar</string>
+    <string name="glass_quick_filters_cd">Quick filters</string>
 </resources>

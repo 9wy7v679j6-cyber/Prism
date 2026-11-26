@@ -11,20 +11,24 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
@@ -39,6 +43,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -109,6 +115,14 @@ data class GlassTabItem(
   val testTag: String = "tab_$id",
 )
 
+@androidx.compose.runtime.Immutable
+data class GlassSearchQuickFilter(
+  val id: String,
+  val label: String,
+  val selected: Boolean,
+  val icon: ImageVector? = null,
+)
+
 private val DockExpandedHeight = 68.dp
 private val DockMinimizedHeight = 48.dp
 private val SearchOrbExpandedSize = 62.dp
@@ -123,7 +137,8 @@ private val DockHorizontalGap = 12.dp
  * - Scroll-driven minimize (split corner pill + mini Search orb) and maximize (full 3-tab dock).
  * - Beautiful bottom Search Bar morph: tapping or swiping up on the Search orb expands it into
  *   a full-width Liquid Glass Search Bar right at the bottom (lifting above the keyboard with
- *   `imePadding()`) while the dock smoothly morphs into a circular Close orb on the left.
+ *   `imePadding()`) with quick filter chips right above it, while the dock smoothly morphs into
+ *   a circular Close orb on the left.
  * - Deliberate, high-threshold swipe gestures so accidental swipes never trigger during taps or
  *   vertical list scrolling.
  */
@@ -141,6 +156,8 @@ fun GlassFloatingTabBar(
   onSearchQueryChange: (String) -> Unit = {},
   onSearchExpandedChange: ((Boolean) -> Unit)? = null,
   onSearchSubmit: () -> Unit = {},
+  quickFilters: List<GlassSearchQuickFilter> = emptyList(),
+  onQuickFilterClick: (String) -> Unit = {},
 ) {
   if (tabs.isEmpty()) return
 
@@ -323,11 +340,105 @@ fun GlassFloatingTabBar(
     val rightSlotWidth = lerp(orbSize, expandedSearchBarWidth, searchExpandProgress)
     val rightSlotHeight = lerp(orbSize, SearchExpandedBarHeight, searchExpandProgress)
 
-    Row(
+    Column(
       modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.SpaceBetween,
-      verticalAlignment = Alignment.Bottom,
+      verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+      AnimatedVisibility(
+        visible = isSearchExpanded && quickFilters.isNotEmpty(),
+        enter =
+          if (motion) {
+            expandVertically(
+              animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f),
+              expandFrom = Alignment.Bottom,
+            ) + fadeIn(tween(140))
+          } else {
+            EnterTransition.None
+          },
+        exit =
+          if (motion) {
+            shrinkVertically(
+              animationSpec = tween(110),
+              shrinkTowards = Alignment.Bottom,
+            ) + fadeOut(tween(100))
+          } else {
+            ExitTransition.None
+          },
+      ) {
+        val quickFiltersCd = stringResource(R.string.glass_quick_filters_cd)
+        LazyRow(
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          contentPadding = PaddingValues(horizontal = 2.dp),
+          modifier =
+            Modifier.fillMaxWidth()
+              .semantics { contentDescription = quickFiltersCd }
+              .testTag("bottom_search_quick_filters"),
+        ) {
+          items(items = quickFilters, key = { it.id }) { filter ->
+            val containerColor by
+              animateColorAsState(
+                targetValue = if (filter.selected) colorScheme.primary else colorScheme.surface,
+                label = "quick_filter_bg_${filter.id}",
+              )
+            val contentColor by
+              animateColorAsState(
+                targetValue = if (filter.selected) colorScheme.onPrimary else colorScheme.onSurface,
+                label = "quick_filter_fg_${filter.id}",
+              )
+            val borderColor by
+              animateColorAsState(
+                targetValue = if (filter.selected) colorScheme.primary else colorScheme.outline,
+                label = "quick_filter_border_${filter.id}",
+              )
+            Row(
+              modifier =
+                Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+                  .clip(CircleShape)
+                  .background(containerColor)
+                  .border(width = 1.dp, color = borderColor, shape = CircleShape)
+                  .glassClickable(role = Role.Tab, hapticOnClick = false) {
+                    haptics.segmentTick()
+                    onQuickFilterClick(filter.id)
+                  }
+                  .semantics {
+                    selected = filter.selected
+                    stateDescription =
+                      if (filter.selected) selectedStateLabel else notSelectedStateLabel
+                    contentDescription = filter.label
+                  }
+                  .testTag("bottom_search_filter_${filter.id}")
+                  .padding(horizontal = 14.dp, vertical = 10.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+              if (filter.icon != null) {
+                Icon(
+                  imageVector = filter.icon,
+                  contentDescription = null,
+                  tint = contentColor,
+                  modifier = Modifier.size(16.dp),
+                )
+              }
+              Text(
+                text = filter.label,
+                style =
+                  MaterialTheme.typography.labelLarge.copy(
+                    fontWeight = if (filter.selected) FontWeight.Bold else FontWeight.SemiBold,
+                  ),
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+          }
+        }
+      }
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Bottom,
+      ) {
       // LEFT CAPSULE: Navigation Dock (Expanded/Minimized) <-> Circular Search Close Orb
       Box(
         modifier =
@@ -598,6 +709,7 @@ fun GlassFloatingTabBar(
           enableRefraction = true,
           enableTopSheen = true,
           enableAnimatedSheen = true,
+          allowLiquidGlass = true,
           modifier =
             Modifier.fillMaxSize()
               .graphicsLayer {
@@ -1013,6 +1125,7 @@ fun GlassFloatingTabBar(
           enableRefraction = true,
           enableTopSheen = true,
           enableAnimatedSheen = true,
+          allowLiquidGlass = true,
           accentTint = if (searchExpandProgress > 0.3f) colorScheme.primary.copy(alpha = 0.10f) else null,
           onClick =
             if (!isSearchExpanded) {
@@ -1141,6 +1254,7 @@ fun GlassFloatingTabBar(
           }
         }
       }
+      }
     }
   }
 }
@@ -1218,6 +1332,7 @@ fun GlassNavigationRail(
       useBackdropBlur = true,
       enableRefraction = true,
       enableAnimatedSheen = true,
+      allowLiquidGlass = true,
       onClick = {
         haptics.tap()
         onSearchClick()
@@ -1240,6 +1355,7 @@ fun GlassNavigationRail(
       useBackdropBlur = true,
       enableRefraction = true,
       enableAnimatedSheen = true,
+      allowLiquidGlass = true,
       modifier = Modifier.testTag("glass_navigation_rail"),
     ) {
       Column(
@@ -1487,6 +1603,7 @@ fun GlassSearchField(
   modifier: Modifier = Modifier,
   onSearchSubmit: () -> Unit = {},
   onFilterClick: (() -> Unit)? = null,
+  focusRequester: FocusRequester? = null,
 ) {
   val colorScheme = MaterialTheme.colorScheme
   val haptics = rememberPrismHaptics()
@@ -1499,6 +1616,7 @@ fun GlassSearchField(
     elevation = GlassElevation.FLOATING,
     useBackdropBlur = true,
     enableRefraction = true,
+    allowLiquidGlass = true,
     modifier = modifier.fillMaxWidth().height(54.dp).testTag("glass_search_field"),
   ) {
     Row(
@@ -1530,7 +1648,10 @@ fun GlassSearchField(
           cursorBrush = SolidColor(colorScheme.primary),
           keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
           keyboardActions = KeyboardActions(onSearch = { onSearchSubmit() }),
-          modifier = Modifier.fillMaxWidth().testTag("glass_search_input"),
+          modifier =
+            Modifier.fillMaxWidth()
+              .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+              .testTag("glass_search_input"),
         )
       }
       AnimatedVisibility(

@@ -56,7 +56,7 @@ object FileQueryBuilder {
       whereClauses += "d.normalizedName LIKE ? ESCAPE '\\'"
       val escaped =
         query.namePrefix.trim().lowercase().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-      args += "$escaped%"
+      args += "%$escaped%"
     }
 
     if (query.minSizeBytes != null) {

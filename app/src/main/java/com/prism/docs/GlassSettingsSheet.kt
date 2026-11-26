@@ -418,6 +418,7 @@ private fun LiveLiquidGlassPreviewCard(
       elevation = GlassElevation.SUBTLE,
       useBackdropBlur = false,
       enableRefraction = false,
+      allowLiquidGlass = true,
       accentTint = colorScheme.primary.copy(alpha = if (isDark) 0.14f else 0.08f),
       modifier = Modifier.fillMaxWidth(),
     ) {

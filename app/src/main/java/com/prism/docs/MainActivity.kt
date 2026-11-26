@@ -24,12 +24,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.FilterNone
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.rounded.Code
+import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.DocumentScanner
 import androidx.compose.material.icons.rounded.FilterNone
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.PictureAsPdf
+import androidx.compose.material.icons.rounded.Slideshow
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.TableChart
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
@@ -69,6 +78,7 @@ import com.prism.docs.core.ui.glass.GlassDebugConfig
 import com.prism.docs.core.ui.glass.GlassDynamicsState
 import com.prism.docs.core.ui.glass.GlassFloatingTabBar
 import com.prism.docs.core.ui.glass.GlassNavigationRail
+import com.prism.docs.core.ui.glass.GlassSearchQuickFilter
 import com.prism.docs.core.ui.glass.GlassSheetDetent
 import com.prism.docs.core.ui.glass.GlassTabItem
 import com.prism.docs.core.ui.glass.LocalGlassBackdrop
@@ -221,6 +231,8 @@ private fun PrismRootShell(
   var isTabBarCollapsed by rememberSaveable { mutableStateOf(false) }
   var isBottomSearchExpanded by rememberSaveable { mutableStateOf(false) }
   var bottomSearchQuery by rememberSaveable { mutableStateOf("") }
+  var bottomSearchQuickFilters by remember { mutableStateOf<List<GlassSearchQuickFilter>>(emptyList()) }
+  var onBottomQuickFilterClick by remember { mutableStateOf<(String) -> Unit>({}) }
   var showGlassSettings by rememberSaveable { mutableStateOf(false) }
   var settingsDetent by remember { mutableStateOf(GlassSheetDetent.HALF) }
 
@@ -474,6 +486,173 @@ private fun PrismRootShell(
                   }
                 }
 
+                val q = filesUiState.query
+                val quickFilters =
+                  remember(
+                    q.documentsOnly,
+                    q.category,
+                    q.otherCategoriesOnly,
+                    q.favoritesOnly,
+                    q.recentsOnly,
+                    q.tagId,
+                    filesUiState.favoritesCount,
+                    filesUiState.recentsCount,
+                    filesUiState.tags,
+                  ) {
+                    val hasSecondary =
+                      q.otherCategoriesOnly || q.favoritesOnly || q.recentsOnly || q.tagId != null
+                    buildList {
+                      add(
+                        GlassSearchQuickFilter(
+                          id = "scope_docs",
+                          label = "Docs",
+                          selected = q.documentsOnly && q.category == null && !hasSecondary,
+                          icon = Icons.Rounded.Description,
+                        )
+                      )
+                      add(
+                        GlassSearchQuickFilter(
+                          id = "scope_all",
+                          label = "All Files",
+                          selected = !q.documentsOnly && q.category == null && !hasSecondary,
+                          icon = Icons.Rounded.Folder,
+                        )
+                      )
+                      add(
+                        GlassSearchQuickFilter(
+                          id = "favorites",
+                          label =
+                            if (filesUiState.favoritesCount > 0) {
+                              "Favorites (${filesUiState.favoritesCount})"
+                            } else {
+                              "Favorites"
+                            },
+                          selected = q.favoritesOnly,
+                          icon = Icons.Rounded.Star,
+                        )
+                      )
+                      add(
+                        GlassSearchQuickFilter(
+                          id = "recents",
+                          label =
+                            if (filesUiState.recentsCount > 0) {
+                              "Recents (${filesUiState.recentsCount})"
+                            } else {
+                              "Recents"
+                            },
+                          selected = q.recentsOnly,
+                          icon = Icons.Rounded.History,
+                        )
+                      )
+                      add(
+                        GlassSearchQuickFilter(
+                          id = "cat_PDF",
+                          label = "PDF",
+                          selected = q.category == DocumentCategory.PDF && !q.otherCategoriesOnly,
+                          icon = Icons.Rounded.PictureAsPdf,
+                        )
+                      )
+                      add(
+                        GlassSearchQuickFilter(
+                          id = "cat_DOCUMENTS",
+                          label = "Word",
+                          selected = q.category == DocumentCategory.DOCUMENTS && !q.otherCategoriesOnly,
+                          icon = Icons.Rounded.Description,
+                        )
+                      )
+                      add(
+                        GlassSearchQuickFilter(
+                          id = "cat_SPREADSHEETS",
+                          label = "Excel",
+                          selected = q.category == DocumentCategory.SPREADSHEETS && !q.otherCategoriesOnly,
+                          icon = Icons.Rounded.TableChart,
+                        )
+                      )
+                      add(
+                        GlassSearchQuickFilter(
+                          id = "cat_SLIDES",
+                          label = "Slides",
+                          selected = q.category == DocumentCategory.SLIDES && !q.otherCategoriesOnly,
+                          icon = Icons.Rounded.Slideshow,
+                        )
+                      )
+                      add(
+                        GlassSearchQuickFilter(
+                          id = "cat_IMAGES",
+                          label = "Images",
+                          selected = q.category == DocumentCategory.IMAGES && !q.otherCategoriesOnly,
+                          icon = Icons.Rounded.Image,
+                        )
+                      )
+                      add(
+                        GlassSearchQuickFilter(
+                          id = "cat_CODE_TEXT",
+                          label = "Code",
+                          selected = q.category == DocumentCategory.CODE_TEXT && !q.otherCategoriesOnly,
+                          icon = Icons.Rounded.Code,
+                        )
+                      )
+                      add(
+                        GlassSearchQuickFilter(
+                          id = "cat_EBOOKS",
+                          label = "Books",
+                          selected = q.category == DocumentCategory.EBOOKS && !q.otherCategoriesOnly,
+                          icon = Icons.AutoMirrored.Rounded.MenuBook,
+                        )
+                      )
+                      filesUiState.tags.forEach { tag ->
+                        add(
+                          GlassSearchQuickFilter(
+                            id = "tag_${tag.id}",
+                            label = "#${tag.name}",
+                            selected = q.tagId == tag.id,
+                          )
+                        )
+                      }
+                    }
+                  }
+
+                LaunchedEffect(quickFilters) {
+                  bottomSearchQuickFilters = quickFilters
+                }
+
+                DisposableEffect(filesViewModel) {
+                  onBottomQuickFilterClick = { filterId ->
+                    when {
+                      filterId == "scope_docs" -> {
+                        filesViewModel.clearAllFilters()
+                        if (bottomSearchQuery.isNotBlank()) {
+                          filesViewModel.setNamePrefix(bottomSearchQuery)
+                        }
+                      }
+                      filterId == "scope_all" -> {
+                        filesViewModel.clearAllFilters()
+                        filesViewModel.selectAllFilesScope()
+                        if (bottomSearchQuery.isNotBlank()) {
+                          filesViewModel.setNamePrefix(bottomSearchQuery)
+                        }
+                      }
+                      filterId == "favorites" -> filesViewModel.toggleFavoritesOnly()
+                      filterId == "recents" -> filesViewModel.toggleRecentsOnly()
+                      filterId.startsWith("cat_") -> {
+                        val cat =
+                          runCatching { DocumentCategory.valueOf(filterId.removePrefix("cat_")) }
+                            .getOrNull()
+                        if (cat != null) {
+                          filesViewModel.setCategoryFilter(cat)
+                        }
+                      }
+                      filterId.startsWith("tag_") -> {
+                        val tagId = filterId.removePrefix("tag_").toLongOrNull()
+                        if (tagId != null) {
+                          filesViewModel.setTagFilter(tagId)
+                        }
+                      }
+                    }
+                  }
+                  onDispose {}
+                }
+
                 FilesHomeScreen(
                   preferences = uiState.preferences,
                   storageAccessState = uiState.storageAccessState,
@@ -507,6 +686,7 @@ private fun PrismRootShell(
                   },
                   isDebugBuild = BuildConfig.DEBUG,
                   hasBottomTabBar = !useRailLayout,
+                  isBottomSearchExpanded = isBottomSearchExpanded && !useRailLayout,
                   viewModel = filesViewModel,
                 )
               }
@@ -589,6 +769,17 @@ private fun PrismRootShell(
               composable<SearchRoute> {
                 SearchScreen(
                   onNavigateBack = { navController.popBackStack() },
+                  onOpenDocument = { doc ->
+                    navController.navigate(
+                      ViewerRoute(
+                        uriString = doc.uriString,
+                        displayName = doc.displayName,
+                        mimeType = doc.mimeType,
+                        sizeBytes = doc.sizeBytes,
+                        sourceAction = doc.sourceAction,
+                      )
+                    )
+                  },
                 )
               }
 
@@ -656,6 +847,8 @@ private fun PrismRootShell(
               if (expanded) openBottomSearch() else closeBottomSearch()
             },
             onSearchSubmit = {},
+            quickFilters = bottomSearchQuickFilters,
+            onQuickFilterClick = onBottomQuickFilterClick,
             modifier = Modifier.align(Alignment.BottomCenter),
           )
         }
