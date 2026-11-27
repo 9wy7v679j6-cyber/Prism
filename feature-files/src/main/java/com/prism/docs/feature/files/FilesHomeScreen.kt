@@ -1,6 +1,7 @@
 package com.prism.docs.feature.files
 
 import android.content.Intent
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContent
@@ -29,6 +30,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -53,6 +55,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -97,6 +100,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
@@ -104,6 +108,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -153,6 +158,7 @@ import com.prism.docs.core.ui.glass.horizontalRightEdgeFade
 import com.prism.docs.core.ui.glass.rememberHeaderScrollProgress
 import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.glass.rememberScreenGlassBackdropState
+import com.prism.docs.core.ui.theme.LocalGlassEnvironment
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
 import com.prism.docs.core.ui.theme.PrismDimens
@@ -310,15 +316,8 @@ fun FilesHomeScreen(
   }
 
   LaunchedEffect(isBottomSearchExpanded) {
-    if (isBottomSearchExpanded) {
-      if (uiState.section != FilesSection.LIBRARY) {
-        viewModel.setSection(FilesSection.LIBRARY)
-      }
-      if (uiState.isGridMode) {
-        libraryGridState.scrollToItem(0)
-      } else {
-        libraryListState.scrollToItem(0)
-      }
+    if (isBottomSearchExpanded && uiState.section != FilesSection.LIBRARY) {
+      viewModel.setSection(FilesSection.LIBRARY)
     }
   }
 
@@ -365,8 +364,19 @@ fun FilesHomeScreen(
     )
 
   val screenBackdropState = rememberScreenGlassBackdropState()
+  val searchBlurRadius by
+    animateDpAsState(
+      targetValue = if (isBottomSearchExpanded) 18.dp else 0.dp,
+      animationSpec = if (motionEnabled) tween(durationMillis = 200) else snap(),
+      label = "bottom_search_backdrop_blur",
+    )
 
   Box(modifier = modifier.fillMaxSize()) {
+    Box(
+      modifier =
+        Modifier.fillMaxSize()
+          .then(if (searchBlurRadius > 0.5.dp) Modifier.blur(searchBlurRadius) else Modifier)
+    ) {
     AnimatedContent(
       targetState = uiState.section,
       transitionSpec = {
@@ -736,6 +746,47 @@ fun FilesHomeScreen(
       height = navBarBottom + PrismDimens.BottomScrimHeight,
       modifier = Modifier.align(Alignment.BottomCenter),
     )
+    } // end CompositionLocalProvider(LocalGlassBackdrop)
+    } // end blurred underlying screen Box
+
+    AnimatedVisibility(
+      visible = isBottomSearchExpanded,
+      enter = if (motionEnabled) fadeIn(animationSpec = tween(durationMillis = 180)) else EnterTransition.None,
+      exit = if (motionEnabled) fadeOut(animationSpec = tween(durationMillis = 130)) else ExitTransition.None,
+      modifier = Modifier.fillMaxSize(),
+    ) {
+      BottomSearchResultsOverlay(
+        uiState = uiState,
+        pagedItems = libraryItems,
+        hasAnyFilter = hasActiveSecondaryFilters || uiState.query.category != null,
+        reduceTransparency = preferences.reduceTransparency,
+        isDebugBuild = isDebugBuild,
+        storageAccessState = storageAccessState,
+        onClearFilters = viewModel::clearAllFilters,
+        onOpenOptionsSheet = {
+          optionsDetent = GlassSheetDetent.HALF
+          showOptionsSheet = true
+        },
+        onRequestAllFilesAccess = onRequestAllFilesAccess,
+        onAddSafFolder = onAddSafFolder,
+        onTriggerSync = viewModel::triggerManualSync,
+        onOpenDocument = openIndexedDoc,
+        onToggleSelection = toggleSelectionWithHaptics,
+        onToggleFavorite = viewModel::toggleFavorite,
+        onRenameDocument = viewModel::openRenameDialog,
+        onCopyDocument = {
+          viewModel.openDestinationPicker(TransferOperationType.COPY, listOf(it.id))
+        },
+        onMoveDocument = {
+          viewModel.openDestinationPicker(TransferOperationType.MOVE, listOf(it.id))
+        },
+        onShareDocument = { shareIds(listOf(it.id)) },
+        onTrashDocument = { viewModel.moveToRecycleBin(listOf(it.id)) },
+        onManageDocumentTagsCollections = { viewModel.openAssignSheet(listOf(it.id)) },
+      )
+    }
+
+    CompositionLocalProvider(LocalGlassBackdrop provides screenBackdropState) {
 
     LibraryOptionsGlassSheet(
       visible = showOptionsSheet,
@@ -1499,9 +1550,8 @@ private fun LibraryHeroStack(
   val colorScheme = MaterialTheme.colorScheme
 
   Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(PrismDimens.SpaceSection)) {
-    if (!isBottomSearchExpanded) {
-      // Large "Library" title collapsing smoothly into the centered small glass top bar
-      Text(
+    // Large "Library" title collapsing smoothly into the centered small glass top bar
+    Text(
         text = sectionTitle,
         style = MaterialTheme.typography.displaySmall,
         color = colorScheme.onSurface,
@@ -1632,13 +1682,12 @@ private fun LibraryHeroStack(
         onCategorySelected = onCategorySelected,
       )
 
-      TagFilterChipRow(
-        tags = uiState.tagsWithStats,
-        selectedTagId = uiState.query.tagId,
-        onTagSelected = onTagSelected,
-        onManageTags = onOpenManageTagsCollections,
-      )
-    }
+    TagFilterChipRow(
+      tags = uiState.tagsWithStats,
+      selectedTagId = uiState.query.tagId,
+      onTagSelected = onTagSelected,
+      onManageTags = onOpenManageTagsCollections,
+    )
 
     AnimatedVisibility(
       visible = hasActiveSecondaryFilters,
@@ -2494,6 +2543,236 @@ fun SortControlRow(
                 rotationZ = arrowRotation.value
               },
           )
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun BottomSearchResultsOverlay(
+  uiState: FilesUiState,
+  pagedItems: LazyPagingItems<IndexedDocumentEntity>,
+  hasAnyFilter: Boolean,
+  reduceTransparency: Boolean,
+  isDebugBuild: Boolean,
+  storageAccessState: StorageAccessState,
+  onClearFilters: () -> Unit,
+  onOpenOptionsSheet: () -> Unit,
+  onRequestAllFilesAccess: () -> Unit,
+  onAddSafFolder: () -> Unit,
+  onTriggerSync: () -> Unit,
+  onOpenDocument: (IndexedDocumentEntity) -> Unit,
+  onToggleSelection: (Long) -> Unit,
+  onToggleFavorite: (Long, Boolean) -> Unit,
+  onRenameDocument: (IndexedDocumentEntity) -> Unit,
+  onCopyDocument: (IndexedDocumentEntity) -> Unit,
+  onMoveDocument: (IndexedDocumentEntity) -> Unit,
+  onShareDocument: (IndexedDocumentEntity) -> Unit,
+  onTrashDocument: (IndexedDocumentEntity) -> Unit,
+  onManageDocumentTagsCollections: (IndexedDocumentEntity) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val colorScheme = MaterialTheme.colorScheme
+  val tokens = LocalPrismVisualTokens.current
+  val isDark = LocalGlassEnvironment.current.isDark
+  val density = LocalDensity.current
+  val haptics = rememberPrismHaptics()
+
+  val blurSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+  val scrimColor =
+    when {
+      reduceTransparency -> colorScheme.background
+      !blurSupported -> colorScheme.background.copy(alpha = 0.92f)
+      else -> colorScheme.background.copy(alpha = if (isDark) 0.72f else 0.78f)
+    }
+
+  val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+  val bottomDockInset =
+    WindowInsets.ime.union(WindowInsets.navigationBars).asPaddingValues().calculateBottomPadding()
+  var headerHeightPx by remember { mutableIntStateOf(0) }
+  val headerHeightDp =
+    if (headerHeightPx > 0) with(density) { headerHeightPx.toDp() } else statusBarTop + 72.dp
+
+  val resultsListState = rememberLazyListState()
+  LaunchedEffect(uiState.query) {
+    resultsListState.scrollToItem(0)
+  }
+
+  val isInitialLoading =
+    pagedItems.loadState.refresh is LoadState.Loading && pagedItems.itemCount == 0
+  val isAppending = pagedItems.loadState.append is LoadState.Loading
+  val swipeCoordinator = remember { ListRowSwipeCoordinator() }
+
+  Box(
+    modifier =
+      modifier
+        .fillMaxSize()
+        .testTag("bottom_search_overlay"),
+  ) {
+    // Background scrim consumes stray taps behind results without merging descendants' semantics or stealing input focus.
+    Box(
+      modifier =
+        Modifier.fillMaxSize()
+          .background(scrimColor)
+          .pointerInput(Unit) {
+            detectTapGestures {}
+          },
+    )
+    CompositionLocalProvider(LocalListRowSwipeCoordinator provides swipeCoordinator) {
+      LazyColumn(
+        state = resultsListState,
+        contentPadding =
+          PaddingValues(
+            top = headerHeightDp + 8.dp,
+            bottom = bottomDockInset + 138.dp,
+            start = PrismDimens.ScreenHorizontalPadding,
+            end = PrismDimens.ScreenHorizontalPadding,
+          ),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.fillMaxSize().testTag("bottom_search_results_list"),
+      ) {
+        if (isInitialLoading) {
+          items(4, key = { "search_skeleton_$it" }, contentType = { "skeleton_row" }) { idx ->
+            LibraryListSkeletonRow(
+              isFirst = true,
+              isLast = true,
+              modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
+            )
+          }
+        } else if (pagedItems.itemCount == 0 && pagedItems.loadState.refresh is LoadState.NotLoading) {
+          item(key = "bottom_search_empty", contentType = "empty_card") {
+            LibraryEmptyStateCard(
+              hasActiveFilters = hasAnyFilter,
+              hasFullAccess = storageAccessState.canBrowseFullDevice,
+              isDebugBuild = isDebugBuild,
+              onClearFilters = onClearFilters,
+              onOpenOptions = onOpenOptionsSheet,
+              onRequestAllFilesAccess = onRequestAllFilesAccess,
+              onAddSafFolder = onAddSafFolder,
+              onTriggerSync = onTriggerSync,
+              modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
+            )
+          }
+        } else {
+          items(
+            count = pagedItems.itemCount,
+            key = { idx ->
+              val peeked = if (idx in 0 until pagedItems.itemCount) pagedItems.peek(idx) else null
+              "search_res_${peeked?.id ?: idx}"
+            },
+            contentType = { "search_doc_row" },
+          ) { idx ->
+            val doc = if (idx in 0 until pagedItems.itemCount) pagedItems[idx] else null
+            if (doc == null) return@items
+            LibraryCardDocumentRow(
+              document = doc,
+              isFirst = true,
+              isLast = true,
+              isSelected = doc.id in uiState.selectedIds,
+              isSelectionMode = uiState.isSelectionMode,
+              sectionKey = "bottom_search",
+              itemIndex = idx,
+              onClick = {
+                if (uiState.isSelectionMode) onToggleSelection(doc.id) else onOpenDocument(doc)
+              },
+              onLongClick = { onToggleSelection(doc.id) },
+              onSelectItem = { onToggleSelection(doc.id) },
+              onToggleFavorite = { onToggleFavorite(doc.id, doc.isFavorite) },
+              onRename = { onRenameDocument(doc) },
+              onCopy = { onCopyDocument(doc) },
+              onMove = { onMoveDocument(doc) },
+              onShare = { onShareDocument(doc) },
+              onTrash = { onTrashDocument(doc) },
+              onManageTagsCollections = { onManageDocumentTagsCollections(doc) },
+              modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
+            )
+          }
+
+          if (isAppending) {
+            items(2, key = { "search_append_skeleton_$it" }, contentType = { "skeleton_row" }) {
+              LibraryListSkeletonRow(
+                isFirst = true,
+                isLast = true,
+                modifier = Modifier.widthIn(max = PrismDimens.ContentMaxWidth).fillMaxWidth(),
+              )
+            }
+          }
+        }
+      }
+    }
+
+    // Compact opaque header summarizing search matches above the blurred Library
+    Box(
+      modifier =
+        Modifier.align(Alignment.TopCenter)
+          .fillMaxWidth()
+          .onSizeChanged { headerHeightPx = it.height }
+          .statusBarsPadding()
+          .padding(
+            horizontal = PrismDimens.ScreenHorizontalPadding,
+            vertical = PrismDimens.SpaceSmall,
+          ),
+      contentAlignment = Alignment.Center,
+    ) {
+      GlassSurface(
+        cornerRadius = 22.dp,
+        elevation = GlassElevation.SUBTLE,
+        useBackdropBlur = false,
+        allowLiquidGlass = false,
+        modifier =
+          Modifier.widthIn(max = PrismDimens.ContentMaxWidth)
+            .fillMaxWidth()
+            .testTag("bottom_search_header"),
+      ) {
+        Row(
+          modifier =
+            Modifier.fillMaxWidth()
+              .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+              .padding(start = 16.dp, top = 6.dp, end = if (hasAnyFilter) 6.dp else 16.dp, bottom = 6.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          Icon(
+            imageVector = Icons.Rounded.Search,
+            contentDescription = null,
+            tint = colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+          )
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = stringResource(R.string.bottom_search_header_title),
+              style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+              color = colorScheme.onSurface,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+              text =
+                pluralStringResource(
+                  R.plurals.bottom_search_match_count,
+                  pagedItems.itemCount,
+                  pagedItems.itemCount,
+                ),
+              style = MaterialTheme.typography.bodySmall,
+              color = tokens.linkAccent,
+              maxLines = 1,
+            )
+          }
+          if (hasAnyFilter) {
+            TextButton(
+              onClick = {
+                haptics.tap()
+                onClearFilters()
+              },
+              modifier =
+                Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+                  .testTag("bottom_search_clear_filters_button"),
+            ) {
+              Text(text = stringResource(R.string.bottom_search_clear_all))
+            }
+          }
         }
       }
     }

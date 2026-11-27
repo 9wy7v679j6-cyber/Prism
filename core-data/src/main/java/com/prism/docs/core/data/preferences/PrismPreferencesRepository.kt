@@ -76,7 +76,7 @@ constructor(
             onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: false,
             themeMode =
               prefs[Keys.THEME_MODE]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
-                ?: ThemeMode.LIGHT,
+                ?: ThemeMode.SYSTEM,
             useDynamicColor = prefs[Keys.USE_DYNAMIC_COLOR] ?: false,
             glassIntensity = intensity,
             glassClarity = safeClarity,

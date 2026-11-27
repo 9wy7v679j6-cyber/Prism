@@ -16,14 +16,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -95,6 +95,7 @@ import com.prism.docs.core.ui.glass.ScrollEdgeFade
 import com.prism.docs.core.ui.glass.glassClickable
 import com.prism.docs.core.ui.glass.rememberHeaderScrollProgress
 import com.prism.docs.core.ui.glass.rememberPrismHaptics
+import com.prism.docs.core.ui.theme.LocalGlassEnvironment
 import com.prism.docs.core.ui.theme.LocalPrismVisualTokens
 import com.prism.docs.core.ui.theme.PrismColors
 import com.prism.docs.core.ui.theme.PrismDimens
@@ -120,6 +121,7 @@ fun SearchScreen(
   viewModel: SearchViewModel = hiltViewModel(),
 ) {
   val colorScheme = MaterialTheme.colorScheme
+  val env = LocalGlassEnvironment.current
   val tokens = LocalPrismVisualTokens.current
   val density = LocalDensity.current
   val haptics = rememberPrismHaptics()
@@ -288,7 +290,11 @@ fun SearchScreen(
   val isInitialLoading =
     pagedResults.loadState.refresh is LoadState.Loading && pagedResults.itemCount == 0
 
-  Box(modifier = modifier.fillMaxSize()) {
+  val backdropScrim =
+    if (env.reduceTransparency) colorScheme.background
+    else colorScheme.background.copy(alpha = if (env.isDark) 0.58f else 0.64f)
+
+  Box(modifier = modifier.fillMaxSize().background(backdropScrim)) {
     LazyColumn(
       state = listState,
       contentPadding =
@@ -502,8 +508,7 @@ fun SearchScreen(
           .widthIn(max = 720.dp)
           .fillMaxWidth()
           .onSizeChanged { bottomDockPx = it.height }
-          .navigationBarsPadding()
-          .imePadding()
+          .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
           .padding(horizontal = 16.dp, vertical = 10.dp),
       verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {

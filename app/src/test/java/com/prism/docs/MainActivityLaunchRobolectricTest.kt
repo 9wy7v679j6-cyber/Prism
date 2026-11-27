@@ -2,6 +2,7 @@ package com.prism.docs
 
 import android.content.Context
 import android.provider.Settings
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -9,6 +10,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeRight
 import androidx.test.core.app.ApplicationProvider
@@ -118,12 +120,27 @@ class MainActivityLaunchRobolectricTest {
     composeTestRule.onAllNodesWithTag("glass_segment_0")[0].performClick()
     composeTestRule.waitForIdle()
 
-    // Expand bottom search bar and verify quick filtering options appear right above it
+    // Expand bottom search bar and verify quick filtering options + blurred search results appear
     composeTestRule.onNodeWithTag("glass_search_orb_button").performClick()
     composeTestRule.waitUntil(timeoutMillis = 5_000L) {
-      composeTestRule.onAllNodesWithTag("glass_bottom_search_bar").fetchSemanticsNodes().isNotEmpty() &&
-        composeTestRule.onAllNodesWithTag("bottom_search_quick_filters").fetchSemanticsNodes().isNotEmpty()
+      composeTestRule.onAllNodesWithTag("glass_bottom_search_bar").fetchSemanticsNodes().isNotEmpty()
     }
+    composeTestRule.waitUntil(timeoutMillis = 5_000L) {
+      composeTestRule.onAllNodesWithTag("bottom_search_quick_filters").fetchSemanticsNodes().isNotEmpty()
+    }
+    composeTestRule.waitUntil(timeoutMillis = 5_000L) {
+      composeTestRule.onAllNodesWithTag("bottom_search_header").fetchSemanticsNodes().isNotEmpty() &&
+        composeTestRule.onAllNodesWithTag("bottom_search_results_list").fetchSemanticsNodes().isNotEmpty()
+    }
+    composeTestRule.onNodeWithTag("glass_bottom_search_input").performTextInput("invoice")
+    composeTestRule.waitForIdle()
+    val headerBounds = composeTestRule.onNodeWithTag("bottom_search_header").fetchSemanticsNode().boundsInRoot
+    val searchBarBounds = composeTestRule.onNodeWithTag("glass_bottom_search_bar").fetchSemanticsNode().boundsInRoot
+    org.junit.Assert.assertTrue(
+      "Expanded search bar (${searchBarBounds.top}) must stay below search results header (${headerBounds.bottom})",
+      searchBarBounds.top > headerBounds.bottom,
+    )
+    composeTestRule.onNodeWithTag("glass_bottom_search_bar").assertIsDisplayed()
     composeTestRule.onNodeWithTag("bottom_search_filter_cat_PDF").performClick()
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("glass_bottom_search_close_button").performClick()

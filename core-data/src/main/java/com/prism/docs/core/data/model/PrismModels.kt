@@ -74,7 +74,7 @@ data class SafFolderGrant(
 
 data class PrismPreferences(
   val onboardingCompleted: Boolean = false,
-  val themeMode: ThemeMode = ThemeMode.LIGHT,
+  val themeMode: ThemeMode = ThemeMode.SYSTEM,
   val useDynamicColor: Boolean = false,
   val glassIntensity: GlassIntensity = GlassIntensity.STANDARD,
   val glassClarity: Float = 0.35f,

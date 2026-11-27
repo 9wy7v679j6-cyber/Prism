@@ -80,7 +80,7 @@ class StoragePermissionAndPreferencesTest {
   fun preferencesRepositoryPersistsThemeGlassAccessibilityAndSafGrants() = runTest {
     val repo = PrismPreferencesRepository(context)
 
-    assertEquals(ThemeMode.LIGHT, repo.preferencesFlow.first().themeMode)
+    assertEquals(ThemeMode.SYSTEM, repo.preferencesFlow.first().themeMode)
 
     repo.setOnboardingCompleted(true)
     repo.setThemeMode(ThemeMode.DARK)
