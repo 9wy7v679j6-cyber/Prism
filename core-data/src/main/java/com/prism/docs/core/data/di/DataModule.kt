@@ -10,6 +10,7 @@ import com.prism.docs.core.data.db.PrismDatabase
 import com.prism.docs.core.data.db.PrismMigrations
 import com.prism.docs.core.data.db.RecycleBinDao
 import com.prism.docs.core.data.db.TagDao
+import com.prism.docs.core.data.db.ViewerStateDao
 import com.prism.docs.core.data.duplicates.AndroidDuplicateByteReader
 import com.prism.docs.core.data.duplicates.DuplicateByteReader
 import com.prism.docs.core.data.storage.DocumentStorageGateway
@@ -53,6 +54,9 @@ object DataModule {
 
   @Provides
   fun provideIndexerStateDao(database: PrismDatabase): IndexerStateDao = database.indexerStateDao()
+
+  @Provides
+  fun provideViewerStateDao(database: PrismDatabase): ViewerStateDao = database.viewerStateDao()
 
   @Provides
   @Singleton

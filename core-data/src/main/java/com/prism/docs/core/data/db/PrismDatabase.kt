@@ -12,8 +12,10 @@ import androidx.room.RoomDatabase
     DocumentTagCrossRef::class,
     RecycleBinEntryEntity::class,
     IndexerStateEntity::class,
+    DocumentReadingStateEntity::class,
+    DocumentBookmarkEntity::class,
   ],
-  version = 4,
+  version = 5,
   exportSchema = true,
 )
 abstract class PrismDatabase : RoomDatabase() {
@@ -22,4 +24,5 @@ abstract class PrismDatabase : RoomDatabase() {
   abstract fun tagDao(): TagDao
   abstract fun recycleBinDao(): RecycleBinDao
   abstract fun indexerStateDao(): IndexerStateDao
+  abstract fun viewerStateDao(): ViewerStateDao
 }

@@ -404,6 +404,7 @@ fun SearchScreen(
                   mimeType = doc.mimeType,
                   sizeBytes = doc.sizeBytes,
                   sourceAction = "SEARCH",
+                  initialSearchQuery = uiState.queryText.trim().takeIf { it.isNotEmpty() },
                 )
               )
             },

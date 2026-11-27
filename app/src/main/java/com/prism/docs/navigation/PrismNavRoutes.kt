@@ -19,6 +19,8 @@ data class ViewerRoute(
   val mimeType: String? = null,
   val sizeBytes: Long = -1L,
   val sourceAction: String = "PREVIEW",
+  val initialSearchQuery: String? = null,
+  val initialPage: Int = -1,
 )
 
 @Serializable data object EditorRoute

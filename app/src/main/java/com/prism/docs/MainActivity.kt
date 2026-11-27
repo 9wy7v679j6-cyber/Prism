@@ -285,6 +285,8 @@ private fun PrismRootShell(
         mimeType = incoming.mimeType,
         sizeBytes = incoming.sizeBytes,
         sourceAction = incoming.sourceAction,
+        initialSearchQuery = incoming.initialSearchQuery,
+        initialPage = incoming.initialPage,
       )
     )
     viewModel.consumeIncomingDocument()
@@ -675,6 +677,8 @@ private fun PrismRootShell(
                         mimeType = doc.mimeType,
                         sizeBytes = doc.sizeBytes,
                         sourceAction = doc.sourceAction,
+                        initialSearchQuery = doc.initialSearchQuery,
+                        initialPage = doc.initialPage,
                       )
                     )
                   },
@@ -777,6 +781,8 @@ private fun PrismRootShell(
                         mimeType = doc.mimeType,
                         sizeBytes = doc.sizeBytes,
                         sourceAction = doc.sourceAction,
+                        initialSearchQuery = doc.initialSearchQuery,
+                        initialPage = doc.initialPage,
                       )
                     )
                   },
@@ -793,6 +799,8 @@ private fun PrismRootShell(
                       mimeType = route.mimeType ?: "application/octet-stream",
                       sizeBytes = route.sizeBytes,
                       sourceAction = route.sourceAction,
+                      initialSearchQuery = route.initialSearchQuery,
+                      initialPage = route.initialPage,
                     )
                   }
                 ViewerShellScreen(

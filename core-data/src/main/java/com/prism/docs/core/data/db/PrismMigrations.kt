@@ -214,5 +214,47 @@ object PrismMigrations {
       }
     }
 
-  val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+  /**
+   * Upgrades v4 schema to v5 for Document Viewer reading state (last page, zoom, paper mode,
+   * scroll mode) and per-page user bookmarks.
+   */
+  val MIGRATION_4_5: Migration =
+    object : Migration(4, 5) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+          """
+          CREATE TABLE IF NOT EXISTS `document_reading_states` (
+            `uriString` TEXT NOT NULL,
+            `lastPage` INTEGER NOT NULL,
+            `zoomScale` REAL NOT NULL,
+            `scrollOffsetFraction` REAL NOT NULL,
+            `scrollMode` TEXT NOT NULL,
+            `paperMode` TEXT NOT NULL,
+            `updatedAtEpochMs` INTEGER NOT NULL,
+            PRIMARY KEY(`uriString`)
+          )
+          """.trimIndent()
+        )
+        db.execSQL(
+          """
+          CREATE TABLE IF NOT EXISTS `document_bookmarks` (
+            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            `uriString` TEXT NOT NULL,
+            `pageIndex` INTEGER NOT NULL,
+            `label` TEXT NOT NULL,
+            `createdAtEpochMs` INTEGER NOT NULL
+          )
+          """.trimIndent()
+        )
+        db.execSQL(
+          "CREATE UNIQUE INDEX IF NOT EXISTS `index_document_bookmarks_uriString_pageIndex` ON `document_bookmarks` (`uriString`, `pageIndex`)"
+        )
+        db.execSQL(
+          "CREATE INDEX IF NOT EXISTS `index_document_bookmarks_uriString` ON `document_bookmarks` (`uriString`)"
+        )
+      }
+    }
+
+  val ALL_MIGRATIONS: Array<Migration> =
+    arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 }

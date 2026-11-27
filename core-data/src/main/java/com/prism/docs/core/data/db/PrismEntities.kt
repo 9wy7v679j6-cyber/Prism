@@ -163,3 +163,29 @@ data class IndexerStateEntity(
   val lastRemovedCount: Int = 0,
   val status: String = "IDLE",
 )
+
+@Entity(tableName = "document_reading_states")
+data class DocumentReadingStateEntity(
+  @PrimaryKey val uriString: String,
+  val lastPage: Int = 0,
+  val zoomScale: Float = 1f,
+  val scrollOffsetFraction: Float = 0f,
+  val scrollMode: String = "CONTINUOUS",
+  val paperMode: String = "LIGHT",
+  val updatedAtEpochMs: Long = System.currentTimeMillis(),
+)
+
+@Entity(
+  tableName = "document_bookmarks",
+  indices = [
+    Index(value = ["uriString", "pageIndex"], unique = true),
+    Index(value = ["uriString"]),
+  ],
+)
+data class DocumentBookmarkEntity(
+  @PrimaryKey(autoGenerate = true) val id: Long = 0L,
+  val uriString: String,
+  val pageIndex: Int,
+  val label: String,
+  val createdAtEpochMs: Long = System.currentTimeMillis(),
+)

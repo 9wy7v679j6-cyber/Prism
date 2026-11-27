@@ -448,3 +448,30 @@ interface IndexerStateDao {
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun upsert(state: IndexerStateEntity)
 }
+
+@Dao
+interface ViewerStateDao {
+  @Query("SELECT * FROM document_reading_states WHERE uriString = :uriString LIMIT 1")
+  fun observeReadingState(uriString: String): Flow<DocumentReadingStateEntity?>
+
+  @Query("SELECT * FROM document_reading_states WHERE uriString = :uriString LIMIT 1")
+  suspend fun getReadingState(uriString: String): DocumentReadingStateEntity?
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun upsertReadingState(state: DocumentReadingStateEntity)
+
+  @Query("SELECT * FROM document_bookmarks WHERE uriString = :uriString ORDER BY pageIndex ASC")
+  fun observeBookmarks(uriString: String): Flow<List<DocumentBookmarkEntity>>
+
+  @Query("SELECT * FROM document_bookmarks WHERE uriString = :uriString ORDER BY pageIndex ASC")
+  suspend fun getBookmarks(uriString: String): List<DocumentBookmarkEntity>
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun upsertBookmark(bookmark: DocumentBookmarkEntity): Long
+
+  @Query("DELETE FROM document_bookmarks WHERE uriString = :uriString AND pageIndex = :pageIndex")
+  suspend fun deleteBookmarkByPage(uriString: String, pageIndex: Int)
+
+  @Query("DELETE FROM document_bookmarks WHERE id = :id")
+  suspend fun deleteBookmarkById(id: Long)
+}

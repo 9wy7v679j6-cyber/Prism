@@ -246,13 +246,17 @@ fun FilesHomeScreen(
 
   val openIndexedDoc: (IndexedDocumentEntity) -> Unit = { doc ->
     viewModel.recordDocumentOpened(doc.id)
+    val activeQuery =
+      if (isBottomSearchExpanded) uiState.query.namePrefix?.trim()?.takeIf { it.isNotEmpty() }
+      else null
     onOpenDocument(
       IncomingDocumentRequest(
         uriString = doc.uriString,
         displayName = doc.displayName,
         mimeType = doc.mimeType,
         sizeBytes = doc.sizeBytes,
-        sourceAction = "LIBRARY",
+        sourceAction = if (activeQuery != null) "SEARCH" else "LIBRARY",
+        initialSearchQuery = activeQuery,
       )
     )
   }

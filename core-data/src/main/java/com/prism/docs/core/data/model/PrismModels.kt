@@ -91,6 +91,8 @@ data class IncomingDocumentRequest(
   val mimeType: String,
   val sizeBytes: Long = -1L,
   val sourceAction: String = "VIEW",
+  val initialSearchQuery: String? = null,
+  val initialPage: Int = -1,
 )
 
 data class StorageAccessState(

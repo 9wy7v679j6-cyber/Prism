@@ -257,8 +257,64 @@ class PrismDatabaseMigrationTest {
   }
 
   @Test
-  fun migrate1Through4ChainValidatesLatestSchema() = runTest {
-    val dbName = "prism_migration_1_to_4_test.db"
+  fun migrate4To5CreatesViewerReadingStateAndBookmarkTablesAndPreservesExistingData() = runTest {
+    val dbName = "prism_migration_4_to_5_test.db"
+    helper.createDatabase(dbName, 4).apply {
+      execSQL(
+        """
+        INSERT INTO indexed_documents
+          (id, uriString, displayName, normalizedName, parentPath, mimeType, extension, category, sizeBytes, lastModifiedEpochMs, isFavorite, isTrashed, sourceType, lastIndexedEpochMs)
+        VALUES
+          (1, 'file:///storage/emulated/0/Documents/Manual.pdf', 'Manual.pdf', 'manual.pdf', '/storage/emulated/0/Documents', 'application/pdf', 'pdf', 'PDF', 512000, 1700000000000, 1, 0, 'FILESYSTEM', 1700000001000)
+        """.trimIndent()
+      )
+      close()
+    }
+
+    val migratedDb = helper.runMigrationsAndValidate(dbName, 5, true, PrismMigrations.MIGRATION_4_5)
+    migratedDb.close()
+
+    val roomDb =
+      Room.databaseBuilder(
+          ApplicationProvider.getApplicationContext(),
+          PrismDatabase::class.java,
+          dbName,
+        )
+        .addMigrations(*PrismMigrations.ALL_MIGRATIONS)
+        .allowMainThreadQueries()
+        .build()
+    try {
+      val doc = roomDb.documentIndexDao().getById(1L)
+      assertEquals("Manual.pdf", doc?.displayName)
+
+      val repo = com.prism.docs.core.data.viewer.ViewerStateRepository(roomDb.viewerStateDao())
+      val uri = "file:///storage/emulated/0/Documents/Manual.pdf"
+      repo.saveReadingState(
+        uriString = uri,
+        lastPage = 11,
+        zoomScale = 2.25f,
+        scrollOffsetFraction = 0.4f,
+        scrollMode = "CONTINUOUS",
+        paperMode = "SEPIA",
+      )
+      val saved = repo.getReadingState(uri)
+      assertEquals(11, saved?.lastPage)
+      assertEquals(2.25f, saved?.zoomScale ?: 0f, 0.001f)
+      assertEquals("SEPIA", saved?.paperMode)
+
+      val added = repo.toggleBookmark(uri, pageIndex = 11, defaultLabel = "Page 12")
+      assertTrue(added)
+      val bookmarks = repo.getBookmarks(uri)
+      assertEquals(1, bookmarks.size)
+      assertEquals(11, bookmarks.first().pageIndex)
+    } finally {
+      roomDb.close()
+    }
+  }
+
+  @Test
+  fun migrate1Through5ChainValidatesLatestSchema() = runTest {
+    val dbName = "prism_migration_1_to_5_test.db"
     helper.createDatabase(dbName, 1).apply {
       execSQL(
         """
@@ -274,11 +330,12 @@ class PrismDatabaseMigrationTest {
     val migratedDb =
       helper.runMigrationsAndValidate(
         dbName,
-        4,
+        5,
         true,
         PrismMigrations.MIGRATION_1_2,
         PrismMigrations.MIGRATION_2_3,
         PrismMigrations.MIGRATION_3_4,
+        PrismMigrations.MIGRATION_4_5,
       )
     migratedDb.close()
   }
