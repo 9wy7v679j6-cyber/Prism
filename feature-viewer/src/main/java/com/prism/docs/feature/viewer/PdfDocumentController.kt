@@ -35,6 +35,8 @@ class PdfDocumentController(
     val tileBucket: Int,
     val leftBucket: Int,
     val topBucket: Int,
+    val rightBucket: Int = 100,
+    val bottomBucket: Int = 100,
   )
 
   private val renderMutex = Mutex()
@@ -141,8 +143,14 @@ class PdfDocumentController(
             pageAspectRatios[pageIndex] = ratio
 
             if (tileSpec != null && tileSpec.scaleFactor > 1.25f) {
-              val tileW = tileSpec.targetWidthPx.coerceIn(180, 2200)
-              val tileH = tileSpec.targetHeightPx.coerceIn(180, 2200)
+              val regionWFrac = (tileSpec.regionRightFraction - tileSpec.regionLeftFraction).coerceIn(0.05f, 1f)
+              val regionHFrac = (tileSpec.regionBottomFraction - tileSpec.regionTopFraction).coerceIn(0.05f, 1f)
+              val idealW = safeWidth * tileSpec.scaleFactor * regionWFrac
+              val idealH = (safeWidth / ratio) * tileSpec.scaleFactor * regionHFrac
+              val maxDim = maxOf(idealW, idealH, 1f)
+              val downscale = (2048f / maxDim).coerceAtMost(1f)
+              val tileW = (idealW * downscale).roundToInt().coerceIn(64, 2048)
+              val tileH = (idealH * downscale).roundToInt().coerceIn(64, 2048)
               val key =
                 PageCacheKey(
                   pageIndex = pageIndex,
@@ -151,14 +159,16 @@ class PdfDocumentController(
                   tileBucket = (tileSpec.scaleFactor * 10f).roundToInt(),
                   leftBucket = (tileSpec.regionLeftFraction * 100f).roundToInt(),
                   topBucket = (tileSpec.regionTopFraction * 100f).roundToInt(),
+                  rightBucket = (tileSpec.regionRightFraction * 100f).roundToInt(),
+                  bottomBucket = (tileSpec.regionBottomFraction * 100f).roundToInt(),
                 )
               pageBitmapCache.get(key)?.let { return@withContext it }
 
               val bitmap = Bitmap.createBitmap(tileW, tileH, Bitmap.Config.ARGB_8888)
               bitmap.eraseColor(Color.WHITE)
 
-              val fullScaledW = safeWidth * tileSpec.scaleFactor
-              val fullScaledH = (safeWidth / ratio) * tileSpec.scaleFactor
+              val fullScaledW = tileW / regionWFrac
+              val fullScaledH = tileH / regionHFrac
               val scaleX = fullScaledW / pageW.toFloat()
               val scaleY = fullScaledH / pageH.toFloat()
               val offsetX = -tileSpec.regionLeftFraction * fullScaledW
@@ -241,13 +251,23 @@ class PdfDocumentController(
     val safeWidth = targetWidthPx.coerceIn(240, 2400)
     val ratio = pageAspectRatios[pageIndex] ?: defaultAspectRatio
     return if (tileSpec != null && tileSpec.scaleFactor > 1.25f) {
+      val regionWFrac = (tileSpec.regionRightFraction - tileSpec.regionLeftFraction).coerceIn(0.05f, 1f)
+      val regionHFrac = (tileSpec.regionBottomFraction - tileSpec.regionTopFraction).coerceIn(0.05f, 1f)
+      val idealW = safeWidth * tileSpec.scaleFactor * regionWFrac
+      val idealH = (safeWidth / ratio) * tileSpec.scaleFactor * regionHFrac
+      val maxDim = maxOf(idealW, idealH, 1f)
+      val downscale = (2048f / maxDim).coerceAtMost(1f)
+      val tileW = (idealW * downscale).roundToInt().coerceIn(64, 2048)
+      val tileH = (idealH * downscale).roundToInt().coerceIn(64, 2048)
       PageCacheKey(
         pageIndex = pageIndex,
-        widthPx = tileSpec.targetWidthPx.coerceIn(180, 2200),
-        heightPx = tileSpec.targetHeightPx.coerceIn(180, 2200),
+        widthPx = tileW,
+        heightPx = tileH,
         tileBucket = (tileSpec.scaleFactor * 10f).roundToInt(),
         leftBucket = (tileSpec.regionLeftFraction * 100f).roundToInt(),
         topBucket = (tileSpec.regionTopFraction * 100f).roundToInt(),
+        rightBucket = (tileSpec.regionRightFraction * 100f).roundToInt(),
+        bottomBucket = (tileSpec.regionBottomFraction * 100f).roundToInt(),
       )
     } else {
       val destH = (safeWidth / ratio).roundToInt().coerceIn(240, 3200)

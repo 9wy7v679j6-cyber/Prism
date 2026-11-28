@@ -34,6 +34,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
@@ -43,8 +46,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.core.tween
 import com.prism.docs.core.ui.glass.LocalGlassMotion
 import com.prism.docs.core.ui.glass.rememberPrismHaptics
+import com.prism.docs.core.ui.theme.LocalGlassEnvironment
 import com.prism.docs.core.ui.theme.PrismDimens
 
 /**
@@ -68,6 +73,78 @@ internal fun viewerSolidBorderColor(emphasized: Boolean = false): Color {
     colorScheme.primary.copy(alpha = 0.55f)
   } else {
     colorScheme.outline
+  }
+}
+
+/**
+ * Material You themed viewport backdrop that recesses behind document pages with subtle tonal
+ * vignette depth so pages (light, sepia, or dark paper) stay distinctly framed and in focus.
+ */
+@Composable
+internal fun Modifier.viewerFocusBackdrop(paperMode: ReaderPaperMode): Modifier {
+  val colorScheme = MaterialTheme.colorScheme
+  val isDarkApp = LocalGlassEnvironment.current.isDark
+  val motion = LocalGlassMotion.current
+
+  val materialYouTone = lerp(colorScheme.surfaceVariant, colorScheme.primaryContainer, 0.48f)
+  val materialYouAccent = lerp(colorScheme.primaryContainer, colorScheme.secondaryContainer, 0.5f)
+
+  val targetBase =
+    when {
+      paperMode == ReaderPaperMode.DARK ->
+        lerp(Color(0xFF0A0C14), colorScheme.primaryContainer, 0.24f)
+      paperMode == ReaderPaperMode.SEPIA ->
+        if (isDarkApp) {
+          lerp(Color(0xFF1A1611), colorScheme.primaryContainer, 0.22f)
+        } else {
+          lerp(Color(0xFFDCD2BC), materialYouTone, 0.46f)
+        }
+      isDarkApp ->
+        lerp(colorScheme.background, colorScheme.primaryContainer, 0.20f)
+      else ->
+        lerp(materialYouTone, colorScheme.onBackground, 0.09f)
+    }
+
+  val targetHalo =
+    when {
+      paperMode == ReaderPaperMode.DARK || isDarkApp ->
+        lerp(targetBase, materialYouAccent, 0.22f)
+      paperMode == ReaderPaperMode.SEPIA ->
+        lerp(targetBase, colorScheme.secondaryContainer, 0.24f)
+      else ->
+        lerp(targetBase, colorScheme.primaryContainer, 0.34f)
+    }
+
+  val baseColor by
+    animateColorAsState(
+      targetValue = targetBase,
+      animationSpec = if (motion) tween(220) else snap(),
+      label = "viewer_backdrop_base",
+    )
+  val haloColor by
+    animateColorAsState(
+      targetValue = targetHalo,
+      animationSpec = if (motion) tween(220) else snap(),
+      label = "viewer_backdrop_halo",
+    )
+  val perimeterTint = colorScheme.onBackground.copy(alpha = if (isDarkApp || paperMode == ReaderPaperMode.DARK) 0.22f else 0.08f)
+
+  return this.drawBehind {
+    drawRect(color = baseColor)
+    val maxDim = maxOf(size.width, size.height, 1f)
+    drawRect(
+      brush =
+        Brush.radialGradient(
+          colorStops =
+            arrayOf(
+              0.0f to haloColor.copy(alpha = 0.72f),
+              0.55f to baseColor.copy(alpha = 0.25f),
+              1.0f to perimeterTint,
+            ),
+          center = Offset(size.width * 0.5f, size.height * 0.45f),
+          radius = maxDim * 0.78f,
+        )
+    )
   }
 }
 

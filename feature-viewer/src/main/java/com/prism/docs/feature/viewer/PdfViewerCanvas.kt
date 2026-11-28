@@ -7,6 +7,7 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -16,9 +17,11 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -60,8 +63,10 @@ import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -76,6 +81,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
@@ -85,9 +91,13 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -101,8 +111,11 @@ import com.prism.docs.core.ui.glass.LocalGlassMotion
 import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.theme.PrismDimens
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.roundToInt
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
@@ -143,12 +156,63 @@ internal fun paperSurfaceColor(mode: ReaderPaperMode): Color =
     ReaderPaperMode.DARK -> Color(0xFF171A21)
   }
 
-internal fun paperViewportGutterColor(mode: ReaderPaperMode): Color =
-  when (mode) {
-    ReaderPaperMode.LIGHT -> Color(0xFFE5ECF6)
-    ReaderPaperMode.SEPIA -> Color(0xFFE3DAC3)
-    ReaderPaperMode.DARK -> Color(0xFF0A0C12)
-  }
+private class CoordsRef(var coords: LayoutCoordinates? = null)
+
+private data class RenderedPdfTile(
+  val spec: TileRenderSpec,
+  val bitmap: Bitmap,
+)
+
+private fun computeVisibleTileSpec(
+  viewportCoords: LayoutCoordinates?,
+  pageCoords: LayoutCoordinates?,
+  settledZoom: Float,
+  pageRenderWidthPx: Int,
+  aspectRatio: Float,
+): TileRenderSpec? {
+  if (settledZoom <= 1.25f) return null
+  val vp = viewportCoords?.takeIf { it.isAttached } ?: return null
+  val pg = pageCoords?.takeIf { it.isAttached } ?: return null
+  val vpSize = vp.size
+  val pgSize = pg.size
+  if (vpSize.width <= 0 || vpSize.height <= 0 || pgSize.width <= 0 || pgSize.height <= 0) return null
+
+  val vpTopLeft = vp.localToWindow(Offset.Zero)
+  val vpBottomRight = vp.localToWindow(Offset(vpSize.width.toFloat(), vpSize.height.toFloat()))
+  val pgTopLeft = pg.localToWindow(Offset.Zero)
+  val pgBottomRight = pg.localToWindow(Offset(pgSize.width.toFloat(), pgSize.height.toFloat()))
+
+  val pw = (pgBottomRight.x - pgTopLeft.x).coerceAtLeast(1f)
+  val ph = (pgBottomRight.y - pgTopLeft.y).coerceAtLeast(1f)
+
+  val rawLeft = ((vpTopLeft.x - pgTopLeft.x) / pw).coerceIn(0f, 1f)
+  val rawRight = ((vpBottomRight.x - pgTopLeft.x) / pw).coerceIn(0f, 1f)
+  val rawTop = ((vpTopLeft.y - pgTopLeft.y) / ph).coerceIn(0f, 1f)
+  val rawBottom = ((vpBottomRight.y - pgTopLeft.y) / ph).coerceIn(0f, 1f)
+
+  if (rawRight - rawLeft < 0.01f || rawBottom - rawTop < 0.01f) return null
+
+  val left = (floor((rawLeft - 0.08f).coerceAtLeast(0f) * 50f) / 50f).coerceIn(0f, 0.95f)
+  val right = (ceil((rawRight + 0.08f).coerceAtMost(1f) * 50f) / 50f).coerceIn(left + 0.05f, 1f)
+  val top = (floor((rawTop - 0.08f).coerceAtLeast(0f) * 50f) / 50f).coerceIn(0f, 0.95f)
+  val bottom = (ceil((rawBottom + 0.08f).coerceAtMost(1f) * 50f) / 50f).coerceIn(top + 0.05f, 1f)
+
+  val regionW = (right - left).coerceIn(0.05f, 1f)
+  val regionH = (bottom - top).coerceIn(0.05f, 1f)
+  val idealW = pageRenderWidthPx * settledZoom * regionW
+  val idealH = (pageRenderWidthPx / aspectRatio) * settledZoom * regionH
+  val downscale = (2048f / maxOf(idealW, idealH, 1f)).coerceAtMost(1f)
+
+  return TileRenderSpec(
+    scaleFactor = (settledZoom * 10f).roundToInt() / 10f,
+    regionLeftFraction = left,
+    regionTopFraction = top,
+    regionRightFraction = right,
+    regionBottomFraction = bottom,
+    targetWidthPx = (idealW * downscale).roundToInt().coerceIn(64, 2048),
+    targetHeightPx = (idealH * downscale).roundToInt().coerceIn(64, 2048),
+  )
+}
 
 @OptIn(FlowPreview::class)
 @Composable
@@ -171,10 +235,10 @@ internal fun PdfViewerCanvas(
   bottomContentPadding: Dp,
   bottomOverlayOffset: Dp,
   continuousPageState: MutableFloatState,
+  liveZoomState: MutableFloatState,
   nestedScrollConnection: NestedScrollConnection,
   jumpEvents: SharedFlow<ViewerJumpEvent>,
   onVisiblePageChanged: (Int, Float) -> Unit,
-  onLiveZoomChanged: (Float) -> Unit,
   onZoomSettled: (Float) -> Unit,
   onActiveScrollChanged: (Boolean) -> Unit,
   onToggleChrome: () -> Unit,
@@ -194,26 +258,27 @@ internal fun PdfViewerCanvas(
   val haptics = rememberPrismHaptics()
   val scope = rememberCoroutineScope()
 
-  val gutterColor by
-    animateColorAsState(
-      targetValue = paperViewportGutterColor(paperMode),
-      animationSpec = if (motion) tween(220) else snap(),
-      label = "pdf_gutter_bg",
-    )
-
   var appliedSavedZoom by remember(pdfController) { mutableStateOf(false) }
   var zoom by remember(pdfController) { mutableFloatStateOf(initialZoom.coerceIn(1f, 5f)) }
   var panOffset by remember(pdfController) { mutableStateOf(Offset.Zero) }
   var settledZoom by remember(pdfController) { mutableFloatStateOf(initialZoom.coerceIn(1f, 5f)) }
-  var settledPanOffset by remember(pdfController) { mutableStateOf(Offset.Zero) }
+  var settleEpoch by remember(pdfController) { mutableIntStateOf(0) }
+  var isPinching by remember(pdfController) { mutableStateOf(false) }
   var isDraggingHandle by remember { mutableStateOf(false) }
+  val isZoomed by remember(pdfController) { derivedStateOf { zoom > 1.02f } }
+
+  LaunchedEffect(pdfController) {
+    liveZoomState.floatValue = zoom
+  }
 
   LaunchedEffect(pdfController, initialZoom) {
     if (!appliedSavedZoom && initialZoom > 1.01f) {
       appliedSavedZoom = true
       val clamped = initialZoom.coerceIn(1f, 5f)
       zoom = clamped
+      liveZoomState.floatValue = clamped
       settledZoom = clamped
+      settleEpoch++
     }
   }
 
@@ -221,27 +286,30 @@ internal fun PdfViewerCanvas(
   val pagerState = rememberPagerState(initialPage = currentPage.coerceIn(0, pageCount - 1), pageCount = { pageCount })
 
   var viewportSize by remember { mutableStateOf(IntSize.Zero) }
-
-  // Report live zoom cleanly to top bar's interactive Zoom Reset pill
-  LaunchedEffect(zoom) {
-    onLiveZoomChanged(zoom)
-  }
+  val viewportCoordsRef = remember { CoordsRef() }
+  var lastDownScreenOffset by remember(pdfController) { mutableStateOf(Offset.Zero) }
+  var flingJob by remember(pdfController) { mutableStateOf<Job?>(null) }
 
   // Smoothly animate zoom back to 1x when user taps the Zoom Reset pill
   LaunchedEffect(zoomResetNonce) {
     if (zoomResetNonce > 0) {
+      flingJob?.cancel()
       if (!motion) {
         zoom = 1f
+        liveZoomState.floatValue = 1f
         panOffset = Offset.Zero
       } else {
         val startZoom = zoom
         val startPan = panOffset
         val anim = Animatable(0f)
         anim.animateTo(1f, spring(dampingRatio = 0.82f, stiffness = 420f)) {
-          zoom = startZoom + (1f - startZoom) * value
+          val nextZoom = startZoom + (1f - startZoom) * value
+          zoom = nextZoom
+          liveZoomState.floatValue = nextZoom
           panOffset = Offset(startPan.x * (1f - value), startPan.y * (1f - value))
         }
         zoom = 1f
+        liveZoomState.floatValue = 1f
         panOffset = Offset.Zero
       }
     }
@@ -260,23 +328,28 @@ internal fun PdfViewerCanvas(
 
   // Smooth double-tap zoom helper
   fun animateZoomTo(targetZoom: Float, targetPan: Offset) {
+    flingJob?.cancel()
     if (!motion) {
       zoom = targetZoom
+      liveZoomState.floatValue = targetZoom
       panOffset = targetPan
       return
     }
-    scope.launch {
+    flingJob = scope.launch {
       val startZoom = zoom
       val startPan = panOffset
       val anim = Animatable(0f)
       anim.animateTo(1f, spring(dampingRatio = 0.80f, stiffness = 440f)) {
-        zoom = startZoom + (targetZoom - startZoom) * value
+        val nextZoom = startZoom + (targetZoom - startZoom) * value
+        zoom = nextZoom
+        liveZoomState.floatValue = nextZoom
         panOffset = Offset(
           x = startPan.x + (targetPan.x - startPan.x) * value,
           y = startPan.y + (targetPan.y - startPan.y) * value,
         )
       }
       zoom = targetZoom
+      liveZoomState.floatValue = targetZoom
       panOffset = targetPan
     }
   }
@@ -293,14 +366,30 @@ internal fun PdfViewerCanvas(
       }
   }
 
-  // Debounce zoom & pan settle so sharp tile re-render triggers only after gesture settles
-  LaunchedEffect(Unit) {
-    snapshotFlow { Triple(zoom, panOffset.x, panOffset.y) }
-      .debounce(170L)
-      .collectLatest { (z, px, py) ->
-        settledZoom = z
-        settledPanOffset = Offset(px, py)
-        onZoomSettled(z)
+  // Debounce zoom, pan, and scroll settle so sharp tile re-render triggers only once gestures settle
+  LaunchedEffect(pdfController, scrollMode) {
+    snapshotFlow {
+      val scrolling =
+        if (scrollMode == PdfScrollMode.CONTINUOUS) listState.isScrollInProgress
+        else pagerState.isScrollInProgress
+      val firstIdx =
+        if (scrollMode == PdfScrollMode.CONTINUOUS) listState.firstVisibleItemIndex
+        else pagerState.currentPage
+      val firstOff =
+        if (scrollMode == PdfScrollMode.CONTINUOUS) listState.firstVisibleItemScrollOffset
+        else 0
+      listOf(zoom, panOffset.x, panOffset.y, isPinching, scrolling, firstIdx, firstOff)
+    }
+      .debounce(150L)
+      .collectLatest { values ->
+        val z = values[0] as Float
+        val activePinch = values[3] as Boolean
+        val activeScroll = values[4] as Boolean
+        if (!activePinch && !activeScroll) {
+          settledZoom = z
+          settleEpoch++
+          onZoomSettled(z)
+        }
       }
   }
 
@@ -435,61 +524,156 @@ internal fun PdfViewerCanvas(
     modifier =
       modifier
         .fillMaxSize()
-        .background(gutterColor)
-        .onGloballyPositioned { viewportSize = it.size }
-        .pointerInput(Unit) {
+        .viewerFocusBackdrop(paperMode)
+        .onGloballyPositioned { coords ->
+          viewportSize = coords.size
+          viewportCoordsRef.coords = coords
+        }
+        // Pass 1 (Initial): intercepts 2-finger pinch before LazyColumn / HorizontalPager starts scrolling
+        .pointerInput(pdfController) {
           awaitEachGesture {
-            awaitFirstDown(requireUnconsumed = false)
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            lastDownScreenOffset = down.position
+            flingJob?.cancel()
+            var prevPointerCount = 1
             do {
-              val event = awaitPointerEvent()
+              val event = awaitPointerEvent(PointerEventPass.Initial)
               val pointerCount = event.changes.count { it.pressed }
-              if (pointerCount >= 2 || zoom > 1.03f) {
+              val pinchingNow = pointerCount >= 2
+              if (isPinching != pinchingNow) {
+                isPinching = pinchingNow
+              }
+              if (pointerCount != prevPointerCount) {
+                prevPointerCount = pointerCount
+                if (pinchingNow) {
+                  event.changes.forEach { if (it.pressed) it.consume() }
+                }
+                continue
+              }
+              if (pinchingNow) {
                 val zoomChange = event.calculateZoom()
                 val panChange = event.calculatePan()
-                val centroid = event.calculateCentroid(useCurrent = false)
+                val centroid = event.calculateCentroid(useCurrent = true)
                 val oldZoom = zoom
                 val newZoom = (oldZoom * zoomChange).coerceIn(1f, 5f)
                 val w = size.width.toFloat().coerceAtLeast(1f)
                 val h = size.height.toFloat().coerceAtLeast(1f)
-
-                if (pointerCount >= 2 || (abs(zoomChange - 1f) > 0.002f)) {
-                  val focusX = if (centroid.x.isFinite()) centroid.x else w * 0.5f
-                  val focusY = if (centroid.y.isFinite()) centroid.y else h * 0.5f
-                  val adjustedPanX =
-                    (panOffset.x - focusX) * (newZoom / oldZoom) + focusX + panChange.x
-                  val adjustedPanY =
-                    (panOffset.y - focusY) * (newZoom / oldZoom) + focusY + panChange.y
+                if (
+                  zoomChange.isFinite() &&
+                  zoomChange in 0.25f..4f &&
+                  centroid.isSpecified &&
+                  panChange.x.isFinite() &&
+                  panChange.y.isFinite() &&
+                  oldZoom > 0f
+                ) {
+                  val focusX = centroid.x.coerceIn(0f, w)
+                  val focusY = centroid.y.coerceIn(0f, h)
+                  val factor = newZoom / oldZoom
                   val maxPanX = (w * (newZoom - 1f)).coerceAtLeast(0f)
-                  val maxPanY = (h * (newZoom - 1f) * 0.65f).coerceAtLeast(0f)
+                  val maxPanY = (h * (newZoom - 1f)).coerceAtLeast(0f)
+                  val adjustedPanX = (panOffset.x - focusX) * factor + focusX + panChange.x
+                  val adjustedPanY = (panOffset.y - focusY) * factor + focusY + panChange.y
                   zoom = newZoom
+                  liveZoomState.floatValue = newZoom
                   panOffset =
-                    if (newZoom <= 1.01f) {
-                      Offset.Zero
-                    } else {
-                      Offset(
-                        x = adjustedPanX.coerceIn(-maxPanX, 0f),
-                        y = adjustedPanY.coerceIn(-maxPanY, maxPanY),
-                      )
+                    if (newZoom <= 1.01f) Offset.Zero
+                    else Offset(
+                      x = adjustedPanX.coerceIn(-maxPanX, 0f),
+                      y = adjustedPanY.coerceIn(-maxPanY, 0f),
+                    )
+                }
+                event.changes.forEach { if (it.positionChanged() || it.pressed) it.consume() }
+              }
+            } while (event.changes.any { it.pressed })
+            if (isPinching) isPinching = false
+          }
+        }
+        // Pass 2 (Main): handles smooth 1-finger pan + inertial fling + continuous vertical page overflow while zoomed
+        .pointerInput(pdfController, scrollMode) {
+          awaitEachGesture {
+            awaitFirstDown(requireUnconsumed = true, pass = PointerEventPass.Main)
+            flingJob?.cancel()
+            val velocityTracker = VelocityTracker()
+            var totalDrag = Offset.Zero
+            var pastTouchSlop = false
+            val touchSlop = viewConfiguration.touchSlop
+            do {
+              val event = awaitPointerEvent(PointerEventPass.Main)
+              val pressedChanges = event.changes.filter { it.pressed }
+              if (pressedChanges.size != 1 || isPinching || zoom <= 1.02f || event.changes.any { it.isConsumed }) {
+                if (pressedChanges.size >= 2 || isPinching) {
+                  pastTouchSlop = false
+                  velocityTracker.resetTracking()
+                }
+                continue
+              }
+              val change = pressedChanges.first()
+              val delta = change.positionChange()
+              if (!pastTouchSlop) {
+                totalDrag += delta
+                if (totalDrag.getDistance() >= touchSlop) {
+                  pastTouchSlop = true
+                  velocityTracker.resetTracking()
+                }
+              }
+              if (pastTouchSlop && (abs(delta.x) > 0.01f || abs(delta.y) > 0.01f)) {
+                velocityTracker.addPosition(change.uptimeMillis, change.position)
+                val w = size.width.toFloat().coerceAtLeast(1f)
+                val h = size.height.toFloat().coerceAtLeast(1f)
+                val maxPanX = (w * (zoom - 1f)).coerceAtLeast(0f)
+                val maxPanY = (h * (zoom - 1f)).coerceAtLeast(0f)
+                val candX = panOffset.x + delta.x
+                val candY = panOffset.y + delta.y
+                val clampedX = candX.coerceIn(-maxPanX, 0f)
+                val clampedY = candY.coerceIn(-maxPanY, 0f)
+                val overflowY = candY - clampedY
+                panOffset = Offset(clampedX, clampedY)
+                if (scrollMode == PdfScrollMode.CONTINUOUS && abs(overflowY) > 0.05f) {
+                  listState.dispatchRawDelta(-overflowY / zoom)
+                }
+                change.consume()
+              }
+            } while (event.changes.any { it.pressed })
+
+            if (pastTouchSlop && !isPinching && zoom > 1.02f) {
+              val vel = velocityTracker.calculateVelocity()
+              if (abs(vel.x) > 80f || abs(vel.y) > 80f) {
+                val w = size.width.toFloat().coerceAtLeast(1f)
+                val h = size.height.toFloat().coerceAtLeast(1f)
+                flingJob = scope.launch {
+                  val decay = exponentialDecay<Float>(frictionMultiplier = 1.5f)
+                  val animX = Animatable(panOffset.x).apply {
+                    val maxX = (w * (zoom - 1f)).coerceAtLeast(0f)
+                    updateBounds(lowerBound = -maxX, upperBound = 0f)
+                  }
+                  val animY = Animatable(panOffset.y).apply {
+                    if (scrollMode == PdfScrollMode.PAGED) {
+                      val maxY = (h * (zoom - 1f)).coerceAtLeast(0f)
+                      updateBounds(lowerBound = -maxY, upperBound = 0f)
                     }
-                  event.changes.forEach { if (it.positionChanged()) it.consume() }
-                } else if (zoom > 1.03f && pointerCount == 1) {
-                  val maxPanX = (w * (zoom - 1f)).coerceAtLeast(0f)
-                  val maxPanY = (h * (zoom - 1f) * 0.45f).coerceAtLeast(0f)
-                  val candidateX = panOffset.x + panChange.x
-                  val candidateY = panOffset.y + panChange.y
-                  val clampedX = candidateX.coerceIn(-maxPanX, 0f)
-                  val clampedY =
-                    if (scrollMode == PdfScrollMode.PAGED) candidateY.coerceIn(-maxPanY, maxPanY)
-                    else 0f
-                  val consumedX = abs(clampedX - panOffset.x) > 0.5f
-                  val consumedY = abs(clampedY - panOffset.y) > 0.5f
-                  panOffset = Offset(clampedX, clampedY)
-                  if (consumedX || (scrollMode == PdfScrollMode.PAGED && consumedY)) {
-                    event.changes.forEach { if (it.positionChanged()) it.consume() }
+                  }
+                  launch {
+                    animX.animateDecay(vel.x, decay) {
+                      val maxX = (w * (zoom - 1f)).coerceAtLeast(0f)
+                      panOffset = panOffset.copy(x = value.coerceIn(-maxX, 0f))
+                    }
+                  }
+                  var prevY = panOffset.y
+                  animY.animateDecay(vel.y, decay) {
+                    val stepDy = value - prevY
+                    prevY = value
+                    val maxY = (h * (zoom - 1f)).coerceAtLeast(0f)
+                    val candY = panOffset.y + stepDy
+                    val clampedY = candY.coerceIn(-maxY, 0f)
+                    val overflowY = candY - clampedY
+                    panOffset = panOffset.copy(y = clampedY)
+                    if (scrollMode == PdfScrollMode.CONTINUOUS && abs(overflowY) > 0.05f) {
+                      listState.dispatchRawDelta(-overflowY / zoom)
+                    }
                   }
                 }
               }
-            } while (event.changes.any { it.pressed })
+            }
           }
         }
         .testTag("viewer_document_canvas"),
@@ -505,12 +689,13 @@ internal fun PdfViewerCanvas(
         scaleX = zoom
         scaleY = zoom
         translationX = panOffset.x
-        translationY = if (scrollMode == PdfScrollMode.PAGED) panOffset.y else 0f
+        translationY = panOffset.y
       }
 
     if (scrollMode == PdfScrollMode.CONTINUOUS) {
       LazyColumn(
         state = listState,
+        userScrollEnabled = !isZoomed && !isPinching,
         contentPadding =
           PaddingValues(
             top = topContentPadding + 8.dp,
@@ -546,10 +731,9 @@ internal fun PdfViewerCanvas(
             pdfController = pdfController,
             pageIndex = pageIdx,
             pageRenderWidthPx = pageTargetRenderPx,
-            viewportWidthPx = containerWidthPx,
-            viewportHeightPx = viewportSize.height,
+            viewportCoordsRef = viewportCoordsRef,
             settledZoom = settledZoom,
-            settledPanOffset = settledPanOffset,
+            settleEpoch = settleEpoch,
             paperMode = paperMode,
             isBookmarked = pageIdx in bookmarkedPages,
             matches = matchesByPage[pageIdx].orEmpty(),
@@ -560,15 +744,22 @@ internal fun PdfViewerCanvas(
             onTapPage = {
               if (selection != null) onClearSelection() else onToggleChrome()
             },
-            onDoubleTapPage = { tapOffset ->
+            onDoubleTapPage = {
               if (zoom > 1.15f) {
                 animateZoomTo(1f, Offset.Zero)
               } else {
                 val targetZoom = 2.4f
                 val w = viewportSize.width.toFloat().coerceAtLeast(1f)
-                val maxPanX = (w * (targetZoom - 1f)).coerceAtLeast(0f)
-                val targetPanX = (-(tapOffset.x * (targetZoom - 1f))).coerceIn(-maxPanX, 0f)
-                animateZoomTo(targetZoom, Offset(targetPanX, 0f))
+                val h = viewportSize.height.toFloat().coerceAtLeast(1f)
+                val fx = lastDownScreenOffset.x.coerceIn(0f, w)
+                val fy = lastDownScreenOffset.y.coerceIn(0f, h)
+                animateZoomTo(
+                  targetZoom,
+                  Offset(
+                    x = (fx - fx * targetZoom).coerceIn(-(w * (targetZoom - 1f)), 0f),
+                    y = (fy - fy * targetZoom).coerceIn(-(h * (targetZoom - 1f)), 0f),
+                  ),
+                )
               }
             },
             onLongPressAt = { xNorm, yNorm ->
@@ -585,7 +776,7 @@ internal fun PdfViewerCanvas(
     } else {
       HorizontalPager(
         state = pagerState,
-        userScrollEnabled = zoom <= 1.05f,
+        userScrollEnabled = !isZoomed && !isPinching,
         contentPadding = PaddingValues(horizontal = horizontalPad),
         pageSpacing = 12.dp,
         modifier = zoomedLayerModifier,
@@ -614,10 +805,9 @@ internal fun PdfViewerCanvas(
             pdfController = pdfController,
             pageIndex = pageIdx,
             pageRenderWidthPx = pageTargetRenderPx,
-            viewportWidthPx = containerWidthPx,
-            viewportHeightPx = viewportSize.height,
+            viewportCoordsRef = viewportCoordsRef,
             settledZoom = settledZoom,
-            settledPanOffset = settledPanOffset,
+            settleEpoch = settleEpoch,
             paperMode = paperMode,
             isBookmarked = pageIdx in bookmarkedPages,
             matches = matchesByPage[pageIdx].orEmpty(),
@@ -627,20 +817,20 @@ internal fun PdfViewerCanvas(
             onTapPage = {
               if (selection != null) onClearSelection() else onToggleChrome()
             },
-            onDoubleTapPage = { tapOffset ->
+            onDoubleTapPage = {
               if (zoom > 1.15f) {
                 animateZoomTo(1f, Offset.Zero)
               } else {
                 val targetZoom = 2.4f
                 val w = viewportSize.width.toFloat().coerceAtLeast(1f)
                 val h = viewportSize.height.toFloat().coerceAtLeast(1f)
-                val maxPanX = (w * (targetZoom - 1f)).coerceAtLeast(0f)
-                val maxPanY = (h * (targetZoom - 1f) * 0.45f).coerceAtLeast(0f)
+                val fx = lastDownScreenOffset.x.coerceIn(0f, w)
+                val fy = lastDownScreenOffset.y.coerceIn(0f, h)
                 animateZoomTo(
                   targetZoom,
                   Offset(
-                    x = (-(tapOffset.x * (targetZoom - 1f))).coerceIn(-maxPanX, 0f),
-                    y = (-(tapOffset.y * 0.35f)).coerceIn(-maxPanY, maxPanY),
+                    x = (fx - fx * targetZoom).coerceIn(-(w * (targetZoom - 1f)), 0f),
+                    y = (fy - fy * targetZoom).coerceIn(-(h * (targetZoom - 1f)), 0f),
                   ),
                 )
               }
@@ -796,10 +986,9 @@ private fun PdfPageSurfaceItem(
   pdfController: PdfDocumentController,
   pageIndex: Int,
   pageRenderWidthPx: Int,
-  viewportWidthPx: Int,
-  viewportHeightPx: Int,
+  viewportCoordsRef: CoordsRef,
   settledZoom: Float,
-  settledPanOffset: Offset,
+  settleEpoch: Int,
   paperMode: ReaderPaperMode,
   isBookmarked: Boolean,
   matches: List<Pair<Int, PdfSearchMatch>>,
@@ -807,7 +996,7 @@ private fun PdfPageSurfaceItem(
   matchPulseProgress: () -> Float,
   selection: TextSelectionRange?,
   onTapPage: () -> Unit,
-  onDoubleTapPage: (Offset) -> Unit,
+  onDoubleTapPage: () -> Unit,
   onLongPressAt: (Float, Float) -> Unit,
   onDragSelectionHandle: (Boolean, Float, Float) -> Unit,
   onHandleDragStateChanged: (Boolean) -> Unit,
@@ -858,41 +1047,28 @@ private fun PdfPageSurfaceItem(
       label = "pdf_page_bitmap_fade",
     )
 
-  // Sharper zoomed tile re-render when pinch-zoom settles > 1.25x
-  val tileSpec =
-    remember(settledZoom, settledPanOffset, viewportWidthPx, viewportHeightPx, pageIndex, aspectRatio) {
-      if (settledZoom <= 1.25f || viewportWidthPx <= 0 || viewportHeightPx <= 0) {
-        null
-      } else {
-        val leftFrac = ((-settledPanOffset.x) / (viewportWidthPx * settledZoom)).coerceIn(0f, 0.85f)
-        val widthFrac = (1f / settledZoom).coerceIn(0.15f, 1f)
-        val rightFrac = (leftFrac + widthFrac).coerceAtMost(1f)
-        val tileW = (pageRenderWidthPx * settledZoom * widthFrac).roundToInt().coerceIn(360, 2000)
-        val tileH = (tileW / aspectRatio / widthFrac).roundToInt().coerceIn(360, 2000)
-        TileRenderSpec(
-          scaleFactor = settledZoom,
-          regionLeftFraction = leftFrac,
-          regionTopFraction = 0f,
-          regionRightFraction = rightFrac,
-          regionBottomFraction = 1f,
-          targetWidthPx = tileW,
-          targetHeightPx = tileH,
-        )
+  // Non-state coordinates ref so measuring never causes recomposition during scroll or zoom
+  val pageCoordsRef = remember { CoordsRef() }
+  var renderedTile by remember(pageIndex, pdfController) { mutableStateOf<RenderedPdfTile?>(null) }
+
+  LaunchedEffect(pageIndex, settledZoom, settleEpoch, aspectRatio, pageRenderWidthPx, pdfController) {
+    val spec =
+      computeVisibleTileSpec(
+        viewportCoords = viewportCoordsRef.coords,
+        pageCoords = pageCoordsRef.coords,
+        settledZoom = settledZoom,
+        pageRenderWidthPx = pageRenderWidthPx,
+        aspectRatio = aspectRatio,
+      )
+    if (spec == null) {
+      renderedTile = null
+    } else if (renderedTile?.spec != spec) {
+      val bmp = pdfController.renderPage(pageIndex, pageRenderWidthPx, spec)
+      if (bmp != null) {
+        renderedTile = RenderedPdfTile(spec, bmp)
       }
     }
-
-  val hiResBitmap by
-    produceState<Bitmap?>(
-      initialValue = null,
-      key1 = pageIndex,
-      key2 = tileSpec,
-      key3 = pdfController,
-    ) {
-      value =
-        if (tileSpec != null) {
-          pdfController.renderPage(pageIndex, pageRenderWidthPx, tileSpec)
-        } else null
-    }
+  }
 
   val latestOnTap by rememberUpdatedState(onTapPage)
   val latestOnDoubleTap by rememberUpdatedState(onDoubleTapPage)
@@ -900,17 +1076,26 @@ private fun PdfPageSurfaceItem(
   val latestOnDragHandle by rememberUpdatedState(onDragSelectionHandle)
   val latestOnHandleDragState by rememberUpdatedState(onHandleDragStateChanged)
 
+  val pageBorderColor =
+    when (paperMode) {
+      ReaderPaperMode.LIGHT -> colorScheme.outline.copy(alpha = 0.35f)
+      ReaderPaperMode.SEPIA -> colorScheme.outline.copy(alpha = 0.42f)
+      ReaderPaperMode.DARK -> colorScheme.primary.copy(alpha = 0.24f)
+    }
+
   BoxWithConstraints(
     modifier =
       modifier
         .fillMaxWidth()
         .shadow(
-          elevation = if (paperMode == ReaderPaperMode.DARK) 3.dp else 7.dp,
-          shape = RoundedCornerShape(6.dp),
+          elevation = if (paperMode == ReaderPaperMode.DARK) 6.dp else 12.dp,
+          shape = RoundedCornerShape(8.dp),
           clip = false,
         )
-        .clip(RoundedCornerShape(6.dp))
+        .clip(RoundedCornerShape(8.dp))
         .background(paperBg)
+        .border(BorderStroke(1.dp, pageBorderColor), RoundedCornerShape(8.dp))
+        .onGloballyPositioned { pageCoordsRef.coords = it }
         .testTag("pdf_page_${pageIndex + 1}"),
   ) {
     val pageWidthPx = with(density) { maxWidth.toPx().coerceAtLeast(1f) }
@@ -924,7 +1109,7 @@ private fun PdfPageSurfaceItem(
           .pointerInput(pageIndex, pageWidthPx, pageHeightPx) {
             detectTapGestures(
               onTap = { latestOnTap() },
-              onDoubleTap = { offset -> latestOnDoubleTap(offset) },
+              onDoubleTap = { latestOnDoubleTap() },
               onLongPress = { offset ->
                 val xNorm = (offset.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
                 val yNorm = (offset.y / size.height.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
@@ -934,38 +1119,39 @@ private fun PdfPageSurfaceItem(
           },
       contentAlignment = Alignment.Center,
     ) {
-      val activeBitmap = hiResBitmap ?: baseBitmap
-      if (activeBitmap != null) {
-        if (hiResBitmap != null && tileSpec != null) {
-          baseBitmap?.let { base ->
-            Image(
-              bitmap = base.asImageBitmap(),
-              contentDescription = "PDF page ${pageIndex + 1}",
-              contentScale = ContentScale.FillBounds,
-              colorFilter = colorFilter,
-              modifier = Modifier.fillMaxSize(),
-            )
-          }
-          val tileLeftPx = tileSpec.regionLeftFraction * pageWidthPx
-          val tileWidthDp = with(density) { ((tileSpec.regionRightFraction - tileSpec.regionLeftFraction) * pageWidthPx).toDp() }
+      val base = baseBitmap
+      val tile = renderedTile
+      if (base != null || tile != null) {
+        if (base != null) {
           Image(
-            bitmap = activeBitmap.asImageBitmap(),
+            bitmap = base.asImageBitmap(),
+            contentDescription = "PDF page ${pageIndex + 1}",
+            contentScale = ContentScale.FillBounds,
+            colorFilter = colorFilter,
+            modifier = Modifier.fillMaxSize().graphicsLayer { alpha = pageFadeAlpha },
+          )
+        }
+        if (tile != null) {
+          val spec = tile.spec
+          val tileLeftPx = spec.regionLeftFraction * pageWidthPx
+          val tileTopPx = spec.regionTopFraction * pageHeightPx
+          val tileDrawWidthDp =
+            with(density) { ((spec.regionRightFraction - spec.regionLeftFraction) * pageWidthPx).toDp() }
+          val tileDrawHeightDp =
+            with(density) { ((spec.regionBottomFraction - spec.regionTopFraction) * pageHeightPx).toDp() }
+          Image(
+            bitmap = tile.bitmap.asImageBitmap(),
             contentDescription = "PDF page ${pageIndex + 1} high resolution",
             contentScale = ContentScale.FillBounds,
             colorFilter = colorFilter,
             modifier =
               Modifier.align(Alignment.TopStart)
-                .graphicsLayer { translationX = tileLeftPx }
-                .width(tileWidthDp)
-                .height(pageHeightDp),
-          )
-        } else {
-          Image(
-            bitmap = activeBitmap.asImageBitmap(),
-            contentDescription = "PDF page ${pageIndex + 1}",
-            contentScale = ContentScale.FillBounds,
-            colorFilter = colorFilter,
-            modifier = Modifier.fillMaxSize().graphicsLayer { alpha = pageFadeAlpha },
+                .graphicsLayer {
+                  translationX = tileLeftPx
+                  translationY = tileTopPx
+                }
+                .width(tileDrawWidthDp)
+                .height(tileDrawHeightDp),
           )
         }
       } else {

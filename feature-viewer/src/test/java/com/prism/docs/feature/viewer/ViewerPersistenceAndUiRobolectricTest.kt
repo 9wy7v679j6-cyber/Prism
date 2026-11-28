@@ -247,4 +247,36 @@ class ViewerPersistenceAndUiRobolectricTest {
     }
     mdFile.delete()
   }
+
+  @Test
+  fun zoomResetPillDisplaysRoundedZoomAndResetsOnClick() {
+    val zoomState = androidx.compose.runtime.mutableFloatStateOf(1f)
+    var resetCount = 0
+
+    composeRule.setContent {
+      PrismTheme(darkTheme = false) {
+        if (zoomState.floatValue > 1.05f) {
+          ViewerZoomResetPill(
+            zoomState = zoomState,
+            onResetZoom = {
+              resetCount++
+              zoomState.floatValue = 1f
+            },
+          )
+        }
+      }
+    }
+
+    assertTrue(composeRule.onAllNodesWithTag("viewer_zoom_reset_pill").fetchSemanticsNodes().isEmpty())
+
+    composeRule.runOnIdle { zoomState.floatValue = 2.44f }
+    composeRule.onNodeWithTag("viewer_zoom_reset_pill").assertIsDisplayed()
+    composeRule.onNodeWithText("2.4x").assertIsDisplayed()
+    composeRule.onNodeWithTag("viewer_zoom_reset_pill").performClick()
+
+    assertEquals(1, resetCount)
+    composeRule.waitUntil(timeoutMillis = 3_000L) {
+      composeRule.onAllNodesWithTag("viewer_zoom_reset_pill").fetchSemanticsNodes().isEmpty()
+    }
+  }
 }

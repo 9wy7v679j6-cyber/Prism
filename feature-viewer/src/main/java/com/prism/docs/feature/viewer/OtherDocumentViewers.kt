@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -63,8 +64,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
@@ -111,13 +116,58 @@ internal fun ImageDocumentViewer(
 
   var zoom by remember(uriString) { mutableFloatStateOf(1f) }
   var pan by remember(uriString) { mutableStateOf(Offset.Zero) }
-  val bg = if (paperMode == ReaderPaperMode.DARK) Color(0xFF0B0D12) else MaterialTheme.colorScheme.background
+  var lastDownPos by remember(uriString) { mutableStateOf(Offset.Zero) }
 
   Box(
     modifier =
       modifier
         .fillMaxSize()
-        .background(bg)
+        .viewerFocusBackdrop(paperMode)
+        .pointerInput(Unit) {
+          awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            lastDownPos = down.position
+            var prevPointerCount = 1
+            do {
+              val event = awaitPointerEvent(PointerEventPass.Initial)
+              val pressed = event.changes.count { it.pressed }
+              if (pressed != prevPointerCount) {
+                prevPointerCount = pressed
+                if (pressed >= 2) {
+                  event.changes.forEach { if (it.pressed) it.consume() }
+                }
+                continue
+              }
+              if (pressed >= 2 || (pressed == 1 && zoom > 1.02f)) {
+                val w = size.width.toFloat().coerceAtLeast(1f)
+                val h = size.height.toFloat().coerceAtLeast(1f)
+                val zChange = if (pressed >= 2) event.calculateZoom() else 1f
+                val panChange = event.calculatePan()
+                val centroid = event.calculateCentroid(useCurrent = true)
+                val oldZoom = zoom
+                val newZoom = (oldZoom * zChange).coerceIn(1f, 5f)
+                val maxX = (w * (newZoom - 1f)).coerceAtLeast(0f)
+                val maxY = (h * (newZoom - 1f)).coerceAtLeast(0f)
+                if (pressed >= 2 && zChange.isFinite() && centroid.isSpecified && oldZoom > 0f) {
+                  val factor = newZoom / oldZoom
+                  val candX = (pan.x - centroid.x) * factor + centroid.x + panChange.x
+                  val candY = (pan.y - centroid.y) * factor + centroid.y + panChange.y
+                  zoom = newZoom
+                  pan =
+                    if (newZoom <= 1.01f) Offset.Zero
+                    else Offset(candX.coerceIn(-maxX, 0f), candY.coerceIn(-maxY, 0f))
+                  event.changes.forEach { if (it.positionChanged() || it.pressed) it.consume() }
+                } else if (pressed == 1 && zoom > 1.02f && (abs(panChange.x) > 0.5f || abs(panChange.y) > 0.5f)) {
+                  pan = Offset(
+                    x = (pan.x + panChange.x).coerceIn(-maxX, 0f),
+                    y = (pan.y + panChange.y).coerceIn(-maxY, 0f),
+                  )
+                  event.changes.forEach { if (it.positionChanged()) it.consume() }
+                }
+              }
+            } while (event.changes.any { it.pressed })
+          }
+        }
         .pointerInput(Unit) {
           detectTapGestures(
             onTap = { onToggleChrome() },
@@ -126,36 +176,19 @@ internal fun ImageDocumentViewer(
                 zoom = 1f
                 pan = Offset.Zero
               } else {
-                zoom = 2.5f
+                val targetZoom = 2.5f
+                val w = size.width.toFloat().coerceAtLeast(1f)
+                val h = size.height.toFloat().coerceAtLeast(1f)
+                val fx = lastDownPos.x.coerceIn(0f, w)
+                val fy = lastDownPos.y.coerceIn(0f, h)
+                zoom = targetZoom
+                pan = Offset(
+                  x = (fx - fx * targetZoom).coerceIn(-(w * (targetZoom - 1f)), 0f),
+                  y = (fy - fy * targetZoom).coerceIn(-(h * (targetZoom - 1f)), 0f),
+                )
               }
             },
           )
-        }
-        .pointerInput(Unit) {
-          awaitEachGesture {
-            awaitFirstDown(requireUnconsumed = false)
-            do {
-              val event = awaitPointerEvent()
-              val pressed = event.changes.count { it.pressed }
-              if (pressed >= 2 || zoom > 1.03f) {
-                val zChange = event.calculateZoom()
-                val panChange = event.calculatePan()
-                val newZoom = (zoom * zChange).coerceIn(1f, 5f)
-                val maxX = (size.width * (newZoom - 1f) * 0.5f).coerceAtLeast(0f)
-                val maxY = (size.height * (newZoom - 1f) * 0.5f).coerceAtLeast(0f)
-                zoom = newZoom
-                pan =
-                  if (newZoom <= 1.01f) Offset.Zero
-                  else Offset(
-                    x = (pan.x + panChange.x).coerceIn(-maxX, maxX),
-                    y = (pan.y + panChange.y).coerceIn(-maxY, maxY),
-                  )
-                if (pressed >= 2 || abs(panChange.x) > 1f || abs(panChange.y) > 1f) {
-                  event.changes.forEach { if (it.positionChanged()) it.consume() }
-                }
-              }
-            } while (event.changes.any { it.pressed })
-          }
         }
         .testTag("viewer_image_canvas"),
     contentAlignment = Alignment.Center,
@@ -175,11 +208,14 @@ internal fun ImageDocumentViewer(
             ),
           title = stringResource(R.string.viewer_error_title),
           body = stringResource(R.string.viewer_error_body),
+          paperMode = paperMode,
+          isError = true,
           onOpenExternal = onOpenExternal,
         )
       },
       modifier =
         Modifier.fillMaxSize().graphicsLayer {
+          transformOrigin = TransformOrigin(0f, 0f)
           scaleX = zoom
           scaleY = zoom
           translationX = pan.x
@@ -530,6 +566,7 @@ internal fun UnsupportedDocumentCard(
   document: IncomingDocumentRequest?,
   title: String,
   body: String,
+  paperMode: ReaderPaperMode = ReaderPaperMode.LIGHT,
   isError: Boolean = false,
   onOpenExternal: (() -> Unit)?,
   onOpenAnnotate: (() -> Unit)? = null,
@@ -537,7 +574,7 @@ internal fun UnsupportedDocumentCard(
 ) {
   val colorScheme = MaterialTheme.colorScheme
   Box(
-    modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+    modifier = modifier.fillMaxSize().viewerFocusBackdrop(paperMode).verticalScroll(rememberScrollState()).padding(24.dp),
     contentAlignment = Alignment.Center,
   ) {
     ViewerSolidSurface(

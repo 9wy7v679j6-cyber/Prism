@@ -120,7 +120,7 @@ fun ViewerShellScreen(
   var isChromeHidden by remember { mutableStateOf(false) }
   var isActivelyScrolling by remember { mutableStateOf(false) }
   var isScrubbing by remember { mutableStateOf(false) }
-  var currentZoom by remember { mutableFloatStateOf(1f) }
+  val liveZoomState = remember(document?.uriString) { mutableFloatStateOf(1f) }
   var zoomResetNonce by remember { mutableIntStateOf(0) }
 
   // Continuous page position read strictly in graphicsLayer / drawBehind (zero recomposition during scroll)
@@ -290,7 +290,7 @@ fun ViewerShellScreen(
         when {
           uiState.isLoading -> {
             Box(
-              modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+              modifier = Modifier.fillMaxSize().viewerFocusBackdrop(uiState.paperMode),
               contentAlignment = Alignment.Center,
             ) {
               Column(
@@ -327,10 +327,10 @@ fun ViewerShellScreen(
               bottomContentPadding = stableBottomPaddingDp,
               bottomOverlayOffset = bottomOverlayOffset,
               continuousPageState = continuousPageState,
+              liveZoomState = liveZoomState,
               nestedScrollConnection = scrollCollapseConnection,
               jumpEvents = viewModel.jumpEvents,
               onVisiblePageChanged = viewModel::onPageVisibleChanged,
-              onLiveZoomChanged = { z -> currentZoom = z },
               onZoomSettled = viewModel::onZoomSettled,
               onActiveScrollChanged = { scrolling -> isActivelyScrolling = scrolling },
               onToggleChrome = toggleChromeOnTap,
@@ -393,6 +393,7 @@ fun ViewerShellScreen(
               document = document,
               title = stringResource(R.string.viewer_error_title),
               body = uiState.errorMessage?.takeIf { it.isNotBlank() } ?: stringResource(R.string.viewer_error_body),
+              paperMode = uiState.paperMode,
               isError = true,
               onOpenExternal = openExternalHandler,
               onOpenAnnotate = onOpenEditorRoute,
@@ -408,6 +409,7 @@ fun ViewerShellScreen(
               document = document,
               title = stringResource(R.string.viewer_unsupported_title),
               body = stringResource(R.string.viewer_unsupported_body, typeLabel),
+              paperMode = uiState.paperMode,
               isError = false,
               onOpenExternal = openExternalHandler,
               onOpenAnnotate = onOpenEditorRoute,
@@ -452,7 +454,7 @@ fun ViewerShellScreen(
           collapseProgress = if (uiState.isSearchVisible) 0f else collapseAnim.value,
           continuousPageState = continuousPageState,
           currentChapter = currentChapter,
-          currentZoom = currentZoom,
+          liveZoomState = liveZoomState,
           isActivelyScrolling = isActivelyScrolling || isScrubbing,
           isSearchActive = uiState.isSearchVisible,
           isBookmarked = uiState.currentPageBookmarked,

@@ -78,6 +78,7 @@ import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -141,7 +142,7 @@ internal fun ViewerCollapsingTopBar(
   collapseProgress: Float,
   continuousPageState: State<Float>,
   currentChapter: String?,
-  currentZoom: Float,
+  liveZoomState: State<Float>,
   isActivelyScrolling: Boolean,
   isSearchActive: Boolean,
   isBookmarked: Boolean,
@@ -161,6 +162,7 @@ internal fun ViewerCollapsingTopBar(
   val haptics = rememberPrismHaptics()
 
   val clampedCollapse = collapseProgress.coerceIn(0f, 1f)
+  val isZoomed by remember(liveZoomState) { derivedStateOf { liveZoomState.value > 1.05f } }
   val minimizedPillPulse by
     animateFloatAsState(
       targetValue = if (isActivelyScrolling) 1.05f else 1f,
@@ -381,7 +383,7 @@ internal fun ViewerCollapsingTopBar(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
           ) {
             AnimatedVisibility(
-              visible = currentZoom > 1.05f,
+              visible = isZoomed,
               enter =
                 if (motion) scaleIn(initialScale = 0.85f) + fadeIn(tween(140))
                 else EnterTransition.None,
@@ -390,7 +392,7 @@ internal fun ViewerCollapsingTopBar(
                 else ExitTransition.None,
             ) {
               ViewerZoomResetPill(
-                zoom = currentZoom,
+                zoomState = liveZoomState,
                 onResetZoom = onResetZoom,
               )
             }
@@ -493,10 +495,10 @@ internal fun ViewerCollapsingTopBar(
     }
 
     // Zoom reset pill when top bar is expanded and document is zoomed in
-    if (clampedCollapse <= 0.42f && currentZoom > 1.05f && !isSearchActive) {
+    if (clampedCollapse <= 0.42f && isZoomed && !isSearchActive) {
       Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
         ViewerZoomResetPill(
-          zoom = currentZoom,
+          zoomState = liveZoomState,
           onResetZoom = onResetZoom,
         )
       }
@@ -506,13 +508,16 @@ internal fun ViewerCollapsingTopBar(
 
 @Composable
 internal fun ViewerZoomResetPill(
-  zoom: Float,
+  zoomState: State<Float>,
   onResetZoom: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val colorScheme = MaterialTheme.colorScheme
   val haptics = rememberPrismHaptics()
   val resetCd = stringResource(R.string.viewer_reset_zoom_cd)
+  val displayZoom by remember(zoomState) {
+    derivedStateOf { (zoomState.value * 10f).roundToInt() / 10f }
+  }
 
   ViewerSolidSurface(
     cornerRadius = 22.dp,
@@ -544,7 +549,7 @@ internal fun ViewerZoomResetPill(
         modifier = Modifier.size(16.dp),
       )
       Text(
-        text = stringResource(R.string.viewer_zoom_reset_format, zoom),
+        text = stringResource(R.string.viewer_zoom_reset_format, displayZoom),
         style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
         color = colorScheme.onPrimaryContainer,
         maxLines = 1,
