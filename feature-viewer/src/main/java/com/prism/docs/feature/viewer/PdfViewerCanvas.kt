@@ -85,6 +85,7 @@ import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -680,8 +681,12 @@ internal fun PdfViewerCanvas(
   ) {
     val containerWidthPx = with(density) { maxWidth.toPx().roundToInt().coerceAtLeast(360) }
     val horizontalPad = if (maxWidth > 680.dp) 40.dp else 10.dp
-    val pageWidthPx = with(density) { (maxWidth - horizontalPad * 2).toPx().roundToInt().coerceIn(300, 2200) }
-    val pageTargetRenderPx = (pageWidthPx * density.density.coerceAtMost(2.5f)).roundToInt().coerceIn(480, 1800)
+    val pageWidthPx = with(density) { (maxWidth - horizontalPad * 2).toPx().roundToInt().coerceIn(300, 2400) }
+    val pageTargetRenderPx = (pageWidthPx * density.density.coerceIn(1.5f, 2.75f)).roundToInt().coerceIn(720, 2400)
+
+    LaunchedEffect(currentPage, pageTargetRenderPx, pdfController) {
+      pdfController.prefetchAround(centerPage = currentPage, targetWidthPx = pageTargetRenderPx)
+    }
 
     val zoomedLayerModifier =
       Modifier.fillMaxSize().graphicsLayer {
@@ -776,6 +781,7 @@ internal fun PdfViewerCanvas(
     } else {
       HorizontalPager(
         state = pagerState,
+        beyondViewportPageCount = 2,
         userScrollEnabled = !isZoomed && !isPinching,
         contentPadding = PaddingValues(horizontal = horizontalPad),
         pageSpacing = 12.dp,
@@ -1127,6 +1133,7 @@ private fun PdfPageSurfaceItem(
             bitmap = base.asImageBitmap(),
             contentDescription = "PDF page ${pageIndex + 1}",
             contentScale = ContentScale.FillBounds,
+            filterQuality = FilterQuality.High,
             colorFilter = colorFilter,
             modifier = Modifier.fillMaxSize().graphicsLayer { alpha = pageFadeAlpha },
           )
@@ -1143,6 +1150,7 @@ private fun PdfPageSurfaceItem(
             bitmap = tile.bitmap.asImageBitmap(),
             contentDescription = "PDF page ${pageIndex + 1} high resolution",
             contentScale = ContentScale.FillBounds,
+            filterQuality = FilterQuality.High,
             colorFilter = colorFilter,
             modifier =
               Modifier.align(Alignment.TopStart)
@@ -1314,12 +1322,21 @@ private fun SelectionDragHandle(
         },
     contentAlignment = Alignment.TopCenter,
   ) {
+    val handleShape =
+      RoundedCornerShape(
+        topStart = if (isStart) 6.dp else 1.5.dp,
+        topEnd = if (isStart) 1.5.dp else 6.dp,
+        bottomStart = 6.dp,
+        bottomEnd = 6.dp,
+      )
     Box(
       modifier =
-        Modifier.size(18.dp)
-          .clip(CircleShape)
+        Modifier.padding(top = 1.dp)
+          .size(width = 11.dp, height = 13.dp)
+          .shadow(2.dp, handleShape)
+          .clip(handleShape)
           .background(MaterialTheme.colorScheme.primary)
-          .shadow(2.dp, CircleShape)
+          .border(BorderStroke(1.2.dp, MaterialTheme.colorScheme.surface), handleShape),
     )
   }
 }

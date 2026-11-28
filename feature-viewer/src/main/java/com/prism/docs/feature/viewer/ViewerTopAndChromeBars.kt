@@ -96,6 +96,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -895,7 +896,8 @@ internal fun ViewerRightEdgeScrubber(
               Image(
                 bitmap = bmp.asImageBitmap(),
                 contentDescription = null,
-                contentScale = ContentScale.Crop,
+                contentScale = ContentScale.Fit,
+                filterQuality = FilterQuality.High,
                 colorFilter = paperModeColorFilter(paperMode),
                 modifier = Modifier.fillMaxSize(),
               )
@@ -1140,7 +1142,7 @@ internal fun ViewerThumbnailStripBar(
 
         Box(
           modifier =
-            Modifier.size(width = 46.dp, height = 62.dp)
+            Modifier.size(width = 50.dp, height = 68.dp)
               .defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
               .graphicsLayer {
                 scaleX = thumbScale
@@ -1175,17 +1177,34 @@ internal fun ViewerThumbnailStripBar(
             Image(
               bitmap = bmp.asImageBitmap(),
               contentDescription = null,
-              contentScale = ContentScale.Crop,
+              contentScale = ContentScale.Fit,
+              filterQuality = FilterQuality.High,
               colorFilter = paperModeColorFilter(paperMode),
               modifier = Modifier.fillMaxSize(),
             )
+          } else {
+            // Subtle miniature content lines while thumbnail decodes
+            Column(
+              modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 10.dp),
+              verticalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+              repeat(4) { lineIdx ->
+                Box(
+                  modifier =
+                    Modifier.fillMaxWidth(if (lineIdx == 3) 0.55f else 0.88f)
+                      .height(3.dp)
+                      .clip(CircleShape)
+                      .background(colorScheme.onSurfaceVariant.copy(alpha = 0.22f)),
+                )
+              }
+            }
           }
           if (isBookmarked) {
             Box(
               modifier =
                 Modifier.align(Alignment.TopEnd)
                   .padding(3.dp)
-                  .size(14.dp)
+                  .size(13.dp)
                   .clip(CircleShape)
                   .background(colorScheme.primary),
               contentAlignment = Alignment.Center,
@@ -1194,24 +1213,25 @@ internal fun ViewerThumbnailStripBar(
                 imageVector = Icons.Rounded.Bookmark,
                 contentDescription = null,
                 tint = colorScheme.onPrimary,
-                modifier = Modifier.size(9.dp),
+                modifier = Modifier.size(8.dp),
               )
             }
           }
           Box(
             modifier =
-              Modifier.align(Alignment.BottomCenter)
-                .fillMaxWidth()
+              Modifier.align(Alignment.BottomEnd)
+                .padding(3.dp)
+                .clip(CircleShape)
                 .background(
                   if (isActive) colorScheme.primary
-                  else colorScheme.surfaceVariant,
+                  else colorScheme.surfaceVariant.copy(alpha = 0.94f),
                 )
-                .padding(vertical = 2.dp),
+                .padding(horizontal = 5.dp, vertical = 1.dp),
             contentAlignment = Alignment.Center,
           ) {
             Text(
               text = "$pageNumber",
-              style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
+              style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
               color = if (isActive) colorScheme.onPrimary else colorScheme.onSurfaceVariant,
               maxLines = 1,
             )
