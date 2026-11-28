@@ -53,5 +53,8 @@
     <string name="viewer_error_body">The file may be moved, protected, or unreadable. You can try opening it with another app.</string>
     <string name="viewer_loading_document">Opening document…</string>
     <string name="viewer_zoom_reset_format">%1$.1fx</string>
+    <string name="viewer_reset_zoom_cd">Reset zoom to 100%</string>
     <string name="viewer_scrubber_cd">Page scrubber</string>
+    <string name="viewer_page_percent_format">%1$d%%</string>
+    <string name="viewer_bookmarked_badge">Bookmarked</string>
 </resources>

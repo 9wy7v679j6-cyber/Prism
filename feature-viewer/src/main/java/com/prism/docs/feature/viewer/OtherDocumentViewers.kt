@@ -5,12 +5,14 @@ import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +51,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -82,10 +85,8 @@ import androidx.compose.ui.unit.sp
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.prism.docs.core.data.model.IncomingDocumentRequest
-import com.prism.docs.core.ui.glass.GlassElevation
-import com.prism.docs.core.ui.glass.GlassSurface
 import com.prism.docs.core.ui.glass.LocalGlassMotion
-import com.prism.docs.core.ui.glass.glassClickable
+import com.prism.docs.core.ui.glass.rememberPrismHaptics
 import com.prism.docs.core.ui.theme.PrismDimens
 import kotlin.math.abs
 
@@ -489,13 +490,22 @@ private fun TextControlPill(
   testTag: String,
 ) {
   val colorScheme = MaterialTheme.colorScheme
+  val haptics = rememberPrismHaptics()
   Row(
     modifier =
       Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
         .clip(CircleShape)
-        .background(if (active) colorScheme.primary.copy(alpha = 0.16f) else colorScheme.surfaceVariant.copy(alpha = 0.55f))
-        .border(1.dp, if (active) colorScheme.primary else colorScheme.outlineVariant, CircleShape)
-        .glassClickable(role = Role.Button, onClick = onClick)
+        .background(if (active) colorScheme.primaryContainer else colorScheme.surfaceVariant)
+        .border(1.dp, if (active) colorScheme.primary else colorScheme.outline, CircleShape)
+        .clickable(
+          interactionSource = remember { MutableInteractionSource() },
+          indication = ripple(color = colorScheme.primary),
+          role = Role.Button,
+          onClick = {
+            haptics.tap()
+            onClick()
+          },
+        )
         .testTag(testTag)
         .padding(horizontal = 12.dp, vertical = 8.dp),
     verticalAlignment = Alignment.CenterVertically,
@@ -504,13 +514,13 @@ private fun TextControlPill(
     Icon(
       imageVector = icon,
       contentDescription = null,
-      tint = if (active) colorScheme.primary else colorScheme.onSurfaceVariant,
+      tint = if (active) colorScheme.onPrimaryContainer else colorScheme.onSurfaceVariant,
       modifier = Modifier.size(16.dp),
     )
     Text(
       text = label,
       style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-      color = if (active) colorScheme.primary else colorScheme.onSurface,
+      color = if (active) colorScheme.onPrimaryContainer else colorScheme.onSurface,
     )
   }
 }
@@ -530,10 +540,9 @@ internal fun UnsupportedDocumentCard(
     modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
     contentAlignment = Alignment.Center,
   ) {
-    GlassSurface(
+    ViewerSolidSurface(
       cornerRadius = 28.dp,
-      elevation = GlassElevation.SUBTLE,
-      useBackdropBlur = false,
+      shadowElevation = 6.dp,
       modifier = Modifier.widthIn(max = 540.dp).fillMaxWidth().testTag("viewer_unsupported_card"),
     ) {
       Column(
@@ -548,13 +557,13 @@ internal fun UnsupportedDocumentCard(
             modifier =
               Modifier.size(48.dp)
                 .clip(RoundedCornerShape(16.dp))
-                .background((if (isError) colorScheme.error else colorScheme.primary).copy(alpha = 0.14f)),
+                .background(if (isError) colorScheme.errorContainer else colorScheme.primaryContainer),
             contentAlignment = Alignment.Center,
           ) {
             Icon(
               imageVector = if (isError) Icons.Rounded.ErrorOutline else Icons.Rounded.Description,
               contentDescription = null,
-              tint = if (isError) colorScheme.error else colorScheme.primary,
+              tint = if (isError) colorScheme.onErrorContainer else colorScheme.onPrimaryContainer,
               modifier = Modifier.size(26.dp),
             )
           }

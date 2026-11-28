@@ -206,4 +206,45 @@ class ViewerPersistenceAndUiRobolectricTest {
     }
     txtFile.delete()
   }
+
+  @Test
+  fun searchToggleRestoresExpandedChromeInDarkMode() {
+    val mdFile = File(context.cacheDir, "solid_reader_dark.md").apply {
+      writeText((1..80).joinToString("\n") { "Paragraph $it: Solid readable viewer controls." })
+    }
+    val vm = ViewerViewModel(context, repository)
+    val doc = IncomingDocumentRequest(
+      uriString = mdFile.toURI().toString(),
+      displayName = "solid_reader_dark.md",
+      mimeType = "text/markdown",
+      sizeBytes = mdFile.length(),
+    )
+
+    composeRule.setContent {
+      PrismTheme(darkTheme = true) {
+        ViewerShellScreen(
+          document = doc,
+          onNavigateBack = {},
+          viewModel = vm,
+        )
+      }
+    }
+
+    composeRule.waitUntil(timeoutMillis = 5_000L) {
+      composeRule.onAllNodesWithTag("viewer_text_canvas").fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onNodeWithTag("viewer_search_button").performClick()
+    composeRule.waitUntil(timeoutMillis = 5_000L) {
+      composeRule.onAllNodesWithTag("viewer_search_bar").fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onNodeWithTag("viewer_search_input").performTextInput("Solid")
+    composeRule.waitUntil(timeoutMillis = 5_000L) {
+      composeRule.onAllNodesWithTag("viewer_search_counter").fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onNodeWithTag("viewer_search_close").performClick()
+    composeRule.waitUntil(timeoutMillis = 5_000L) {
+      composeRule.onAllNodesWithTag("viewer_search_bar").fetchSemanticsNodes().isEmpty()
+    }
+    mdFile.delete()
+  }
 }

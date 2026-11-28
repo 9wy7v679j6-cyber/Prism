@@ -2,10 +2,12 @@ package com.prism.docs.feature.viewer
 
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
@@ -16,10 +18,13 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -54,27 +59,25 @@ import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.BookmarkBorder
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
-import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Rotate90DegreesCw
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.ViewAgenda
-import androidx.compose.material.icons.rounded.ViewCarousel
-import androidx.compose.material.icons.rounded.WbSunny
+import androidx.compose.material.icons.rounded.ZoomOutMap
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -86,15 +89,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -102,43 +107,42 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.prism.docs.core.data.db.DocumentBookmarkEntity
 import com.prism.docs.core.ui.glass.ConnectedGlassCardSlice
 import com.prism.docs.core.ui.glass.GlassBottomSheet
-import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSegmentedControl
 import com.prism.docs.core.ui.glass.GlassSheetDetent
-import com.prism.docs.core.ui.glass.GlassSurface
-import com.prism.docs.core.ui.glass.GlassToolbarAction
-import com.prism.docs.core.ui.glass.GlassToolbarGroup
 import com.prism.docs.core.ui.glass.LocalGlassMotion
 import com.prism.docs.core.ui.glass.glassClickable
 import com.prism.docs.core.ui.glass.rememberPrismHaptics
-import com.prism.docs.core.ui.theme.LocalGlassEnvironment
 import com.prism.docs.core.ui.theme.PrismDimens
 import kotlin.math.roundToInt
 
 /**
- * Floating Liquid Glass viewer top bar following Prism's existing top-bar design
- * ([GlassSurface] capsule + circular Back orb + [GlassToolbarGroup]).
- *
- * Minimizes smoothly into an unobtrusive compact pill on downward scroll so the PDF viewport
- * remains completely unobstructed, and expands on scroll-up or tap.
+ * Solid high-contrast floating viewer top bar with scroll-driven morphing choreography:
+ * - Renders 100% opaque Material 3 surfaces (zero translucent blur bleed over PDF text).
+ * - Smoothly tracks scroll progress (`collapseProgress` 0f..1f) without ghost overlap so downward
+ *   scrolling folds the expanded bar into compact solid corner pills while `continuousPageState`
+ *   drives the live reading progress underline in the draw phase (zero recomposition).
  */
 @Composable
 internal fun ViewerCollapsingTopBar(
   title: String,
   subtitle: String,
   compactPageText: String,
-  isMinimized: Boolean,
+  pageCount: Int,
+  currentPage: Int,
+  collapseProgress: Float,
+  continuousPageState: State<Float>,
+  currentChapter: String?,
+  currentZoom: Float,
+  isActivelyScrolling: Boolean,
   isSearchActive: Boolean,
   isBookmarked: Boolean,
   showRotateAction: Boolean,
@@ -149,232 +153,408 @@ internal fun ViewerCollapsingTopBar(
   onShare: () -> Unit,
   onRotateImage: () -> Unit,
   onOpenOptions: () -> Unit,
+  onResetZoom: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val colorScheme = MaterialTheme.colorScheme
   val motion = LocalGlassMotion.current
   val haptics = rememberPrismHaptics()
 
-  val collapseProgress by
+  val clampedCollapse = collapseProgress.coerceIn(0f, 1f)
+  val minimizedPillPulse by
     animateFloatAsState(
-      targetValue = if (isMinimized) 1f else 0f,
-      animationSpec =
-        if (motion) spring(dampingRatio = 0.78f, stiffness = 420f) else snap(),
-      label = "viewer_topbar_collapse",
+      targetValue = if (isActivelyScrolling) 1.05f else 1f,
+      animationSpec = if (motion) spring(dampingRatio = 0.62f, stiffness = 460f) else snap(),
+      label = "viewer_min_pill_pulse",
     )
 
-  Box(modifier = modifier.fillMaxWidth()) {
-    // Full Liquid Glass Top Bar (fades & shrinks cleanly when scrolling down)
-    if (collapseProgress < 0.96f) {
-      Row(
-        modifier =
-          Modifier.fillMaxWidth()
-            .graphicsLayer {
-              alpha = (1f - collapseProgress * 1.45f).coerceIn(0f, 1f)
-              translationY = -collapseProgress * 18.dp.toPx()
-              val s = 1f - collapseProgress * 0.06f
-              scaleX = s
-              scaleY = s
-            }
-            .testTag("viewer_expanded_top_bar"),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
-        // Left circular Liquid Glass Back orb (matching LibraryCollapsingTopBar action orbs)
-        GlassSurface(
-          cornerRadius = 24.dp,
-          shape = CircleShape,
-          elevation = GlassElevation.FLOATING,
-          useBackdropBlur = true,
-          enableRefraction = true,
-          allowLiquidGlass = true,
-          onClick = onNavigateBack,
-          clickRole = Role.Button,
-          modifier =
-            Modifier.size(PrismDimens.TouchTargetMin)
-              .defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
-              .testTag("viewer_back_button"),
-        ) {
-          Icon(
-            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-            contentDescription = stringResource(R.string.viewer_back_cd),
-            tint = colorScheme.onSurface,
-            modifier = Modifier.align(Alignment.Center).size(21.dp),
-          )
-        }
+  val progressTrackColor = colorScheme.primary.copy(alpha = 0.16f)
+  val progressFillColor = colorScheme.primary
+  val percentInt =
+    if (pageCount > 1) ((currentPage.toFloat() / (pageCount - 1).toFloat()) * 100f).roundToInt().coerceIn(0, 100)
+    else if (pageCount == 1) 100 else 0
 
-        // Centered floating Liquid Glass Title + Page subtitle pill
-        GlassSurface(
-          cornerRadius = 24.dp,
-          shape = CircleShape,
-          elevation = GlassElevation.FLOATING,
-          useBackdropBlur = true,
-          enableRefraction = true,
-          allowLiquidGlass = true,
-          onClick = onOpenOutline,
-          clickRole = Role.Button,
+  Column(
+    modifier = modifier.fillMaxWidth(),
+    verticalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    Box(modifier = Modifier.fillMaxWidth()) {
+      // Full Solid Top Bar (folds smoothly upward & fades out cleanly by 0.46f)
+      if (clampedCollapse < 0.48f) {
+        val expAlpha = (1f - clampedCollapse / 0.46f).coerceIn(0f, 1f)
+        Row(
           modifier =
-            Modifier.weight(1f)
-              .height(PrismDimens.TouchTargetMin)
-              .testTag("viewer_title_pill"),
+            Modifier.fillMaxWidth()
+              .graphicsLayer {
+                alpha = expAlpha
+                translationY = -clampedCollapse * 28.dp.toPx()
+                val s = 1f - clampedCollapse * 0.12f
+                scaleX = s
+                scaleY = s
+              }
+              .testTag("viewer_expanded_top_bar"),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          Column(
+          // Left solid Back orb
+          ViewerSolidSurface(
+            cornerRadius = 24.dp,
+            shape = CircleShape,
+            shadowElevation = 8.dp,
+            onClick = onNavigateBack,
+            clickRole = Role.Button,
             modifier =
-              Modifier.fillMaxSize()
-                .padding(horizontal = 14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+              Modifier.size(PrismDimens.TouchTargetMin)
+                .defaultMinSize(PrismDimens.TouchTargetMin, PrismDimens.TouchTargetMin)
+                .testTag("viewer_back_button"),
           ) {
-            Text(
-              text = title,
-              style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-              color = colorScheme.onSurface,
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-              textAlign = TextAlign.Center,
-            )
-            Text(
-              text = subtitle,
-              style = MaterialTheme.typography.labelSmall,
-              color = colorScheme.primary,
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-              textAlign = TextAlign.Center,
-              modifier = Modifier.testTag("viewer_page_subtitle"),
+            Icon(
+              imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+              contentDescription = stringResource(R.string.viewer_back_cd),
+              tint = colorScheme.onSurface,
+              modifier = Modifier.align(Alignment.Center).size(21.dp),
             )
           }
-        }
 
-        // Right grouped Liquid Glass toolbar pill (existing GlassToolbarGroup design)
-        val actions =
-          buildList {
-            add(
-              GlassToolbarAction(
-                icon = Icons.Rounded.Search,
-                contentDescription = stringResource(R.string.viewer_search_cd),
-                testTag = "viewer_search_button",
-                active = isSearchActive,
-                onClick = onToggleSearch,
-              )
-            )
-            if (showRotateAction) {
+          // Centered solid Title + animated Page/Chapter subtitle + continuous reading progress track
+          ViewerSolidSurface(
+            cornerRadius = 24.dp,
+            shape = CircleShape,
+            shadowElevation = 8.dp,
+            onClick = onOpenOutline,
+            clickRole = Role.Button,
+            modifier =
+              Modifier.weight(1f)
+                .height(PrismDimens.TouchTargetMin)
+                .testTag("viewer_title_pill"),
+          ) {
+            Box(
+              modifier =
+                Modifier.fillMaxSize().drawBehind {
+                  if (pageCount > 0) {
+                    val liveFraction =
+                      if (pageCount > 1) {
+                        (continuousPageState.value / (pageCount - 1).toFloat()).coerceIn(0f, 1f)
+                      } else 1f
+                    val barHeight = 3.dp.toPx()
+                    val y = size.height - barHeight
+                    drawRect(
+                      color = progressTrackColor,
+                      topLeft = Offset(0f, y),
+                      size = Size(size.width, barHeight),
+                    )
+                    drawRect(
+                      color = progressFillColor,
+                      topLeft = Offset(0f, y),
+                      size = Size(size.width * liveFraction, barHeight),
+                    )
+                  }
+                },
+            ) {
+              Column(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+              ) {
+                Text(
+                  text = title,
+                  style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                  color = colorScheme.onSurface,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                  textAlign = TextAlign.Center,
+                )
+                val fullSubtitle =
+                  if (!currentChapter.isNullOrBlank()) "$subtitle • $currentChapter" else subtitle
+                AnimatedContent(
+                  targetState = fullSubtitle,
+                  transitionSpec = {
+                    if (motion) {
+                      (slideInVertically(tween(150)) { it / 2 } + fadeIn(tween(130)))
+                        .togetherWith(slideOutVertically(tween(120)) { -it / 2 } + fadeOut(tween(100)))
+                    } else {
+                      EnterTransition.None togetherWith ExitTransition.None
+                    }
+                  },
+                  label = "viewer_subtitle_roll",
+                ) { displaySub ->
+                  Text(
+                    text = displaySub,
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("viewer_page_subtitle"),
+                  )
+                }
+              }
+            }
+          }
+
+          // Right solid grouped action pill
+          val actions =
+            buildList {
               add(
-                GlassToolbarAction(
-                  icon = Icons.Rounded.Rotate90DegreesCw,
-                  contentDescription = stringResource(R.string.viewer_image_rotate_cd),
-                  testTag = "viewer_rotate_button",
-                  onClick = onRotateImage,
+                ViewerToolbarAction(
+                  icon = Icons.Rounded.Search,
+                  contentDescription = stringResource(R.string.viewer_search_cd),
+                  testTag = "viewer_search_button",
+                  active = isSearchActive,
+                  onClick = onToggleSearch,
+                )
+              )
+              if (showRotateAction) {
+                add(
+                  ViewerToolbarAction(
+                    icon = Icons.Rounded.Rotate90DegreesCw,
+                    contentDescription = stringResource(R.string.viewer_image_rotate_cd),
+                    testTag = "viewer_rotate_button",
+                    onClick = onRotateImage,
+                  )
+                )
+              }
+              add(
+                ViewerToolbarAction(
+                  icon = Icons.Rounded.Share,
+                  contentDescription = stringResource(R.string.viewer_share_cd),
+                  testTag = "viewer_share_button",
+                  onClick = onShare,
+                )
+              )
+              add(
+                ViewerToolbarAction(
+                  icon = Icons.Rounded.Tune,
+                  contentDescription = stringResource(R.string.viewer_options_cd),
+                  testTag = "viewer_options_button",
+                  active = isBookmarked,
+                  onClick = onOpenOptions,
                 )
               )
             }
-            add(
-              GlassToolbarAction(
-                icon = Icons.Rounded.Share,
-                contentDescription = stringResource(R.string.viewer_share_cd),
-                testTag = "viewer_share_button",
-                onClick = onShare,
-              )
-            )
-            add(
-              GlassToolbarAction(
-                icon = Icons.Rounded.Tune,
-                contentDescription = stringResource(R.string.viewer_options_cd),
-                testTag = "viewer_options_button",
-                active = isBookmarked,
-                onClick = onOpenOptions,
-              )
+          ViewerSolidToolbarGroup(actions = actions)
+        }
+      }
+
+      // Minimized high-contrast solid corner pills when scrolling down (clean handoff at 0.42f..1f)
+      if (clampedCollapse > 0.42f) {
+        val minProgress = ((clampedCollapse - 0.42f) / 0.58f).coerceIn(0f, 1f)
+        Row(
+          modifier =
+            Modifier.fillMaxWidth()
+              .graphicsLayer {
+                alpha = minProgress
+                translationY = (1f - minProgress) * -14.dp.toPx()
+                val s = 0.92f + 0.08f * minProgress
+                scaleX = s
+                scaleY = s
+              }
+              .testTag("viewer_minimized_top_bar"),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          ViewerSolidSurface(
+            cornerRadius = 24.dp,
+            shape = CircleShape,
+            shadowElevation = 8.dp,
+            onClick = {
+              haptics.tap()
+              onNavigateBack()
+            },
+            hapticOnClick = false,
+            clickRole = Role.Button,
+            modifier =
+              Modifier.defaultMinSize(minWidth = PrismDimens.TouchTargetMin, minHeight = PrismDimens.TouchTargetMin)
+                .size(PrismDimens.TouchTargetMin)
+                .testTag("viewer_minimized_back_button"),
+          ) {
+            Icon(
+              imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+              contentDescription = stringResource(R.string.viewer_back_cd),
+              tint = colorScheme.onSurface,
+              modifier = Modifier.align(Alignment.Center).size(20.dp),
             )
           }
-        GlassToolbarGroup(actions = actions)
+
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            AnimatedVisibility(
+              visible = currentZoom > 1.05f,
+              enter =
+                if (motion) scaleIn(initialScale = 0.85f) + fadeIn(tween(140))
+                else EnterTransition.None,
+              exit =
+                if (motion) scaleOut(targetScale = 0.85f) + fadeOut(tween(110))
+                else ExitTransition.None,
+            ) {
+              ViewerZoomResetPill(
+                zoom = currentZoom,
+                onResetZoom = onResetZoom,
+              )
+            }
+
+            ViewerSolidSurface(
+              cornerRadius = 24.dp,
+              shape = CircleShape,
+              shadowElevation = 8.dp,
+              onClick = {
+                haptics.tap()
+                onExpandFromMinimized()
+              },
+              hapticOnClick = false,
+              clickRole = Role.Button,
+              modifier =
+                Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+                  .height(PrismDimens.TouchTargetMin)
+                  .graphicsLayer {
+                    scaleX = minimizedPillPulse
+                    scaleY = minimizedPillPulse
+                  }
+                  .testTag("viewer_minimized_page_pill"),
+            ) {
+              Box(
+                modifier =
+                  Modifier.fillMaxHeight().drawBehind {
+                    if (pageCount > 0) {
+                      val liveFraction =
+                        if (pageCount > 1) {
+                          (continuousPageState.value / (pageCount - 1).toFloat()).coerceIn(0f, 1f)
+                        } else 1f
+                      val barHeight = 3.dp.toPx()
+                      val y = size.height - barHeight
+                      drawRect(
+                        color = progressTrackColor,
+                        topLeft = Offset(0f, y),
+                        size = Size(size.width, barHeight),
+                      )
+                      drawRect(
+                        color = progressFillColor,
+                        topLeft = Offset(0f, y),
+                        size = Size(size.width * liveFraction, barHeight),
+                      )
+                    }
+                  },
+              ) {
+                Row(
+                  modifier = Modifier.align(Alignment.Center).padding(horizontal = 14.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                  if (isBookmarked) {
+                    Icon(
+                      imageVector = Icons.Rounded.Bookmark,
+                      contentDescription = null,
+                      tint = colorScheme.primary,
+                      modifier = Modifier.size(15.dp),
+                    )
+                  }
+                  AnimatedContent(
+                    targetState = compactPageText,
+                    transitionSpec = {
+                      if (motion) {
+                        (slideInVertically(tween(130)) { it / 2 } + fadeIn(tween(110)))
+                          .togetherWith(slideOutVertically(tween(100)) { -it / 2 } + fadeOut(tween(90)))
+                      } else {
+                        EnterTransition.None togetherWith ExitTransition.None
+                      }
+                    },
+                    label = "viewer_compact_page_roll",
+                  ) { pageLabel ->
+                    Text(
+                      text = pageLabel,
+                      style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                      color = colorScheme.onSurface,
+                      maxLines = 1,
+                    )
+                  }
+                  if (pageCount > 1) {
+                    Box(
+                      modifier =
+                        Modifier.clip(CircleShape)
+                          .background(colorScheme.primaryContainer)
+                          .padding(horizontal = 7.dp, vertical = 2.dp),
+                    ) {
+                      Text(
+                        text = stringResource(R.string.viewer_page_percent_format, percentInt),
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = colorScheme.onPrimaryContainer,
+                        maxLines = 1,
+                      )
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
 
-    // Minimized unobtrusive corner pills when scrolling down
-    if (collapseProgress > 0.25f) {
-      val minAlpha = ((collapseProgress - 0.25f) / 0.65f).coerceIn(0f, 1f)
-      Row(
-        modifier =
-          Modifier.fillMaxWidth()
-            .graphicsLayer {
-              alpha = minAlpha
-              translationY = (1f - minAlpha) * -10.dp.toPx()
-            }
-            .testTag("viewer_minimized_top_bar"),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        GlassSurface(
-          cornerRadius = 20.dp,
-          shape = CircleShape,
-          elevation = GlassElevation.FLOATING,
-          useBackdropBlur = true,
-          enableRefraction = true,
-          allowLiquidGlass = true,
-          onClick = {
-            haptics.tap()
-            onNavigateBack()
-          },
-          hapticOnClick = false,
-          clickRole = Role.Button,
-          modifier =
-            Modifier.defaultMinSize(minWidth = PrismDimens.TouchTargetMin, minHeight = PrismDimens.TouchTargetMin)
-              .size(48.dp)
-              .testTag("viewer_minimized_back_button"),
-        ) {
-          Icon(
-            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-            contentDescription = stringResource(R.string.viewer_back_cd),
-            tint = colorScheme.onSurface,
-            modifier = Modifier.align(Alignment.Center).size(19.dp),
-          )
-        }
-
-        GlassSurface(
-          cornerRadius = 20.dp,
-          shape = CircleShape,
-          elevation = GlassElevation.FLOATING,
-          useBackdropBlur = true,
-          enableRefraction = true,
-          allowLiquidGlass = true,
-          onClick = {
-            haptics.tap()
-            onExpandFromMinimized()
-          },
-          hapticOnClick = false,
-          clickRole = Role.Button,
-          modifier =
-            Modifier.defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
-              .height(48.dp)
-              .testTag("viewer_minimized_page_pill"),
-        ) {
-          Row(
-            modifier = Modifier.align(Alignment.Center).padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-          ) {
-            if (isBookmarked) {
-              Icon(
-                imageVector = Icons.Rounded.Bookmark,
-                contentDescription = null,
-                tint = colorScheme.primary,
-                modifier = Modifier.size(14.dp),
-              )
-            }
-            Text(
-              text = compactPageText,
-              style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-              color = colorScheme.onSurface,
-              maxLines = 1,
-            )
-          }
-        }
+    // Zoom reset pill when top bar is expanded and document is zoomed in
+    if (clampedCollapse <= 0.42f && currentZoom > 1.05f && !isSearchActive) {
+      Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+        ViewerZoomResetPill(
+          zoom = currentZoom,
+          onResetZoom = onResetZoom,
+        )
       }
     }
   }
 }
 
 @Composable
-internal fun ViewerSearchGlassBar(
+internal fun ViewerZoomResetPill(
+  zoom: Float,
+  onResetZoom: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val colorScheme = MaterialTheme.colorScheme
+  val haptics = rememberPrismHaptics()
+  val resetCd = stringResource(R.string.viewer_reset_zoom_cd)
+
+  ViewerSolidSurface(
+    cornerRadius = 22.dp,
+    shape = CircleShape,
+    emphasized = true,
+    shadowElevation = 8.dp,
+    onClick = {
+      haptics.segmentTick()
+      onResetZoom()
+    },
+    hapticOnClick = false,
+    clickRole = Role.Button,
+    modifier =
+      modifier
+        .defaultMinSize(minHeight = PrismDimens.TouchTargetMin)
+        .height(44.dp)
+        .semantics { contentDescription = resetCd }
+        .testTag("viewer_zoom_reset_pill"),
+  ) {
+    Row(
+      modifier = Modifier.align(Alignment.Center).padding(horizontal = 14.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+      Icon(
+        imageVector = Icons.Rounded.ZoomOutMap,
+        contentDescription = null,
+        tint = colorScheme.onPrimaryContainer,
+        modifier = Modifier.size(16.dp),
+      )
+      Text(
+        text = stringResource(R.string.viewer_zoom_reset_format, zoom),
+        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+        color = colorScheme.onPrimaryContainer,
+        maxLines = 1,
+      )
+    }
+  }
+}
+
+@Composable
+internal fun ViewerSearchSolidBar(
   query: String,
   matchCount: Int,
   currentMatchIndex: Int,
@@ -388,6 +568,7 @@ internal fun ViewerSearchGlassBar(
   modifier: Modifier = Modifier,
 ) {
   val colorScheme = MaterialTheme.colorScheme
+  val motion = LocalGlassMotion.current
   val haptics = rememberPrismHaptics()
   val focusRequester = remember { FocusRequester() }
 
@@ -408,12 +589,9 @@ internal fun ViewerSearchGlassBar(
       )
     }
 
-  GlassSurface(
+  ViewerSolidSurface(
     cornerRadius = 24.dp,
-    elevation = GlassElevation.FLOATING,
-    useBackdropBlur = true,
-    enableRefraction = true,
-    allowLiquidGlass = true,
+    shadowElevation = 10.dp,
     modifier = modifier.fillMaxWidth().testTag("viewer_search_bar"),
   ) {
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -456,13 +634,38 @@ internal fun ViewerSearchGlassBar(
           )
         }
         if (counterText.isNotEmpty()) {
-          Text(
-            text = counterText,
-            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = if (matchCount > 0) colorScheme.primary else colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            modifier = Modifier.padding(horizontal = 4.dp).testTag("viewer_search_counter"),
-          )
+          AnimatedContent(
+            targetState = counterText,
+            transitionSpec = {
+              if (motion) {
+                (slideInVertically(tween(120)) { it / 2 } + fadeIn(tween(100)))
+                  .togetherWith(slideOutVertically(tween(100)) { -it / 2 } + fadeOut(tween(80)))
+              } else {
+                EnterTransition.None togetherWith ExitTransition.None
+              }
+            },
+            label = "viewer_search_counter_roll",
+          ) { animatedCounter ->
+            Box(
+              modifier =
+                Modifier.clip(CircleShape)
+                  .background(
+                    if (matchCount > 0) colorScheme.primaryContainer
+                    else colorScheme.surfaceVariant,
+                  )
+                  .padding(horizontal = 8.dp, vertical = 3.dp),
+            ) {
+              Text(
+                text = animatedCounter,
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                color =
+                  if (matchCount > 0) colorScheme.onPrimaryContainer
+                  else colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                modifier = Modifier.testTag("viewer_search_counter"),
+              )
+            }
+          }
         }
         IconButton(
           onClick = {
@@ -529,76 +732,233 @@ internal fun ViewerSearchGlassBar(
 }
 
 /**
- * Right-edge Liquid Glass scrubber track with a floating page-number bubble that ticks
- * haptically per page while dragging.
+ * Right-edge solid scrubber track that reads [continuousPageState] directly inside `graphicsLayer`
+ * and `drawBehind` for zero-recomposition 120fps tracking during PDF scroll, displays a live page
+ * pill while scrolling, and pops open a rich solid preview card (with miniature thumbnail, page/%,
+ * and chapter name) while dragging with haptic ticks per page.
  */
 @Composable
 internal fun ViewerRightEdgeScrubber(
   pageCount: Int,
   currentPage: Int,
+  continuousPageState: State<Float>,
+  pdfController: PdfDocumentController,
+  paperMode: ReaderPaperMode,
+  currentChapter: String?,
+  isActivelyScrolling: Boolean,
+  isBookmarked: Boolean,
   onSelectPage: (Int) -> Unit,
+  onScrubbingChanged: (Boolean) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   if (pageCount <= 1) return
   val colorScheme = MaterialTheme.colorScheme
+  val motion = LocalGlassMotion.current
   val haptics = rememberPrismHaptics()
   val density = LocalDensity.current
 
   var isDragging by remember { mutableStateOf(false) }
   var dragFraction by remember { mutableFloatStateOf(0f) }
-  var bubbleWidthPx by remember { mutableIntStateOf(0) }
 
-  val currentFraction =
-    if (isDragging) dragFraction
-    else (currentPage.toFloat() / (pageCount - 1).coerceAtLeast(1)).coerceIn(0f, 1f)
+  val handleWidth by
+    animateDpAsState(
+      targetValue = when {
+        isDragging -> 32.dp
+        isActivelyScrolling -> 28.dp
+        else -> 24.dp
+      },
+      animationSpec = if (motion) spring(dampingRatio = 0.70f, stiffness = 440f) else snap(),
+      label = "scrubber_handle_width",
+    )
+
+  val handleScale by
+    animateFloatAsState(
+      targetValue = if (isDragging) 1.08f else 1f,
+      animationSpec = if (motion) spring(dampingRatio = 0.65f, stiffness = 440f) else snap(),
+      label = "scrubber_handle_scale",
+    )
+
+  val railColor by
+    animateColorAsState(
+      targetValue =
+        if (isDragging || isActivelyScrolling) colorScheme.primary.copy(alpha = 0.28f)
+        else colorScheme.outlineVariant,
+      label = "scrubber_rail_color",
+    )
 
   val latestPageCount by rememberUpdatedState(pageCount)
   val latestOnSelectPage by rememberUpdatedState(onSelectPage)
+  val latestOnScrubbingChanged by rememberUpdatedState(onScrubbingChanged)
   val scrubberCd = stringResource(R.string.viewer_scrubber_cd)
+  val percentInt = ((currentPage.toFloat() / (pageCount - 1).coerceAtLeast(1)) * 100f).roundToInt().coerceIn(0, 100)
 
   BoxWithConstraints(
     modifier = modifier.fillMaxHeight().widthIn(min = 56.dp),
     contentAlignment = Alignment.TopEnd,
   ) {
-    val trackHeightPx = with(density) { (maxHeight - 40.dp).coerceAtLeast(48.dp).toPx() }
-    val thumbSizePx = with(density) { 40.dp.toPx() }
+    val trackHeightPx = with(density) { (maxHeight - 44.dp).coerceAtLeast(48.dp).toPx() }
+    val thumbSizePx = with(density) { 44.dp.toPx() }
     val usableSpan = (trackHeightPx - thumbSizePx).coerceAtLeast(1f)
-    val thumbOffsetY = (currentFraction * usableSpan).roundToInt()
+    val maxBubbleY = (usableSpan - with(density) { 44.dp.toPx() }).coerceAtLeast(0f)
 
-    // Floating Liquid Glass page-number bubble visible while scrubbing
+    fun currentFraction(): Float {
+      return if (isDragging) {
+        dragFraction
+      } else {
+        (continuousPageState.value / (pageCount - 1).coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
+      }
+    }
+
+    // Compact live floating page pill while actively scrolling (before user grabs scrubber)
     AnimatedVisibility(
-      visible = isDragging,
-      enter = fadeIn(tween(90)) + scaleIn(initialScale = 0.88f),
-      exit = fadeOut(tween(120)) + scaleOut(targetScale = 0.88f),
+      visible = isActivelyScrolling && !isDragging,
+      enter =
+        if (motion) fadeIn(tween(110)) + scaleIn(initialScale = 0.85f)
+        else EnterTransition.None,
+      exit =
+        if (motion) fadeOut(tween(160)) + scaleOut(targetScale = 0.85f)
+        else ExitTransition.None,
       modifier =
         Modifier.align(Alignment.TopEnd)
           .graphicsLayer {
-            translationX = -with(density) { 54.dp.toPx() }
-            translationY = thumbOffsetY.toFloat().coerceAtLeast(0f)
+            translationX = -with(density) { 46.dp.toPx() }
+            translationY = (currentFraction() * usableSpan + thumbSizePx * 0.12f).coerceIn(0f, usableSpan)
           },
     ) {
-      GlassSurface(
-        cornerRadius = 18.dp,
+      ViewerSolidSurface(
+        cornerRadius = 16.dp,
         shape = CircleShape,
-        elevation = GlassElevation.FLOATING,
-        useBackdropBlur = true,
-        enableRefraction = true,
-        allowLiquidGlass = true,
-        modifier =
-          Modifier.onSizeChanged { bubbleWidthPx = it.width }
-            .testTag("viewer_scrubber_bubble"),
+        emphasized = true,
+        shadowElevation = 6.dp,
       ) {
         Text(
-          text = stringResource(R.string.viewer_page_subtitle_format, currentPage + 1, pageCount),
+          text = "${currentPage + 1}",
           style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-          color = colorScheme.onSurface,
-          maxLines = 1,
-          modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+          color = colorScheme.onPrimaryContainer,
+          modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
         )
       }
     }
 
-    // Vertical touch-safe scrubber rail + glass thumb
+    // Rich solid floating preview card with miniature page thumbnail while dragging scrubber
+    AnimatedVisibility(
+      visible = isDragging,
+      enter =
+        if (motion) fadeIn(tween(90)) + scaleIn(initialScale = 0.88f)
+        else EnterTransition.None,
+      exit =
+        if (motion) fadeOut(tween(120)) + scaleOut(targetScale = 0.88f)
+        else ExitTransition.None,
+      modifier =
+        Modifier.align(Alignment.TopEnd)
+          .graphicsLayer {
+            translationX = -with(density) { 54.dp.toPx() }
+            translationY = (currentFraction() * usableSpan).coerceIn(0f, maxBubbleY)
+          },
+    ) {
+      val previewThumb by
+        produceState<Bitmap?>(
+          initialValue = pdfController.peekCachedThumbnail(currentPage),
+          currentPage,
+          pdfController,
+        ) {
+          value = pdfController.peekCachedThumbnail(currentPage) ?: pdfController.renderThumbnail(currentPage)
+        }
+
+      ViewerSolidSurface(
+        cornerRadius = 20.dp,
+        shape = RoundedCornerShape(20.dp),
+        shadowElevation = 12.dp,
+        modifier = Modifier.testTag("viewer_scrubber_bubble"),
+      ) {
+        Row(
+          modifier = Modifier.padding(10.dp),
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          // Miniature crisp live page preview
+          Box(
+            modifier =
+              Modifier.size(width = 40.dp, height = 54.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(paperSurfaceColor(paperMode))
+                .border(1.dp, colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
+            contentAlignment = Alignment.Center,
+          ) {
+            val bmp = previewThumb
+            if (bmp != null) {
+              Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                colorFilter = paperModeColorFilter(paperMode),
+                modifier = Modifier.fillMaxSize(),
+              )
+            }
+          }
+
+          Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+              Text(
+                text = stringResource(R.string.viewer_page_subtitle_format, currentPage + 1, pageCount),
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                color = colorScheme.onSurface,
+                maxLines = 1,
+              )
+              Box(
+                modifier =
+                  Modifier.clip(CircleShape)
+                    .background(colorScheme.primaryContainer)
+                    .padding(horizontal = 6.dp, vertical = 1.dp),
+              ) {
+                Text(
+                  text = stringResource(R.string.viewer_page_percent_format, percentInt),
+                  style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                  color = colorScheme.onPrimaryContainer,
+                )
+              }
+              if (isBookmarked) {
+                Icon(
+                  imageVector = Icons.Rounded.Bookmark,
+                  contentDescription = null,
+                  tint = colorScheme.primary,
+                  modifier = Modifier.size(14.dp),
+                )
+              }
+            }
+            if (!currentChapter.isNullOrBlank()) {
+              Text(
+                text = currentChapter,
+                style = MaterialTheme.typography.labelSmall,
+                color = colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 160.dp),
+              )
+            }
+            Box(
+              modifier =
+                Modifier.width(110.dp)
+                  .height(4.dp)
+                  .clip(CircleShape)
+                  .background(colorScheme.surfaceVariant),
+            ) {
+              Box(
+                modifier =
+                  Modifier.fillMaxWidth(currentFraction().coerceIn(0.04f, 1f))
+                    .fillMaxHeight()
+                    .background(colorScheme.primary),
+              )
+            }
+          }
+        }
+      }
+    }
+
+    // Vertical touch-safe scrubber rail + solid handle
     Box(
       modifier =
         Modifier.width(48.dp)
@@ -609,6 +969,7 @@ internal fun ViewerRightEdgeScrubber(
             detectVerticalDragGestures(
               onDragStart = { offset ->
                 isDragging = true
+                latestOnScrubbingChanged(true)
                 val f = ((offset.y - thumbSizePx * 0.5f) / usableSpan).coerceIn(0f, 1f)
                 dragFraction = f
                 val target = (f * (latestPageCount - 1)).roundToInt().coerceIn(0, latestPageCount - 1)
@@ -616,8 +977,14 @@ internal fun ViewerRightEdgeScrubber(
                 haptics.dragStart()
                 latestOnSelectPage(target)
               },
-              onDragEnd = { isDragging = false },
-              onDragCancel = { isDragging = false },
+              onDragEnd = {
+                isDragging = false
+                latestOnScrubbingChanged(false)
+              },
+              onDragCancel = {
+                isDragging = false
+                latestOnScrubbingChanged(false)
+              },
               onVerticalDrag = { change, _ ->
                 change.consume()
                 val f = ((change.position.y - thumbSizePx * 0.5f) / usableSpan).coerceIn(0f, 1f)
@@ -634,31 +1001,41 @@ internal fun ViewerRightEdgeScrubber(
           .testTag("viewer_page_scrubber"),
       contentAlignment = Alignment.TopEnd,
     ) {
-      // Subtle translucent rail indicator
+      // Track rail with active continuous progress fill (drawn in draw phase)
       Box(
         modifier =
           Modifier.align(Alignment.CenterEnd)
             .padding(end = 10.dp)
-            .width(4.dp)
+            .width(5.dp)
             .fillMaxHeight()
             .clip(CircleShape)
-            .background(colorScheme.onSurface.copy(alpha = 0.14f))
+            .background(railColor)
+            .drawBehind {
+              val f = currentFraction()
+              drawRoundRect(
+                color = colorScheme.primary,
+                topLeft = Offset.Zero,
+                size = Size(size.width, (size.height * f).coerceAtLeast(6f)),
+                cornerRadius = CornerRadius(2.5.dp.toPx(), 2.5.dp.toPx()),
+              )
+            },
       )
 
-      // Draggable Liquid Glass pill handle
-      GlassSurface(
-        cornerRadius = 14.dp,
+      // Solid elevated drag handle pill (positioned in graphicsLayer for zero recomposition)
+      ViewerSolidSurface(
+        cornerRadius = 16.dp,
         shape = CircleShape,
-        elevation = GlassElevation.FLOATING,
-        useBackdropBlur = true,
-        enableRefraction = true,
-        allowLiquidGlass = true,
-        accentTint = if (isDragging) colorScheme.primary else null,
+        emphasized = isDragging || isActivelyScrolling,
+        shadowElevation = 6.dp,
         modifier =
           Modifier.align(Alignment.TopEnd)
             .padding(end = 2.dp)
-            .graphicsLayer { translationY = thumbOffsetY.toFloat() }
-            .size(width = 24.dp, height = 40.dp),
+            .graphicsLayer {
+              translationY = currentFraction() * usableSpan
+              scaleX = handleScale
+              scaleY = handleScale
+            }
+            .size(width = handleWidth, height = 44.dp),
       ) {
         Column(
           modifier = Modifier.align(Alignment.Center),
@@ -671,7 +1048,10 @@ internal fun ViewerRightEdgeScrubber(
                 Modifier.width(10.dp)
                   .height(2.dp)
                   .clip(CircleShape)
-                  .background(if (isDragging) colorScheme.primary else colorScheme.onSurface.copy(alpha = 0.45f))
+                  .background(
+                    if (isDragging || isActivelyScrolling) colorScheme.onPrimaryContainer
+                    else colorScheme.onSurfaceVariant,
+                  ),
             )
           }
         }
@@ -681,15 +1061,18 @@ internal fun ViewerRightEdgeScrubber(
 }
 
 /**
- * Floating Liquid Glass bottom thumbnail strip rendering real lazy PDF page bitmaps via
- * [PdfDocumentController]. Current page is cleanly outlined and auto-scrolled into view.
+ * Floating solid bottom thumbnail strip rendering real lazy PDF page bitmaps via
+ * [PdfDocumentController]. Auto-centers the active page smoothly whenever scrolled,
+ * scrubbed, or jumped via search/outline, and highlights bookmarked pages.
  */
 @Composable
 internal fun ViewerThumbnailStripBar(
   pageCount: Int,
   currentPage: Int,
+  bookmarkedPages: Set<Int>,
   pdfController: PdfDocumentController,
   paperMode: ReaderPaperMode,
+  isScrubbing: Boolean,
   onSelectPage: (Int) -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -698,23 +1081,23 @@ internal fun ViewerThumbnailStripBar(
   val motion = LocalGlassMotion.current
   val haptics = rememberPrismHaptics()
   val rowState = rememberLazyListState()
+  val density = LocalDensity.current
 
-  LaunchedEffect(currentPage, pageCount) {
+  LaunchedEffect(currentPage, pageCount, isScrubbing) {
     if (currentPage in 0 until pageCount) {
-      val visible = rowState.layoutInfo.visibleItemsInfo.any { it.index == currentPage }
-      if (!visible) {
-        if (motion) rowState.animateScrollToItem((currentPage - 1).coerceAtLeast(0))
-        else rowState.scrollToItem((currentPage - 1).coerceAtLeast(0))
+      val info = rowState.layoutInfo
+      val centerPx = (info.viewportSize.width / 2 - with(density) { 24.dp.toPx() }).roundToInt().coerceAtLeast(0)
+      if (!motion || isScrubbing) {
+        rowState.scrollToItem(currentPage, scrollOffset = -centerPx)
+      } else {
+        rowState.animateScrollToItem(currentPage, scrollOffset = -centerPx)
       }
     }
   }
 
-  GlassSurface(
+  ViewerSolidSurface(
     cornerRadius = 24.dp,
-    elevation = GlassElevation.FLOATING,
-    useBackdropBlur = true,
-    enableRefraction = true,
-    allowLiquidGlass = true,
+    shadowElevation = 10.dp,
     modifier = modifier.fillMaxWidth().testTag("glass_page_thumbnail_strip"),
   ) {
     LazyRow(
@@ -726,6 +1109,7 @@ internal fun ViewerThumbnailStripBar(
       items(count = pageCount, key = { it }) { pageIdx ->
         val pageNumber = pageIdx + 1
         val isActive = pageIdx == currentPage
+        val isBookmarked = pageIdx in bookmarkedPages
         val borderColor by
           animateColorAsState(
             targetValue = if (isActive) colorScheme.primary else colorScheme.outlineVariant,
@@ -733,9 +1117,15 @@ internal fun ViewerThumbnailStripBar(
           )
         val thumbScale by
           animateFloatAsState(
-            targetValue = if (isActive) 1.06f else 1f,
-            animationSpec = if (motion) spring(dampingRatio = 0.7f, stiffness = 460f) else snap(),
+            targetValue = if (isActive) 1.09f else 0.96f,
+            animationSpec = if (motion) spring(dampingRatio = 0.68f, stiffness = 460f) else snap(),
             label = "viewer_thumb_scale_$pageIdx",
+          )
+        val thumbAlpha by
+          animateFloatAsState(
+            targetValue = if (isActive) 1f else 0.88f,
+            animationSpec = if (motion) tween(160) else snap(),
+            label = "viewer_thumb_alpha_$pageIdx",
           )
 
         val thumbBitmap by
@@ -750,18 +1140,24 @@ internal fun ViewerThumbnailStripBar(
               .graphicsLayer {
                 scaleX = thumbScale
                 scaleY = thumbScale
+                alpha = thumbAlpha
               }
               .clip(RoundedCornerShape(10.dp))
-              .background(if (paperMode == ReaderPaperMode.DARK) Color(0xFF171A21) else Color.White)
+              .background(paperSurfaceColor(paperMode))
               .border(
                 width = if (isActive) 2.5.dp else 1.dp,
                 color = borderColor,
                 shape = RoundedCornerShape(10.dp),
               )
-              .glassClickable(role = Role.Button, hapticOnClick = false) {
-                haptics.segmentTick()
-                onSelectPage(pageIdx)
-              }
+              .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(color = colorScheme.primary),
+                role = Role.Button,
+                onClick = {
+                  haptics.segmentTick()
+                  onSelectPage(pageIdx)
+                },
+              )
               .semantics {
                 selected = isActive
                 contentDescription = "Page $pageNumber of $pageCount"
@@ -779,13 +1175,31 @@ internal fun ViewerThumbnailStripBar(
               modifier = Modifier.fillMaxSize(),
             )
           }
+          if (isBookmarked) {
+            Box(
+              modifier =
+                Modifier.align(Alignment.TopEnd)
+                  .padding(3.dp)
+                  .size(14.dp)
+                  .clip(CircleShape)
+                  .background(colorScheme.primary),
+              contentAlignment = Alignment.Center,
+            ) {
+              Icon(
+                imageVector = Icons.Rounded.Bookmark,
+                contentDescription = null,
+                tint = colorScheme.onPrimary,
+                modifier = Modifier.size(9.dp),
+              )
+            }
+          }
           Box(
             modifier =
               Modifier.align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .background(
-                  if (isActive) colorScheme.primary.copy(alpha = 0.90f)
-                  else colorScheme.surface.copy(alpha = 0.86f)
+                  if (isActive) colorScheme.primary
+                  else colorScheme.surfaceVariant,
                 )
                 .padding(vertical = 2.dp),
             contentAlignment = Alignment.Center,
@@ -793,7 +1207,7 @@ internal fun ViewerThumbnailStripBar(
             Text(
               text = "$pageNumber",
               style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
-              color = if (isActive) colorScheme.onPrimary else colorScheme.onSurface,
+              color = if (isActive) colorScheme.onPrimary else colorScheme.onSurfaceVariant,
               maxLines = 1,
             )
           }

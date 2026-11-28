@@ -4,6 +4,9 @@ import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -17,8 +20,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -43,10 +44,12 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.layout.onSizeChanged
@@ -55,6 +58,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
@@ -62,17 +66,12 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.prism.docs.core.data.model.IncomingDocumentRequest
-import com.prism.docs.core.ui.glass.GlassElevation
 import com.prism.docs.core.ui.glass.GlassSheetDetent
-import com.prism.docs.core.ui.glass.GlassSurface
-import com.prism.docs.core.ui.glass.LocalGlassBackdrop
 import com.prism.docs.core.ui.glass.LocalGlassMotion
-import com.prism.docs.core.ui.glass.glassContentCaptureSource
-import com.prism.docs.core.ui.glass.rememberScreenGlassBackdropState
-import com.prism.docs.core.ui.theme.LocalHazeState
-import dev.chrisbanes.haze.hazeSource
-import dev.chrisbanes.haze.rememberHazeState
+import com.prism.docs.core.ui.theme.LocalGlassEnvironment
+import kotlin.math.abs
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun ViewerShellScreen(
@@ -87,6 +86,8 @@ fun ViewerShellScreen(
   val lifecycleOwner = LocalLifecycleOwner.current
   val density = LocalDensity.current
   val motion = LocalGlassMotion.current
+  val baseEnv = LocalGlassEnvironment.current
+  val scope = rememberCoroutineScope()
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
   LaunchedEffect(document) {
@@ -113,40 +114,89 @@ fun ViewerShellScreen(
     }
   }
 
+  // Continuous scroll-driven collapse progress (0f = expanded solid HUD, 1f = compact docked HUD)
+  val collapseAnim = remember { Animatable(0f) }
   var isTopBarMinimized by remember { mutableStateOf(false) }
   var isChromeHidden by remember { mutableStateOf(false) }
+  var isActivelyScrolling by remember { mutableStateOf(false) }
+  var isScrubbing by remember { mutableStateOf(false) }
+  var currentZoom by remember { mutableFloatStateOf(1f) }
+  var zoomResetNonce by remember { mutableIntStateOf(0) }
+
+  // Continuous page position read strictly in graphicsLayer / drawBehind (zero recomposition during scroll)
+  val continuousPageState = remember(document?.uriString) { mutableFloatStateOf(0f) }
+  LaunchedEffect(uiState.currentPage) {
+    if (!isActivelyScrolling && !isScrubbing) {
+      continuousPageState.floatValue = uiState.currentPage.toFloat()
+    }
+  }
+
   var showOptionsSheet by remember { mutableStateOf(false) }
   var optionsDetent by remember { mutableStateOf(GlassSheetDetent.HALF) }
   var showOutlineSheet by remember { mutableStateOf(false) }
   var outlineDetent by remember { mutableStateOf(GlassSheetDetent.HALF) }
 
-  // Nested scroll detector: scrolling down minimizes the top bar & hides bottom chrome so PDF view is unobstructed;
-  // scrolling up restores both. Threshold prevents micro-jitter.
-  var accumulatedDy by remember { mutableFloatStateOf(0f) }
+  var isActivelyDragging by remember { mutableStateOf(false) }
+
+  // Smooth spring handoff whenever target isTopBarMinimized changes outside active drag
+  LaunchedEffect(isTopBarMinimized, uiState.isSearchVisible) {
+    if (isActivelyDragging) return@LaunchedEffect
+    val target = if (isTopBarMinimized && !uiState.isSearchVisible) 1f else 0f
+    if (!motion) {
+      collapseAnim.snapTo(target)
+    } else {
+      collapseAnim.animateTo(
+        targetValue = target,
+        animationSpec = spring(dampingRatio = 0.80f, stiffness = 420f),
+      )
+    }
+  }
+
+  // Continuous NestedScrollConnection:
+  // Scrolling down scrubs collapseProgress live 0f -> 1f (morphing top bar & tucking bottom strip);
+  // scrolling up scrubs back to 0f and smoothly unfurls all bars interactively.
+  val collapseSpanPx = with(density) { 88.dp.toPx().coerceAtLeast(1f) }
   val scrollCollapseConnection =
-    remember {
+    remember(collapseSpanPx, motion) {
       object : NestedScrollConnection {
         override fun onPostScroll(
           consumed: Offset,
           available: Offset,
           source: NestedScrollSource,
         ): Offset {
-          if (source == NestedScrollSource.UserInput && kotlin.math.abs(consumed.y) > 0.5f) {
-            if ((accumulatedDy > 0f && consumed.y < 0f) || (accumulatedDy < 0f && consumed.y > 0f)) {
-              accumulatedDy = 0f
-            }
-            accumulatedDy += consumed.y
-            if (accumulatedDy < -36f) {
+          if (source == NestedScrollSource.UserInput && abs(consumed.y) > 0.5f) {
+            isActivelyDragging = true
+            val deltaProgress = (-consumed.y) / collapseSpanPx
+            val next = (collapseAnim.value + deltaProgress).coerceIn(0f, 1f)
+            scope.launch { collapseAnim.snapTo(next) }
+            if (deltaProgress > 0f && next > 0.45f) {
               if (!isTopBarMinimized) isTopBarMinimized = true
               if (!isChromeHidden) isChromeHidden = true
-              accumulatedDy = 0f
-            } else if (accumulatedDy > 36f) {
+            } else if (deltaProgress < 0f && next < 0.55f) {
               if (isTopBarMinimized) isTopBarMinimized = false
               if (isChromeHidden) isChromeHidden = false
-              accumulatedDy = 0f
             }
           }
           return Offset.Zero
+        }
+
+        override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+          isActivelyDragging = false
+          val settledMin =
+            when {
+              consumed.y < -350f -> true
+              consumed.y > 350f -> false
+              else -> collapseAnim.value >= 0.5f
+            }
+          isTopBarMinimized = settledMin
+          isChromeHidden = settledMin
+          val target = if (settledMin && !uiState.isSearchVisible) 1f else 0f
+          if (motion) {
+            collapseAnim.animateTo(target, spring(dampingRatio = 0.80f, stiffness = 420f))
+          } else {
+            collapseAnim.snapTo(target)
+          }
+          return Velocity.Zero
         }
       }
     }
@@ -165,15 +215,52 @@ fun ViewerShellScreen(
   val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
   var topChromeHeightPx by remember { mutableIntStateOf(0) }
   var bottomChromeHeightPx by remember { mutableIntStateOf(0) }
-  val topChromeDp =
-    if (topChromeHeightPx > 0) with(density) { topChromeHeightPx.toDp() }
-    else statusBarTop + if (uiState.isSearchVisible) 132.dp else 72.dp
-  val bottomChromeDp =
-    if (bottomChromeHeightPx > 0 && !isChromeHidden) with(density) { bottomChromeHeightPx.toDp() }
-    else navBarBottom + 16.dp
 
-  val screenBackdropState = rememberScreenGlassBackdropState()
-  val viewerHazeState = rememberHazeState()
+  // Keep PDF scroll container padding stable so collapsing bars never causes layout jump
+  val stableTopPaddingDp = statusBarTop + if (uiState.isSearchVisible) 134.dp else 72.dp
+  val measuredBottomStripDp =
+    if (bottomChromeHeightPx > 0) with(density) { bottomChromeHeightPx.toDp() }
+    else navBarBottom + 96.dp
+  val stableBottomPaddingDp =
+    if (uiState.kind == ViewerDocumentKind.PDF) measuredBottomStripDp else navBarBottom + 16.dp
+
+  val topOverlaySpaceDp =
+    if (topChromeHeightPx > 0) with(density) { topChromeHeightPx.toDp() }
+    else stableTopPaddingDp
+  val bottomOverlayOffset by
+    animateDpAsState(
+      targetValue =
+        if (uiState.kind == ViewerDocumentKind.PDF && (!isChromeHidden || isScrubbing) && uiState.selection == null) {
+          measuredBottomStripDp
+        } else {
+          navBarBottom + 16.dp
+        },
+      animationSpec = if (motion) spring(dampingRatio = 0.82f, stiffness = 420f) else snap(),
+      label = "viewer_bottom_overlay_offset",
+    )
+
+  // Synchronized bottom thumbnail strip reveal (rises smoothly when scrubbing, tucks when selecting)
+  val scrubberStripPull by
+    animateFloatAsState(
+      targetValue = if (isScrubbing) 1f else 0f,
+      animationSpec = if (motion) spring(dampingRatio = 0.82f, stiffness = 420f) else snap(),
+      label = "viewer_scrubber_strip_pull",
+    )
+  val selectionStripHide by
+    animateFloatAsState(
+      targetValue = if (uiState.selection != null) 1f else 0f,
+      animationSpec = if (motion) spring(dampingRatio = 0.82f, stiffness = 440f) else snap(),
+      label = "viewer_selection_strip_hide",
+    )
+
+  val currentChapter =
+    remember(uiState.outlineNodes, uiState.currentPage) {
+      uiState.outlineNodes.lastOrNull { it.pageIndex <= uiState.currentPage }?.title
+    }
+  val bookmarkedPages =
+    remember(uiState.bookmarks) {
+      uiState.bookmarks.mapTo(HashSet()) { it.pageIndex }
+    }
 
   val copiedMessage = stringResource(R.string.viewer_selection_copied)
   val ocrStubMessage = stringResource(R.string.viewer_scanned_ocr_stub_message)
@@ -193,18 +280,13 @@ fun ViewerShellScreen(
     }
   }
 
-  CompositionLocalProvider(
-    LocalGlassBackdrop provides screenBackdropState,
-    LocalHazeState provides viewerHazeState,
-  ) {
+  // Enforce 100% opaque solid surfaces across all shared :core-ui sheets/controls inside the viewer
+  val solidViewerEnv = remember(baseEnv) { baseEnv.copy(reduceTransparency = true) }
+
+  CompositionLocalProvider(LocalGlassEnvironment provides solidViewerEnv) {
     Box(modifier = modifier.fillMaxSize()) {
-      // Document viewport (opaque paper/surface for reading) captured for floating glass bars
-      Box(
-        modifier =
-          Modifier.fillMaxSize()
-            .glassContentCaptureSource(screenBackdropState)
-            .hazeSource(state = viewerHazeState, zIndex = 0f),
-      ) {
+      // Document viewport (opaque paper/surface for reading)
+      Box(modifier = Modifier.fillMaxSize()) {
         when {
           uiState.isLoading -> {
             Box(
@@ -232,18 +314,25 @@ fun ViewerShellScreen(
               currentPage = uiState.currentPage,
               initialScrollOffsetFraction = uiState.initialScrollOffsetFraction,
               initialZoom = uiState.settledZoom,
+              zoomResetNonce = zoomResetNonce,
+              isScrubbing = isScrubbing,
               scrollMode = uiState.scrollMode,
               paperMode = uiState.paperMode,
+              bookmarkedPages = bookmarkedPages,
               searchMatches = uiState.searchMatches,
               currentMatchIndex = uiState.currentMatchIndex,
               selection = uiState.selection,
               currentPageHasTextLayer = uiState.currentPageHasTextLayer,
-              topContentPadding = topChromeDp,
-              bottomContentPadding = bottomChromeDp,
+              topContentPadding = stableTopPaddingDp,
+              bottomContentPadding = stableBottomPaddingDp,
+              bottomOverlayOffset = bottomOverlayOffset,
+              continuousPageState = continuousPageState,
               nestedScrollConnection = scrollCollapseConnection,
               jumpEvents = viewModel.jumpEvents,
               onVisiblePageChanged = viewModel::onPageVisibleChanged,
+              onLiveZoomChanged = { z -> currentZoom = z },
               onZoomSettled = viewModel::onZoomSettled,
+              onActiveScrollChanged = { scrolling -> isActivelyScrolling = scrolling },
               onToggleChrome = toggleChromeOnTap,
               onLongPressSelectAt = viewModel::onLongPressSelectAt,
               onDragSelectionHandle = viewModel::onDragSelectionHandle,
@@ -289,8 +378,8 @@ fun ViewerShellScreen(
               prettyPrintJson = uiState.prettyPrintJson,
               textMatches = uiState.textMatches,
               currentMatchIndex = uiState.currentTextMatchIndex,
-              topContentPadding = topChromeDp,
-              bottomContentPadding = bottomChromeDp,
+              topContentPadding = stableTopPaddingDp,
+              bottomContentPadding = stableBottomPaddingDp,
               nestedScrollConnection = scrollCollapseConnection,
               onToggleWrap = viewModel::toggleTextWrap,
               onTogglePrettyJson = viewModel::togglePrettyPrintJson,
@@ -327,7 +416,7 @@ fun ViewerShellScreen(
         }
       }
 
-      // Floating Liquid Glass Top Bar (Existing Liquid Glass style, minimizes on downward scroll) + Search Bar
+      // Floating Solid Top Bar (scroll-choreographed morphing) + Solid Search Bar
       Column(
         modifier =
           Modifier.align(Alignment.TopCenter)
@@ -358,7 +447,13 @@ fun ViewerShellScreen(
           title = displayTitle,
           subtitle = subtitleText,
           compactPageText = compactPageText,
-          isMinimized = isTopBarMinimized && !uiState.isSearchVisible,
+          pageCount = uiState.pageCount,
+          currentPage = uiState.currentPage,
+          collapseProgress = if (uiState.isSearchVisible) 0f else collapseAnim.value,
+          continuousPageState = continuousPageState,
+          currentChapter = currentChapter,
+          currentZoom = currentZoom,
+          isActivelyScrolling = isActivelyScrolling || isScrubbing,
           isSearchActive = uiState.isSearchVisible,
           isBookmarked = uiState.currentPageBookmarked,
           showRotateAction = uiState.kind == ViewerDocumentKind.IMAGE,
@@ -379,12 +474,14 @@ fun ViewerShellScreen(
               viewModel.closeSearch()
             } else {
               isTopBarMinimized = false
+              isChromeHidden = false
               viewModel.openSearch()
             }
           },
           onShare = shareDocumentHandler,
           onRotateImage = viewModel::rotateImage90,
           onOpenOptions = { showOptionsSheet = true },
+          onResetZoom = { zoomResetNonce++ },
         )
 
         AnimatedVisibility(
@@ -402,7 +499,7 @@ fun ViewerShellScreen(
           val activeIdx =
             if (uiState.kind == ViewerDocumentKind.PDF) uiState.currentMatchIndex
             else uiState.currentTextMatchIndex
-          ViewerSearchGlassBar(
+          ViewerSearchSolidBar(
             query = uiState.searchQuery,
             matchCount = matchCount,
             currentMatchIndex = activeIdx,
@@ -417,75 +514,94 @@ fun ViewerShellScreen(
         }
       }
 
-      // Right-edge Liquid Glass scrubber with floating page bubble
+      // Right-edge solid scrubber stays visible while chrome is open, actively scrolling, or scrubbing
       AnimatedVisibility(
-        visible = uiState.kind == ViewerDocumentKind.PDF && uiState.pageCount > 1 && !isChromeHidden,
+        visible = uiState.kind == ViewerDocumentKind.PDF && uiState.pageCount > 1 &&
+          (!isChromeHidden || isActivelyScrolling || isScrubbing),
         enter =
-          if (motion) slideInHorizontally { it } + fadeIn(tween(160))
+          if (motion) slideInHorizontally(spring(dampingRatio = 0.80f, stiffness = 440f)) { it } + fadeIn(tween(140))
           else EnterTransition.None,
         exit =
-          if (motion) slideOutHorizontally { it } + fadeOut(tween(120))
+          if (motion) slideOutHorizontally(tween(180)) { it / 2 } + fadeOut(tween(160))
           else ExitTransition.None,
         modifier =
           Modifier.align(Alignment.CenterEnd)
-            .padding(top = topChromeDp + 16.dp, bottom = bottomChromeDp + 20.dp, end = 6.dp),
+            .padding(top = topOverlaySpaceDp + 12.dp, bottom = bottomOverlayOffset + 16.dp, end = 6.dp),
       ) {
         ViewerRightEdgeScrubber(
           pageCount = uiState.pageCount,
           currentPage = uiState.currentPage,
+          continuousPageState = continuousPageState,
+          pdfController = viewModel.pdfController,
+          paperMode = uiState.paperMode,
+          currentChapter = currentChapter,
+          isActivelyScrolling = isActivelyScrolling,
+          isBookmarked = uiState.currentPageBookmarked,
           onSelectPage = { page -> viewModel.jumpToPage(page) },
+          onScrubbingChanged = { scrubbing -> isScrubbing = scrubbing },
         )
       }
 
-      // Floating bottom Liquid Glass page-thumbnail strip
+      // Floating solid bottom page-thumbnail strip — glides smoothly with scroll collapse & springs up when scrubbing
+      if (uiState.kind == ViewerDocumentKind.PDF && uiState.pageCount > 0) {
+        val baseReveal = (1f - collapseAnim.value).coerceIn(0f, 1f)
+        val stripReveal = (maxOf(baseReveal, scrubberStripPull) * (1f - selectionStripHide)).coerceIn(0f, 1f)
+        if (stripReveal > 0.02f) {
+          Box(
+            modifier =
+              Modifier.align(Alignment.BottomCenter)
+                .widthIn(max = 660.dp)
+                .fillMaxWidth()
+                .onSizeChanged { bottomChromeHeightPx = it.height }
+                .graphicsLayer {
+                  val hideOffset = (bottomChromeHeightPx.toFloat().takeIf { it > 0f } ?: 260f) + 28.dp.toPx()
+                  translationY = (1f - stripReveal) * hideOffset
+                  alpha = (stripReveal * 1.15f).coerceIn(0f, 1f)
+                  val s = 0.94f + 0.06f * stripReveal
+                  scaleX = s
+                  scaleY = s
+                }
+                .navigationBarsPadding()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+          ) {
+            ViewerThumbnailStripBar(
+              pageCount = uiState.pageCount,
+              currentPage = uiState.currentPage,
+              bookmarkedPages = bookmarkedPages,
+              pdfController = viewModel.pdfController,
+              paperMode = uiState.paperMode,
+              isScrubbing = isScrubbing,
+              onSelectPage = { page -> viewModel.jumpToPage(page) },
+            )
+          }
+        }
+      }
+
+      // Solid high-contrast status toast (OCR stub message / copied confirmation)
       AnimatedVisibility(
-        visible = uiState.kind == ViewerDocumentKind.PDF && uiState.pageCount > 0 && !isChromeHidden,
+        visible = uiState.statusMessage != null,
         enter =
-          if (motion) slideInVertically { it } + fadeIn(tween(180))
+          if (motion) slideInVertically(spring(dampingRatio = 0.82f, stiffness = 440f)) { it / 2 } + fadeIn(tween(150))
           else EnterTransition.None,
         exit =
-          if (motion) slideOutVertically { it } + fadeOut(tween(130))
+          if (motion) slideOutVertically(tween(130)) { it / 2 } + fadeOut(tween(130))
           else ExitTransition.None,
         modifier =
           Modifier.align(Alignment.BottomCenter)
-            .widthIn(max = 660.dp)
-            .fillMaxWidth()
-            .onSizeChanged { bottomChromeHeightPx = it.height }
-            .navigationBarsPadding()
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 24.dp, vertical = bottomOverlayOffset + 14.dp),
       ) {
-        ViewerThumbnailStripBar(
-          pageCount = uiState.pageCount,
-          currentPage = uiState.currentPage,
-          pdfController = viewModel.pdfController,
-          paperMode = uiState.paperMode,
-          onSelectPage = { page -> viewModel.jumpToPage(page) },
-        )
-      }
-
-      // Ephemeral Liquid Glass status toast (OCR stub message / copied confirmation)
-      AnimatedVisibility(
-        visible = uiState.statusMessage != null,
-        enter = if (motion) fadeIn(tween(160)) else EnterTransition.None,
-        exit = if (motion) fadeOut(tween(160)) else ExitTransition.None,
-        modifier =
-          Modifier.align(Alignment.BottomCenter)
-            .padding(horizontal = 24.dp, vertical = bottomChromeDp + 22.dp),
-      ) {
-        GlassSurface(
+        ViewerSolidSurface(
           cornerRadius = 20.dp,
           shape = CircleShape,
-          elevation = GlassElevation.FLOATING,
-          useBackdropBlur = true,
-          enableRefraction = true,
-          allowLiquidGlass = true,
+          emphasized = true,
+          shadowElevation = 8.dp,
           modifier = Modifier.testTag("viewer_status_toast"),
         ) {
           Text(
             text = uiState.statusMessage.orEmpty(),
             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
           )
         }
       }
